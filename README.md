@@ -88,4 +88,4 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 ## License
 
-MIT
+[MIT License](LICENSE)

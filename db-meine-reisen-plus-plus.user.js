@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      1.6.1
+// @version      0.1.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
