@@ -8,7 +8,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 **Full Trip Overview**
 - Display complete journey list without pagination
-- View platform assignments, real-time delays, and seat allocations
+- View platform assignments, real-time delays, and seat reservations
 
 **Change Tracking**
 - Automatic snapshot comparison across visits (delays, cancellations, rebookings, platform changes)
@@ -50,8 +50,8 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
    - Your userscript manager will prompt to confirm installation
 
 3. **Visit your trips:**
-   - Go to [https://www.bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) or [https://int.bahn.de](https://int.bahn.de)
-   - Open the script by clicking on the hover button 🚆++
+   - Go to [https://www.bahn.de/meine-reisen](https://www.bahn.de/meine-reisen)
+   - Open the script by clicking on the hover button 🚆++ (lower right corner of the screen)
 
 ## Trust & Security
 
@@ -79,6 +79,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - **Dependent on DB API stability** - If Deutsche Bahn changes their backend APIs, the script may require updates
 - **Browser/device bound** - Snapshots are stored locally per browser profile; changing browsers won't sync history
 - **Script likely does not know all kinds of tickets/flags** - as the API is not documented, I could only rely on my own trips to reverse engineer. 
+- **not optimized for mobile yet** - might look ugly on small screens
 
 
 ## Support & Feedback
