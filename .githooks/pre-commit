@@ -1,0 +1,17 @@
+#!/bin/sh
+EMAIL="$(git config user.email)"
+
+if [ -z "$EMAIL" ]; then
+  echo "ERROR: user.email ist nicht gesetzt."
+  echo "Setze sie z.B. mit: git config user.email \"16097417+Jo11n@users.noreply.github.com\""
+  exit 1
+fi
+
+case "$EMAIL" in
+  *users.noreply.github.com) exit 0 ;;
+  *)
+    echo "ERROR: user.email ist nicht auf GitHub noreply gesetzt: $EMAIL"
+    echo "Setze sie z.B. mit: git config user.email \"16097417+Jo11n@users.noreply.github.com\""
+    exit 1
+    ;;
+esac
