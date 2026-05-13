@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.1.0
+// @version      0.2.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
@@ -9,6 +9,7 @@
 // @supportURL   https://github.com/Jo11n/db-meine-reisen-plus-plus/issues
 // @downloadURL  https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js
 // @updateURL    https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js
+// @author       Jo11n
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -17,11 +18,12 @@
     'use strict';
 
     // ----- Configuration -----
-    const STORAGE_KEY      = 'dbMeineReisenPlusPlus.snapshot.v1';
-    const LAST_VISIT_KEY   = 'dbMeineReisenPlusPlus.lastVisit';
-    const KUNDENPROFIL_KEY = 'dbMeineReisenPlusPlus.kundenprofilId';
+    const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
+    const LAST_VISIT_KEY   = 'dbmrpp.lastVisit';
+    const KUNDENPROFIL_KEY = 'dbmrpp.kundenprofilId';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
+    const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
     const RUN_DELAY_MS     = 800;
@@ -41,12 +43,10 @@
     const T = (() => {
         const en = {
             title:             'DB My Trips++',
-            hasChanges:        ' · Changes!',
             ttReload:          'Reload',
             ttIcsBulk:         'Download all visible trips as ICS',
             ttCsv:             'Download all visible trips as CSV',
             ttReset:           'Reset snapshot',
-            ttCollapse:        'Collapse',
             ttClose:           'Close',
             fromAll:           'From (all)',
             toAll:             'To (all)',
@@ -88,12 +88,19 @@
             icsTooltip:        'Download ICS file',
             pdfTooltip:        'Download ticket PDF',
             shareTooltip:      'Share connection',
+            rawJsonTooltip:    'Download raw API JSON',
             shareCopied:       '✓ Copied!',
             shareError:        'Share failed — see console.',
+            rawJsonError:      'Raw JSON download failed — see console.',
             abweichungTooltip: 'Show disruption details',
             abweichungLoading: 'Loading…',
             abweichungNone:    'No current alerts.',
             abweichungError:   'Failed to load — see console.',
+            fgrBtnTooltip:     'Check passenger rights claim (§)',
+            fgrLoading:        'Loading passenger rights…',
+            fgrNone:           'No passenger rights claim filed.',
+            fgrError:          'Failed to load — see console.',
+            fgrClaim:          (date, ids) => `§ Claim filed ${date} · ${ids.join(', ')}`,
             fieldLabels: {
                 zugbindung:          'Train binding',
                 status:              'Status',
@@ -149,12 +156,10 @@
         };
         const de = {
             title:             'DB Meine Reisen++',
-            hasChanges:        ' · Änderungen!',
             ttReload:          'Neu laden',
             ttIcsBulk:         'Alle sichtbaren Reisen als ICS herunterladen',
             ttCsv:             'Alle sichtbaren Reisen als CSV herunterladen',
             ttReset:           'Snapshot zurücksetzen',
-            ttCollapse:        'Einklappen',
             ttClose:           'Schließen',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
@@ -196,12 +201,19 @@
             icsTooltip:        'ICS-Datei herunterladen',
             pdfTooltip:        'Ticket-PDF herunterladen',
             shareTooltip:      'Verbindung teilen',
+            rawJsonTooltip:    'Raw-API-JSON herunterladen',
             shareCopied:       '✓ Link kopiert!',
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
+            rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
             abweichungTooltip: 'Abweichungsdetails anzeigen',
             abweichungLoading: 'Lade…',
             abweichungNone:    'Keine aktuellen Meldungen.',
             abweichungError:   'Laden fehlgeschlagen — siehe Konsole.',
+            fgrBtnTooltip:     'Fahrgastrechte-Antrag prüfen (§)',
+            fgrLoading:        'Fahrgastrechte werden geladen…',
+            fgrNone:           'Kein Fahrgastrechte-Antrag gestellt.',
+            fgrError:          'Laden fehlgeschlagen — siehe Konsole.',
+            fgrClaim:          (date, ids) => `§ Antrag vom ${date} · ${ids.join(', ')}`,
             fieldLabels: {
                 zugbindung:          'Zugbindung',
                 status:              'Status',
@@ -273,10 +285,12 @@
     let pastTrips       = null;
     let auftraegeCache  = null;
     let panelVisible    = false;
+    let rawReisekettenMap = new Map();
 
     // Cache for reiseketten (journey-chain) detail responses.
     // Share links and disruption details reuse the same endpoint.
     const detailCache = new Map(); // uuid → Promise<data>
+    const auftragDetailCache = new Map(); // auftragsnummer -> Promise<data>
 
     // =========================================================
     // 1) Token-Capture
@@ -384,7 +398,9 @@
         lastRenderArgs  = null;
         pastTrips       = null;
         auftraegeCache  = null;
+        rawReisekettenMap = new Map();
         detailCache.clear();
+        auftragDetailCache.clear();
         filterState     = { from: '', to: '', days: 0, onlyChanges: false };
         activeView      = 'current';
         const root = document.getElementById('dbmrpp-root');
@@ -445,6 +461,21 @@
         return detailCache.get(uuid);
     }
 
+    // On-demand cached fetch for single order details used by raw JSON export.
+    function fetchAuftragDetail(auftragsnummer) {
+        if (!auftragsnummer) return Promise.resolve(null);
+        if (!auftragDetailCache.has(auftragsnummer)) {
+            const p = dbFetch(`${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(auftragsnummer)}`)
+                .then(res => {
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    return res.json();
+                });
+            p.catch(() => auftragDetailCache.delete(auftragsnummer));
+            auftragDetailCache.set(auftragsnummer, p);
+        }
+        return auftragDetailCache.get(auftragsnummer);
+    }
+
     // =========================================================
     // 3) Data fetching
     // =========================================================
@@ -458,6 +489,7 @@
             // separate localStorage origin — fall back to kundenkonto/v2.
             if (!kundenprofilId) await fetchKundenprofil();
 
+            rawReisekettenMap = new Map();
             const [reisekettenData, auftraege] = await Promise.all([
                 fetchReiseketten(),
                 fetchAllAuftraege()
@@ -465,6 +497,10 @@
             if (!reisekettenData) return;
 
             detailCache.clear(); // invalidate on refresh
+            auftragDetailCache.clear();
+            (reisekettenData.reiseketten || []).forEach(r => {
+                if (r && r.reisekettenUuid) rawReisekettenMap.set(r.reisekettenUuid, r);
+            });
 
             const auftragMap = buildAuftragMap(auftraege);
             const trips = (reisekettenData.reiseketten || []).map(simplify);
@@ -668,7 +704,8 @@
                     leistungsklasse: fahrt.leistungsklasse || null,
                     klasse:       fahrt.leistungsklasse === 'KLASSE_1' ? 1 : 2,
                     isVerbundticket,
-                    verbundCode:  fahrt.verbundCode || null
+                    verbundCode:  fahrt.verbundCode || null,
+                    isPastTrip:   true
                 }));
             });
         });
@@ -797,21 +834,73 @@
         alert(T.alertPdfError);
     }
 
+    async function downloadRawJson(t) {
+        try {
+            const out = {
+                exportedAt: new Date().toISOString(),
+                dbmrppTripSummary: t,
+                reisekette: null,
+                reiseketteDetail: null,
+                auftrag: null
+            };
+
+            if (t.uuid && rawReisekettenMap.has(t.uuid)) {
+                out.reisekette = rawReisekettenMap.get(t.uuid);
+            }
+
+            if (!out.reisekette && t.fromReiseketten && t.uuid) {
+                try {
+                    out.reiseketteDetail = await fetchDetail(t.uuid);
+                } catch (err) {
+                    console.warn('[DBMRPP] Raw JSON: reiseketten detail failed', err);
+                }
+            }
+
+            if (t.auftragsnummer) {
+                try {
+                    out.auftrag = await fetchAuftragDetail(t.auftragsnummer);
+                } catch (err) {
+                    console.warn('[DBMRPP] Raw JSON: auftrag detail failed', err);
+                }
+            }
+
+            const filename = `DB_RAW_${t.departure ? t.departure.slice(0, 10) : 'trip'}_${routeSlug(t)}_${(t.uuid || t.auftragsnummer || 'data').replace(/[^a-z0-9_-]+/gi, '_')}.json`;
+            triggerDownload(
+                new Blob([JSON.stringify(out, null, 2)], { type: 'application/json;charset=utf-8' }),
+                filename
+            );
+        } catch (err) {
+            console.error('[DBMRPP] Raw JSON-Fehler', err);
+            alert(T.rawJsonError);
+        }
+    }
+
     // =========================================================
     // 7) Share link via /web/api/angebote/verbindung/teilen
     //    Uses fetchDetail cache — no duplicate round-trip if
     //    disruption details were already expanded for the same trip.
     // =========================================================
     async function getShareLink(t) {
-        const data = await fetchDetail(t.uuid);
-        // ctxRecon is at trips[0].ctxRecon in the detail response;
-        // the share endpoint calls it "hinfahrtRecon" and also needs station names + departure (UTC)
-        const trip0 = data.trips && data.trips[0];
-        const ctxRecon = trip0 && trip0.ctxRecon;
-        if (!ctxRecon) {
-            console.error('[DBMRPP] getShareLink: root keys:', Object.keys(data),
-                          'trips[0] keys:', trip0 ? Object.keys(trip0) : 'no trips');
-            throw new Error('ctxRecon not found in detail response');
+        let ctxRecon;
+        if (t.fromReiseketten) {
+            const data = await fetchDetail(t.uuid);
+            // ctxRecon is at trips[0].ctxRecon in the detail response;
+            // the share endpoint calls it "hinfahrtRecon" and also needs station names + departure (UTC)
+            const trip0 = data.trips && data.trips[0];
+            ctxRecon = trip0 && trip0.ctxRecon;
+            if (!ctxRecon) {
+                console.error('[DBMRPP] getShareLink: root keys:', Object.keys(data),
+                              'trips[0] keys:', trip0 ? Object.keys(trip0) : 'no trips');
+                throw new Error('ctxRecon not found in detail response');
+            }
+        } else {
+            // For AUFTRAG-only trips (orphans/past): ctxRecon lives in auftrag detail
+            const auftrag = await fetchAuftragDetail(t.auftragsnummer);
+            ctxRecon = auftrag && auftrag.gesamtangebot &&
+                       auftrag.gesamtangebot.hinfahrt &&
+                       auftrag.gesamtangebot.hinfahrt.verbindung &&
+                       auftrag.gesamtangebot.hinfahrt.verbindung.ctxRecon;
+            if (!ctxRecon) throw new Error('ctxRecon not found in auftrag detail');
         }
 
         const payload = {
@@ -1242,7 +1331,13 @@
                     .dbmrpp-trip { padding: 6px 0; border-bottom: 1px dotted #e0e0e0; }
                     .dbmrpp-trip:last-child { border-bottom: none; }
 
-                    .dbmrpp-route { font-weight: 600; }
+                    .dbmrpp-route {
+                        font-weight: 600;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 2px;
+                    }
+
                     .dbmrpp-route-link { color: #1a3a8a; text-decoration: none; }
                     .dbmrpp-route-link:hover { text-decoration: underline; }
 
@@ -1252,11 +1347,9 @@
                         justify-content: center;
                         width: 1.25em;
                         height: 1.25em;
-                        margin-left: 2px;
                         font-size: 12px;
                         line-height: 1;
-                        vertical-align: middle;
-                        opacity: .6;
+                        opacity: 0.7;
                         text-decoration: none;
                     }
 
@@ -1275,6 +1368,18 @@
                     }
 
                     .dbmrpp-abweichung-msg { margin: 2px 0; line-height: 1.4; }
+
+                    .dbmrpp-fgr-detail {
+                        margin-top: 5px;
+                        padding: 5px 10px;
+                        background: #f0f4ff;
+                        border-left: 3px solid #4a7cdc;
+                        border-radius: 2px;
+                        font-size: 11.5px;
+                        color: #555;
+                    }
+
+                    .dbmrpp-fgr-claim { margin: 2px 0; line-height: 1.4; }
                     .dbmrpp-meta { color: var(--dbmrpp-text-muted); font-size: 11.5px; line-height: 1.4; }
                     .dbmrpp-meta-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #999; }
 
@@ -1310,18 +1415,20 @@
                         display: flex;
                         align-items: center;
                         gap: 6px;
+                        flex-wrap: wrap;
                     }
 
                     .dbmrpp-filter-row-top .dbmrpp-select {
                         flex: 1;
+                        min-width: 80px;
                     }
 
                     .dbmrpp-filter-row-bottom {
-                        justify-content: space-between;
+                        justify-content: flex-start;
                     }
 
                     .dbmrpp-select {
-                        min-width: 110px;
+                        min-width: 90px;
                         padding: 3px 6px;
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
@@ -1396,11 +1503,9 @@
                         #dbmrpp-fab { bottom: 16px; right: 16px; width: 80px; height: 46px; border-radius: 10px; }
                         .dbmrpp-fab-icon { font-size: 20px; }
                         .dbmrpp-fab-plus { font-size: 24px; }
-                        .dbmrpp-action-icon { font-size: 16px; width: 1.35em; height: 1.35em; opacity: .75; }
-                        .dbmrpp-select { min-width: 130px; }
-                        .dbmrpp-filter-row { flex-wrap: wrap; }
-                        .dbmrpp-filter-row-top .dbmrpp-select { min-width: 120px; }
-                        .dbmrpp-filter-row-bottom { justify-content: flex-start; }
+                        .dbmrpp-action-icon { font-size: 16px; width: 1.35em; height: 1.35em; opacity: 0.8; }
+                        .dbmrpp-select { min-width: 100px; }
+                        .dbmrpp-filter-row-top .dbmrpp-select { min-width: 90px; }
                     }
                 `;
         document.head.appendChild(s);
@@ -1476,6 +1581,13 @@
                 if (trip) downloadPdf(trip);
                 return;
             }
+            const rawJsonLink = ev.target.closest('.dbmrpp-json-link');
+            if (rawJsonLink) {
+                ev.preventDefault();
+                const trip = findTrip(rawJsonLink.getAttribute('data-uuid'));
+                if (trip) downloadRawJson(trip);
+                return;
+            }
             const shareBtn = ev.target.closest('.dbmrpp-share-btn');
             if (shareBtn) {
                 ev.preventDefault();
@@ -1491,6 +1603,39 @@
                     console.error('[DBMRPP] Share-Fehler', err);
                     shareBtn.textContent = '⤴️'; shareBtn.style.opacity = '';
                     alert(T.shareError);
+                }
+                return;
+            }
+            const fgrBtn = ev.target.closest('.dbmrpp-fgr-btn');
+            if (fgrBtn) {
+                ev.preventDefault();
+                const trip = findTrip(fgrBtn.getAttribute('data-uuid'));
+                if (!trip) return;
+                const tripDiv = fgrBtn.closest('.dbmrpp-trip');
+                const existing = tripDiv.querySelector('.dbmrpp-fgr-detail');
+                if (existing) { existing.remove(); return; }
+                const detailDiv = document.createElement('div');
+                detailDiv.className = 'dbmrpp-fgr-detail';
+                detailDiv.textContent = T.fgrLoading;
+                tripDiv.appendChild(detailDiv);
+                try {
+                    const auftrag = await fetchAuftragDetail(trip.auftragsnummer);
+                    const ga = auftrag && auftrag.gesamtangebot;
+                    const legs = ga ? [ga.hinfahrt, ga.rueckfahrt].filter(Boolean) : [];
+                    const leg = legs.find(l => l.kundenwunschId === trip.kundenwunschId) || legs[0];
+                    const submitted = (leg && leg.fahrgastrechte && leg.fahrgastrechte.submittedAntragList) || [];
+                    if (!submitted.length) {
+                        detailDiv.textContent = T.fgrNone;
+                    } else {
+                        detailDiv.innerHTML = submitted.map(a => {
+                            const date = a.date ? esc(formatDate(a.date)) : '?';
+                            const ids = (a.antragIds || []).map(esc);
+                            return `<div class="dbmrpp-fgr-claim">${T.fgrClaim(date, ids)}</div>`;
+                        }).join('');
+                    }
+                } catch (err) {
+                    console.error('[DBMRPP] FGR-Fehler', err);
+                    detailDiv.textContent = T.fgrError;
                 }
                 return;
             }
@@ -1537,6 +1682,7 @@
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
                 filterState.from = ''; filterState.to = '';
+                if (activeView === 'past') filterState.onlyChanges = false;
                 reRender();
             })
         );
@@ -1557,11 +1703,10 @@
             dayFiltered.filter(t => !filterState.from || t.from === filterState.from).map(t => t.to).filter(Boolean)
         )].sort();
         const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
-        const hasChanges   = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
 
         return `
         <h2>
-          <span>${T.title}${hasChanges ? T.hasChanges : ''}</span>
+                    <span>${T.title}</span>
           <span>
             <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
             <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
@@ -1570,12 +1715,12 @@
             <button class="dbmrpp-close"    title="${T.ttClose}">×</button>
           </span>
         </h2>
-        ${buildFilterBar(fromOptions, toOptions)}
+        ${buildFilterBar(fromOptions, toOptions, isPast)}
         ${buildChangeBlock(changes, lastVisitTxt)}
         ${buildTripSection(filtered, sourcePool, orphans, isPast)}`;
     }
 
-    function buildFilterBar(fromOptions, toOptions) {
+    function buildFilterBar(fromOptions, toOptions, isPast) {
         const opt = (val, options) => options.map(v =>
             `<option value="${esc(v)}"${filterState[val] === v ? ' selected' : ''}>${esc(v)}</option>`
         ).join('');
@@ -1595,7 +1740,7 @@
                                     `<button class="dbmrpp-day-btn${filterState.days === d ? ' active' : ''}" data-days="${d}">${d === 0 ? T.dayAll : T.dayN(d)}</button>`
                             ).join('')}
                         </div>
-                        <button class="dbmrpp-changes-toggle${filterState.onlyChanges ? ' active' : ''}">${T.onlyIssues}</button>
+                        ${isPast ? '' : `<button class="dbmrpp-changes-toggle${filterState.onlyChanges ? ' active' : ''}">${T.onlyIssues}</button>`}
                     </div>
         </div>`;
     }
@@ -1649,7 +1794,7 @@
     }
 
     function renderShareLink(t) {
-        if (!t.fromReiseketten || t.isOrphaned) return '';
+        if (t.fromReiseketten ? t.isOrphaned : !t.auftragsnummer) return '';
         return ` <a class="dbmrpp-share-btn dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.shareTooltip}">⤴️</a>`;
     }
 
@@ -1667,7 +1812,18 @@
 
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
+        if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') return '';
         return ` <a class="dbmrpp-pdf-link dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.pdfTooltip}">🧾</a>`;
+    }
+
+    function renderRawJsonLink(t) {
+        if (!t.uuid) return '';
+        return ` <a class="dbmrpp-json-link dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{ }</a>`;
+    }
+
+    function renderFahrgastrechteBtn(t) {
+        if (!t.auftragsnummer || !t.isPastTrip) return '';
+        return ` <button class="dbmrpp-fgr-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.fgrBtnTooltip}">§</button>`;
     }
 
     function delayTag(soll, ist) {
@@ -1708,9 +1864,9 @@
         const tags = buildTripTags(t);
         return `
         <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}" data-uuid="${esc(t.uuid)}">
-          <div class="dbmrpp-route">${renderRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}</div>
+                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
           <div class="dbmrpp-meta">
-            ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}${esc(d)}${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
+            ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
             ${t.departureTrack && !t.isVerbundticket ? ` · ${T.metaPlatform} ${esc(t.departureTrack)}` : ''}
             ${t.leistungsname ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
             ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
@@ -1729,8 +1885,8 @@
         const t = c.trip;
         return `
         <div class="dbmrpp-trip">
-          <div class="dbmrpp-route">${renderRouteLink(t)}${renderIcsLink(t)}
-            <span class="dbmrpp-meta">(${t.departure ? esc(formatDateTime(t.departure)) : '?'})</span>
+                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
+            <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
           </div>
           ${c.changes.map(d => `
           <div class="dbmrpp-diff">
