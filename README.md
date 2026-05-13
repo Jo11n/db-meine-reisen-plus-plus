@@ -7,10 +7,10 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 ## Features
 
 **Full Trip Overview**
-- Display complete journey list without pagination
-- View platform assignments, real-time delays, and seat reservations
+- Display complete journey list (future/past) without pagination
+- View platform assignments, ticket category, and seat reservations without going to the detail page
 
-**Change Tracking**
+**Change Tracking (alpha)**
 - Automatic snapshot comparison across visits (delays, cancellations, rebookings, platform changes)
 - Visual highlighting of what's changed
 
@@ -23,7 +23,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Filter by station (origin/destination)
 - Filter by date range (all/7/30/90)
 - Show only trips with issues
-- Separate tabs for upcoming and past trips
+- Separate tabs for future and past trips
 
 **Labels & Indicators**
 - First class markers
@@ -31,12 +31,12 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Zugbindung: Train binding status
 - Subscription indicators
 - Seat/bike cancellation notices
-- Real-time disruption alerts
-- Muted alerts per trip
+- Disruption information
+- Whether trip alerts are muted
 
 **Bilingual Support**
-- Full German support on bahn.de
-- Full English support on int.bahn.de
+- German on bahn.de
+- English on int.bahn.de
 
 ## Installation
 
@@ -59,14 +59,14 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 **Data Privacy**
 - Runs entirely in your browser
-- Uses only public Deutsche Bahn APIs (the same ones the website uses)
+- Uses only Deutsche Bahn APIs (the same ones the website uses)
 - No data collection or tracking
 - No third-party servers involved
 - All snapshots stored locally in your browser storage
 
 **No Permissions Needed**
 - Script runs with `@grant none` - requires no special browser permissions
-- Only interacts with bahn.de and int.bahn.de
+- Only interacts with bahn.de
 
 **Minimal API footprint**
 - uses API calls as the website itself
