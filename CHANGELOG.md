@@ -6,6 +6,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.2.1] - 2026-05-18
+
+### Fixed
+- **Share button on Past tab** – clicking ⤴️ on past trips now resolves the trip object across all visible datasets (upcoming, past, orphaned) instead of only checking upcoming trips.
+- **Share link robustness for future trips** – `ctxRecon` resolution now handles multiple detail response shapes and falls back to order detail (`auftrag`) when reiseketten detail does not provide it.
+- **Raw JSON export completeness** – `reiseketteDetail` is now fetched for all `fromReiseketten` trips with a `uuid`, even when base `reisekette` data is already present.
+
 ## [0.2.0] – 2026-05-13
 
 ### Added

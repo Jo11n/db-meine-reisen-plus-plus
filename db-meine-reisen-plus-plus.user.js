@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.2.0
+// @version      0.2.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
@@ -476,6 +476,74 @@
         return auftragDetailCache.get(auftragsnummer);
     }
 
+    // Detail APIs are not always shape-stable. These helpers normalize common wrappers
+    // so features that depend on detail payloads (share/ICS/disruption) keep working.
+    function getDetailRoot(data) {
+        if (!data || typeof data !== 'object') return {};
+        const candidates = [data, data.data, data.result, data.payload].filter(Boolean);
+        const best = candidates.find(c =>
+            c && typeof c === 'object' && (
+                Array.isArray(c.trips) ||
+                Array.isArray(c.reiseketten) ||
+                c.trip ||
+                c.ctxRecon ||
+                c.hinfahrtRecon ||
+                (c.verbindung && c.verbindung.ctxRecon)
+            )
+        );
+        return best || data;
+    }
+
+    function getDetailTrip(data) {
+        const root = getDetailRoot(data);
+        if (Array.isArray(root.trips) && root.trips.length) return root.trips[0] || {};
+        if (root.trip && typeof root.trip === 'object') return root.trip;
+        if (Array.isArray(root.reiseketten) && root.reiseketten.length) return root.reiseketten[0] || {};
+        return {};
+    }
+
+    function findDeepKey(obj, keyName, maxNodes = 2500) {
+        if (!obj || typeof obj !== 'object') return null;
+        const stack = [obj];
+        const seen = new Set();
+        let visited = 0;
+        while (stack.length && visited < maxNodes) {
+            const cur = stack.pop();
+            if (!cur || typeof cur !== 'object' || seen.has(cur)) continue;
+            seen.add(cur);
+            visited++;
+            if (Object.prototype.hasOwnProperty.call(cur, keyName) && cur[keyName]) return cur[keyName];
+            const vals = Array.isArray(cur) ? cur : Object.values(cur);
+            vals.forEach(v => {
+                if (v && typeof v === 'object' && !seen.has(v)) stack.push(v);
+            });
+        }
+        return null;
+    }
+
+    function extractCtxReconFromDetail(data) {
+        const root = getDetailRoot(data);
+        const trip = getDetailTrip(data);
+        const direct = [
+            trip.ctxRecon,
+            trip.hinfahrtRecon,
+            trip.verbindung && trip.verbindung.ctxRecon,
+            root.ctxRecon,
+            root.hinfahrtRecon,
+            root.verbindung && root.verbindung.ctxRecon,
+            root.gesamtangebot && root.gesamtangebot.hinfahrt &&
+                root.gesamtangebot.hinfahrt.verbindung && root.gesamtangebot.hinfahrt.verbindung.ctxRecon
+        ].find(Boolean);
+        return direct || findDeepKey(root, 'ctxRecon');
+    }
+
+    function extractCtxReconFromAuftrag(auftrag) {
+        return auftrag && auftrag.gesamtangebot &&
+               auftrag.gesamtangebot.hinfahrt &&
+               auftrag.gesamtangebot.hinfahrt.verbindung &&
+               auftrag.gesamtangebot.hinfahrt.verbindung.ctxRecon;
+    }
+
     // =========================================================
     // 3) Data fetching
     // =========================================================
@@ -786,7 +854,7 @@
             alert(T.alertIcsFailed('?'));
             return null;
         }
-        const trip = (data.trips && data.trips[0]) || {};
+        const trip = getDetailTrip(data);
         const segs = (trip.verbindungsAbschnitte || [])
             .filter(va => va.verkehrsmittel && va.verkehrsmittel.typ !== 'WALK')
             .map((va, idx) => {
@@ -848,7 +916,7 @@
                 out.reisekette = rawReisekettenMap.get(t.uuid);
             }
 
-            if (!out.reisekette && t.fromReiseketten && t.uuid) {
+            if (t.fromReiseketten && t.uuid) {
                 try {
                     out.reiseketteDetail = await fetchDetail(t.uuid);
                 } catch (err) {
@@ -881,26 +949,33 @@
     //    disruption details were already expanded for the same trip.
     // =========================================================
     async function getShareLink(t) {
-        let ctxRecon;
+        let ctxRecon = null;
         if (t.fromReiseketten) {
-            const data = await fetchDetail(t.uuid);
-            // ctxRecon is at trips[0].ctxRecon in the detail response;
-            // the share endpoint calls it "hinfahrtRecon" and also needs station names + departure (UTC)
-            const trip0 = data.trips && data.trips[0];
-            ctxRecon = trip0 && trip0.ctxRecon;
-            if (!ctxRecon) {
-                console.error('[DBMRPP] getShareLink: root keys:', Object.keys(data),
-                              'trips[0] keys:', trip0 ? Object.keys(trip0) : 'no trips');
-                throw new Error('ctxRecon not found in detail response');
+            try {
+                const data = await fetchDetail(t.uuid);
+                // The share endpoint expects this as "hinfahrtRecon".
+                // Response shape can vary across account/ticket types, so resolve robustly.
+                const trip0 = getDetailTrip(data);
+                ctxRecon = extractCtxReconFromDetail(data);
+                if (!ctxRecon) {
+                    const root = getDetailRoot(data);
+                    console.warn('[DBMRPP] getShareLink: ctxRecon missing in detail. root keys:',
+                                 Object.keys(root || {}),
+                                 'trip keys:', trip0 && typeof trip0 === 'object' ? Object.keys(trip0) : 'no trip');
+                }
+            } catch (err) {
+                console.warn('[DBMRPP] getShareLink: detail fetch failed, trying auftrag fallback', err);
             }
-        } else {
-            // For AUFTRAG-only trips (orphans/past): ctxRecon lives in auftrag detail
+        }
+
+        // Fallback (and primary path for non-reiseketten trips): ctxRecon from auftrag detail.
+        if (!ctxRecon && t.auftragsnummer) {
             const auftrag = await fetchAuftragDetail(t.auftragsnummer);
-            ctxRecon = auftrag && auftrag.gesamtangebot &&
-                       auftrag.gesamtangebot.hinfahrt &&
-                       auftrag.gesamtangebot.hinfahrt.verbindung &&
-                       auftrag.gesamtangebot.hinfahrt.verbindung.ctxRecon;
-            if (!ctxRecon) throw new Error('ctxRecon not found in auftrag detail');
+            ctxRecon = extractCtxReconFromAuftrag(auftrag) || null;
+        }
+
+        if (!ctxRecon) {
+            throw new Error('ctxRecon not found in detail or auftrag response');
         }
 
         const payload = {
@@ -934,7 +1009,7 @@
     // =========================================================
     async function loadAbweichungMessages(t) {
         const data = await fetchDetail(t.uuid);
-        const trip0 = (data.trips && data.trips[0]) || {};
+        const trip0 = getDetailTrip(data);
         return [
             ...(trip0.himMeldungen         || []),
             ...(trip0.priorisierteMeldungen || []),
@@ -1591,7 +1666,7 @@
             const shareBtn = ev.target.closest('.dbmrpp-share-btn');
             if (shareBtn) {
                 ev.preventDefault();
-                const trip = trips.find(x => x.uuid === shareBtn.getAttribute('data-uuid'));
+                const trip = findTrip(shareBtn.getAttribute('data-uuid'));
                 if (!trip) return;
                 const origTitle = shareBtn.title;
                 shareBtn.textContent = '⏳'; shareBtn.style.opacity = '1';
