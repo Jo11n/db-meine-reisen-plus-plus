@@ -6,6 +6,27 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.3.0] - 2026-05-22
+
+### Added
+- **Tag filter dropdown** – new dropdown in filter bar displaying all tags present in the currently filtered trip list. Users can select multiple tags; only trips containing *all* selected tags are shown (AND logic). Selected tags are displayed as removable chips in the filter bar.
+- **Auth token refresh recovery** – script now detects 401 Unauthorized responses. When detected, it triggers an authenticated request to capture the website's current (refreshed) token, then automatically retries the failed request.
+- **Recurring trip series info & name in UI** – recurring trips are shown with weekdays and end date. If a recurring reisekette includes `ueberwachung.name`, the name is now shown in the trip meta area (e.g. as "Serie" / "Series") so custom recurrence names become visible in the panel.
+- **Version link in panel header** – the panel now shows the current script version and links it directly to the changelog in the GitHub repository.
+
+### Changed
+- **Summary line train icon** – the train list in trip meta is now prefixed with `🚅` for quicker scanning.
+- **Seat display compacted** – reservation output is now rendered as `💺 <Train> W<Wagen>, Pl.<seats>` with grouped seat numbers per wagon to avoid repetitive long strings.
+- **Tag label "Umgeleitet" → "Reiseplan geändert"** – more accurate semantic meaning for trips where `letzterReiseplanBearbeiter === 'SYSTEM'`. Applies to both EN ("Itinerary changed") and DE labels, including CSV export.
+- **Long route text wrapping** – when the route (from → to) is very long, both the route link and action icons (share, ICS, PDF, etc.) can wrap to multiple lines for better readability on narrow panels.
+- **Translation consistency cleanup** – localized remaining mixed-language UI labels (tag filter labels and loading text) and normalized DE class tag text (`1. Klasse`).
+- **Past-trip fetch window** – order enrichment now starts at the first day of the same month one year back, matching DB's month-based history window instead of using a rolling 365-day cutoff.
+- **Changed selection criteria for the "with problem" filter** - more focused on real problems. "relevanteAbweichung" can be unknown before the trip has live info though. Might demote that in the future.
+- **Fahrgastrechte cache not invalidated on empty result** – when the `§` button was clicked and no claim was found, the order detail response stayed in cache. A subsequent click would then show the stale "no claim" result even if the user had filed a claim in the meantime. The cache entry is now evicted when `submittedAntragList` is empty, so re-clicking always fetches fresh data.
+
+### Fixed
+- **Abweichung info details from `verbindungsAbschnitte`** – the `ℹ️` disruption details button now also reads `himMeldungen`, `priorisierteMeldungen`, and `risNotizen` from `trip.verbindungsAbschnitte[]` in reiseketten detail responses, so alerts are shown for payloads where messages are section-scoped.
+
 ## [0.2.1] - 2026-05-18
 
 ### Fixed
@@ -13,7 +34,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **Share link robustness for future trips** – `ctxRecon` resolution now handles multiple detail response shapes and falls back to order detail (`auftrag`) when reiseketten detail does not provide it.
 - **Raw JSON export completeness** – `reiseketteDetail` is now fetched for all `fromReiseketten` trips with a `uuid`, even when base `reisekette` data is already present.
 
-## [0.2.0] – 2026-05-13
+## [0.2.0] – 2026-05-13 "Keine Verspätungsbegründung"
 
 ### Added
 - **Fahrgastrechte indicator** – past trips with an `auftragsnummer` now show a `§` button. Clicking it fetches the order detail on demand (cached) and displays any filed passenger-rights claims with date and claim ID, or a "no claim" message.

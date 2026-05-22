@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         DB Meine Reisen++
+// @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.2.1
-// @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, exports, change tracking, and more. Works on both the German and international versions of the site. 
+// @version      0.3.0
+// @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
+// @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
 // @homepageURL  https://github.com/Jo11n/db-meine-reisen-plus-plus
@@ -10,6 +12,7 @@
 // @downloadURL  https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js
 // @updateURL    https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js
 // @author       Jo11n
+// @license      MIT
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -24,6 +27,8 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
+    const SCRIPT_VERSION  = '0.3.0';
+    const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
     const RUN_DELAY_MS     = 800;
@@ -32,13 +37,13 @@
                               'departureTrack','arrivalTrack','zuege','seats',
                               'leistungsname','storniertStatus','auftragStatus',
                               'sitzplatzStorniert','stellplatzStorniert'];
-
-    // Language: English on int.bahn.de, German otherwise
+    
+    // Language: English on int.bahn.de, German otherwise 
     const IS_INT      = location.hostname.startsWith('int.');
     const DATE_LOCALE = IS_INT ? 'en-GB' : 'de-DE';
 
     // =========================================================
-    // Translations
+    // Translations 
     // =========================================================
     const T = (() => {
         const en = {
@@ -48,6 +53,7 @@
             ttCsv:             'Download all visible trips as CSV',
             ttReset:           'Reset snapshot',
             ttClose:           'Close',
+            ttReleaseLog:      'Open changelog',
             fromAll:           'From (all)',
             toAll:             'To (all)',
             dayAll:            'All',
@@ -63,19 +69,23 @@
             changesRemoved:    'Removed',
             orphansSection:    n => `Cancelled / unmatched bookings (${n})`,
             neverVisited:      'never',
-            tagClass1:         '1st cl.',
+            tagsLabel:         'Tags',
+            panelLoading:      'Loading…',
+            tagClass1:         '1st class',
+            tagStorniert:      'Cancelled',
+            tagAuftragStatusLabel: 'Order',
             tagZugbindung:     'Train binding lifted',
             tagNotRecon:       'Not reconstructable',
             tagMustRebook:     'Rebooking required',
             tagAltPossible:    'Alternatives available',
             tagDisruption:     'Disruption',
             tagSaved:          'Saved',
-            tagAbo:            'Subscription',
+            tagWiederholend:   'Recurring',
             tagSeatCancelled:  'Seat cancelled',
             tagBikeCancelled:  'Bike spot cancelled',
             tagPartFare:       'Part fare',
             tagRegionalTicket: 'Regional ticket',
-            tagRerouted:       'Rerouted',
+            tagRerouted:       'Itinerary changed',
             tagReassigned:     'Seat reassigned',
             tagMuted:          '🔕 No alerts',
             tagAuftragStatus:  s => `Order: ${s}`,
@@ -85,6 +95,7 @@
             metaOrder:         nr => `Order #${nr}`,
             metaBooked:        d => `booked ${d}`,
             metaValidRange:    (a, b) => `Valid ${a}–${b}`,
+            metaRecurringName: n => `Series: ${n}`,
             icsTooltip:        'Download ICS file',
             pdfTooltip:        'Download ticket PDF',
             shareTooltip:      'Share connection',
@@ -150,8 +161,8 @@
                 'Valid from', 'Valid until',
                 'Disruption', 'Alternatives',
                 'Travellers',
-                'UUID', 'WishID', 'BundleID',
-                'Notifications', 'Seat reassigned', 'Rerouted'
+                'UUID', 'KundenwunschID', 'LeistungsbuendelID',
+                'Notifications', 'Seat reassigned', 'Itinerary changed'
             ]
         };
         const de = {
@@ -161,6 +172,7 @@
             ttCsv:             'Alle sichtbaren Reisen als CSV herunterladen',
             ttReset:           'Snapshot zurücksetzen',
             ttClose:           'Schließen',
+            ttReleaseLog:      'Changelog öffnen',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
             dayAll:            'Alle',
@@ -176,19 +188,23 @@
             changesRemoved:    'Entfernt',
             orphansSection:    n => `Stornierte / nicht zugeordnete Buchungen (${n})`,
             neverVisited:      'noch nie',
-            tagClass1:         '1. Kl.',
+            tagsLabel:         'Tags',
+            panelLoading:      'Lade…',
+            tagClass1:         '1. Klasse',
+            tagStorniert:      'Storniert',
+            tagAuftragStatusLabel: 'Auftrag',
             tagZugbindung:     'Zugbindung aufgehoben',
             tagNotRecon:       'Nicht rekonstruierbar',
             tagMustRebook:     'Umbuchung nötig',
             tagAltPossible:    'Alt. möglich',
             tagDisruption:     'Abweichung',
             tagSaved:          'Gemerkt',
-            tagAbo:            'Abo',
+            tagWiederholend:   'Wiederholend',
             tagSeatCancelled:  'Sitzplatz storniert',
             tagBikeCancelled:  'Stellplatz storniert',
             tagPartFare:       'Teilpreis',
             tagRegionalTicket: 'Verbundticket',
-            tagRerouted:       'Umgeleitet',
+            tagRerouted:       'Reiseplan geändert',
             tagReassigned:     'Umplatziert',
             tagMuted:          '🔕 Keine Benachrichtigungen',
             tagAuftragStatus:  s => `Auftrag: ${s}`,
@@ -198,6 +214,7 @@
             metaOrder:         nr => `Auftrag #${nr}`,
             metaBooked:        d => `gebucht ${d}`,
             metaValidRange:    (a, b) => `Gültig ${a}–${b}`,
+            metaRecurringName: n => `Serie: ${n}`,
             icsTooltip:        'ICS-Datei herunterladen',
             pdfTooltip:        'Ticket-PDF herunterladen',
             shareTooltip:      'Verbindung teilen',
@@ -265,7 +282,7 @@
                 'Relevante Abweichung', 'Alternativensuche',
                 'Reisende',
                 'UUID', 'KundenwunschID', 'LeistungsbuendelID',
-                'Benachrichtigungen', 'Umplatziert', 'Umgeleitet'
+                'Benachrichtigungen', 'Umplatziert', 'Reiseplan geändert'
             ]
         };
         return IS_INT ? en : de;
@@ -280,12 +297,14 @@
     let runInProgress   = false;
     let runTimerId      = null;
     let lastRenderArgs  = null;
-    let filterState     = { from: '', to: '', days: 0, onlyChanges: false };
+    let filterState     = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
     let activeView      = 'current';
     let pastTrips       = null;
     let auftraegeCache  = null;
     let panelVisible    = false;
     let rawReisekettenMap = new Map();
+    let tokenSyncTimer  = null;
+    let is401Recovering = false;
 
     // Cache for reiseketten (journey-chain) detail responses.
     // Share links and disruption details reuse the same endpoint.
@@ -318,6 +337,17 @@
                     return res;
                 });
             }
+            // Handle 401 responses to detect stale tokens
+            return prom.then(res => {
+                if (res.status === 401 && !url.includes('/openid-connect/token')) {
+                    if (!is401Recovering) {
+                        console.log('[DBMRPP] Detected 401 — token may be stale, attempting sync');
+                        is401Recovering = true;
+                        startTokenSync();
+                    }
+                }
+                return res;
+            });
         } catch (_) {}
         return prom;
     };
@@ -347,7 +377,7 @@
             try { localStorage.setItem(KUNDENPROFIL_KEY, kundenprofilId); } catch (_) {}
         }
     }
-
+     
     function captureFromHeaders(headers) {
         if (!headers) return;
         let auth = null;
@@ -371,12 +401,25 @@
     function rememberToken(t) {
         if (bearerToken === t) return;
         bearerToken = t;
+        is401Recovering = false;
         // Only trigger run() when actually on the target page — @match now covers the
         // whole domain so token capture can happen on any bahn.de page.
         if (!alreadyRan && isTargetPath()) {
             alreadyRan = true;
             scheduleRun();
         }
+    }
+
+    // Attempt to synchronize the token from the website's current state.
+    // The website may store the token in localStorage/sessionStorage or have it in memory.
+    // This function observes incoming requests to capture any updated token.
+    function startTokenSync() {
+        if (tokenSyncTimer !== null) clearTimeout(tokenSyncTimer);
+        // Wait 500ms then check if a new token has been captured from requests
+        tokenSyncTimer = setTimeout(() => {
+            tokenSyncTimer = null;
+            is401Recovering = false;
+        }, 500);
     }
 
     function scheduleRun() {
@@ -395,13 +438,18 @@
             clearTimeout(runTimerId);
             runTimerId = null;
         }
+        if (tokenSyncTimer !== null) {
+            clearTimeout(tokenSyncTimer);
+            tokenSyncTimer = null;
+        }
+        is401Recovering = false;
         lastRenderArgs  = null;
         pastTrips       = null;
         auftraegeCache  = null;
         rawReisekettenMap = new Map();
         detailCache.clear();
         auftragDetailCache.clear();
-        filterState     = { from: '', to: '', days: 0, onlyChanges: false };
+        filterState     = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
         activeView      = 'current';
         const root = document.getElementById('dbmrpp-root');
         if (root) root.remove();
@@ -442,7 +490,26 @@
             { 'Authorization': bearerToken, 'Accept': 'application/json' },
             init.headers || {}
         );
-        return origFetch(url, { ...init, headers, credentials: 'include' });
+        return origFetch(url, { ...init, headers, credentials: 'include' }).then(async res => {
+            // If we get a 401, the website has likely already refreshed its token.
+            // Make a safe request to trigger token capture, then retry with updated token.
+            if (res.status === 401 && !init._retried) {
+                console.log('[DBMRPP] Got 401 — refreshing token from website state...');
+                // Make a simple request to trigger the website to include/refresh the token
+                try {
+                    await origFetch('/web/api/kundenkonto/v2', { credentials: 'include' });
+                } catch (_) {}
+                // Wait briefly for any captured token to be processed
+                await new Promise(resolve => setTimeout(resolve, 50));
+                // Retry with the (hopefully) updated token
+                const retryHeaders = Object.assign(
+                    { 'Authorization': bearerToken, 'Accept': 'application/json' },
+                    init.headers || {}
+                );
+                return origFetch(url, { ...init, headers: retryHeaders, credentials: 'include', _retried: true });
+            }
+            return res;
+        });
     }
 
     // Cached detail fetch — share link and abweichung call the same endpoint;
@@ -630,7 +697,8 @@
         }
         const all = [];
         let startIndex = 0;
-        const stamp = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString();
+        const now = new Date();
+        const stamp = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString();
         while (true) {
             const url = `${AUFTRAG_PATH}?startIndex=${startIndex}`
                       + `&letzterGeltungszeitpunktNach=${encodeURIComponent(stamp)}`
@@ -1010,10 +1078,16 @@
     async function loadAbweichungMessages(t) {
         const data = await fetchDetail(t.uuid);
         const trip0 = getDetailTrip(data);
+        const abschnitte = Array.isArray(trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
         return [
             ...(trip0.himMeldungen         || []),
             ...(trip0.priorisierteMeldungen || []),
-            ...(trip0.risNotizen           || [])
+            ...(trip0.risNotizen           || []),
+            ...abschnitte.flatMap(a => [
+                ...((a && a.himMeldungen) || []),
+                ...((a && a.priorisierteMeldungen) || []),
+                ...((a && a.risNotizen) || [])
+            ])
         ];
     }
 
@@ -1026,6 +1100,7 @@
     }
 
     function simplify(r) {
+        const wiederholung = r.ueberwachung && r.ueberwachung.wiederholung;
         return {
             uuid:                    r.reisekettenUuid,
             typ:                     r.typ,
@@ -1049,6 +1124,11 @@
             zuege:                   (r.einstiegsInformationen || []).map(e => e.name).join(' → '),
             seats:                   collectSeats(r.einstiegsInformationen || []),
             ueberwacht:              r.ueberwacht !== undefined ? r.ueberwacht : null,
+            ueberwachungName:        r.ueberwachung && r.ueberwachung.name || null,
+            wiederholung:            wiederholung ? {
+                                         wochentage: Array.isArray(wiederholung.wochentage) ? wiederholung.wochentage.slice() : [],
+                                         aktivBis: wiederholung.aktivBis || null
+                                     } : null,
             umreserviert:            (r.einstiegsInformationen || []).some(
                                          e => e.umreserviert && e.umreserviert !== 'KEINE_UMPLATZIERUNG'),
             letzterReiseplanBearbeiter: r.letzterReiseplanBearbeiter || null
@@ -1059,11 +1139,13 @@
         const seats = [];
         eis.forEach(ei => {
             (ei.wagen || []).forEach(w => {
-                (w.zugeteiltePlaetze || []).forEach(p => {
-                    const range = (p.bisPlatz && p.bisPlatz !== p.vonPlatz)
-                        ? `${p.vonPlatz}–${p.bisPlatz}` : p.vonPlatz;
-                    seats.push(`${ei.name} W${w.wagennummer} Pl.${range}`);
-                });
+                const places = (w.zugeteiltePlaetze || []).map(p =>
+                    (p.bisPlatz && p.bisPlatz !== p.vonPlatz) ? `${p.vonPlatz}–${p.bisPlatz}` : p.vonPlatz
+                ).filter(Boolean);
+                if (!places.length) return;
+                const train = ei.name ? `${ei.name} ` : '';
+                const wagon = w.wagennummer ? `W${w.wagennummer}` : 'W?';
+                seats.push(`${train}${wagon}, Pl.${places.join(', ')}`);
             });
         });
         return seats.join('; ');
@@ -1095,6 +1177,59 @@
     // =========================================================
     // 10) Filter & export helpers
     // =========================================================
+    function getTripTagIds(t) {
+        const ids = [];
+        if (t.klasse === 1) ids.push('tagClass1');
+        if (t.isVerbundticket) ids.push('tagRegionalTicket');
+        if (t.zugbindung === 'AUFGEHOBEN') ids.push('tagZugbindung');
+        if (t.status === 'NICHT_REKONSTRUIERBAR') ids.push('tagNotRecon');
+        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') ids.push('tagMustRebook');
+        if (t.alternativensuche === 'ALTERNATIVEN_KANN') ids.push('tagAltPossible');
+        if (t.relevanteAbweichung) ids.push('tagDisruption');
+        if (t.letzterReiseplanBearbeiter === 'SYSTEM') ids.push('tagRerouted');
+        if (t.umreserviert) ids.push('tagReassigned');
+        if (t.ueberwacht === false) ids.push('tagMuted');
+        if (t.typ === 'FREI') ids.push('tagSaved');
+        if (t.typ === 'WIEDERHOLEND') ids.push('tagWiederholend');
+        if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') ids.push('tagStorniert');
+        if (t.auftragStatus && t.auftragStatus !== 'ABGESCHLOSSEN' && t.typ === 'AUFTRAG') ids.push('tagAuftragStatus');
+        if (t.sitzplatzStorniert) ids.push('tagSeatCancelled');
+        if (t.stellplatzStorniert) ids.push('tagBikeCancelled');
+        if (t.teilpreis) ids.push('tagPartFare');
+        return ids;
+    }
+
+    function collectAvailableTags(trips) {
+        const tags = new Set();
+        trips.forEach(t => {
+            getTripTagIds(t).forEach(id => tags.add(id));
+        });
+        return Array.from(tags).sort();
+    }
+
+    function getTagLabel(tagId) {
+        const labels = {
+            tagClass1: T.tagClass1,
+            tagRegionalTicket: T.tagRegionalTicket,
+            tagZugbindung: T.tagZugbindung,
+            tagNotRecon: T.tagNotRecon,
+            tagMustRebook: T.tagMustRebook,
+            tagAltPossible: T.tagAltPossible,
+            tagDisruption: T.tagDisruption,
+            tagRerouted: T.tagRerouted,
+            tagReassigned: T.tagReassigned,
+            tagMuted: T.tagMuted,
+            tagSaved: T.tagSaved,
+            tagWiederholend: T.tagWiederholend,
+            tagStorniert: T.tagStorniert,
+            tagAuftragStatus: T.tagAuftragStatusLabel,
+            tagSeatCancelled: T.tagSeatCancelled,
+            tagBikeCancelled: T.tagBikeCancelled,
+            tagPartFare: T.tagPartFare
+        };
+        return labels[tagId] || tagId;
+    }
+
     function filterTrips(trips, fs, pastView = false) {
         let result = trips;
         if (fs.from) result = result.filter(t => t.from === fs.from);
@@ -1111,11 +1246,16 @@
         if (fs.onlyChanges) {
             result = result.filter(t =>
                 t.relevanteAbweichung ||
+                t.zugbindung === 'AUFGEHOBEN' ||
                 t.alternativensuche === 'ALTERNATIVEN_MUSS' ||
-                t.alternativensuche === 'ALTERNATIVEN_KANN' ||
                 (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') ||
                 t.status === 'NICHT_REKONSTRUIERBAR' ||
                 t.sitzplatzStorniert || t.stellplatzStorniert
+            );
+        }
+        if (fs.tags && fs.tags.length > 0) {
+            result = result.filter(t =>
+                fs.tags.every(tagId => getTripTagIds(t).includes(tagId))
             );
         }
         return result;
@@ -1287,8 +1427,10 @@
             injectStyles();
             root = document.createElement('div');
             root.id = 'dbmrpp-root';
-            root.innerHTML = `<h2 style="margin:0;padding:10px 14px;background:#ec0016;color:#fff;font-size:14px">${esc(T.title)}<span style="font-weight:normal;font-size:12px;margin-left:8px">Loading…</span></h2>`;
+            root.innerHTML = `<h2 style="margin:0;padding:10px 14px;background:#ec0016;color:#fff;font-size:14px"><span style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><span>${esc(T.title)} <a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" style="color:rgba(255,255,255,.92);font-weight:normal;font-size:11px;text-decoration:underline;margin-left:8px" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span style="font-weight:normal;font-size:12px;margin-left:8px">${esc(T.panelLoading)}</span></span><button type="button" style="background:transparent;border:1px solid rgba(255,255,255,.6);color:#fff;padding:2px 8px;cursor:pointer;border-radius:3px;font-size:12px">×</button></span></h2>`;
             document.body.appendChild(root);
+            const stubClose = root.querySelector('button');
+            if (stubClose) stubClose.addEventListener('click', hidePanel);
         } else {
             root.style.display = '';
         }
@@ -1381,9 +1523,43 @@
                         font-size: 14px;
                         font-weight: 600;
                         display: flex;
-                        justify-content: space-between;
-                        align-items: center;
+                        flex-direction: column;
+                        gap: 8px;
                     }
+
+                    .dbmrpp-header-top {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: baseline;
+                        gap: 12px;
+                        flex-wrap: wrap;
+                    }
+
+                    .dbmrpp-header-actions {
+                        display: flex;
+                        justify-content: flex-start;
+                        align-items: center;
+                        gap: 4px;
+                        flex-wrap: wrap;
+                    }
+
+                    .dbmrpp-title-wrap {
+                        display: inline-flex;
+                        align-items: baseline;
+                        gap: 8px;
+                        flex-wrap: wrap;
+                    }
+
+                    .dbmrpp-version-link {
+                        color: rgba(255,255,255,.92);
+                        font-size: 11px;
+                        font-weight: 400;
+                        text-decoration: underline;
+                        text-underline-offset: 2px;
+                        white-space: nowrap;
+                    }
+
+                    .dbmrpp-version-link:hover { color: #fff; }
 
                     #dbmrpp-root h2 button {
                         background: transparent;
@@ -1392,7 +1568,6 @@
                         padding: 2px 8px;
                         cursor: pointer;
                         border-radius: 3px;
-                        margin-left: 4px;
                         font-size: 12px;
                     }
 
@@ -1408,12 +1583,13 @@
 
                     .dbmrpp-route {
                         font-weight: 600;
-                        display: inline-flex;
+                        display: flex;
+                        flex-wrap: wrap;
                         align-items: center;
                         gap: 2px;
                     }
 
-                    .dbmrpp-route-link { color: #1a3a8a; text-decoration: none; }
+                    .dbmrpp-route-link { color: #1a3a8a; text-decoration: none; word-break: break-word; overflow-wrap: break-word; }
                     .dbmrpp-route-link:hover { text-decoration: underline; }
 
                     .dbmrpp-action-icon {
@@ -1536,6 +1712,13 @@
                     }
 
                     .dbmrpp-changes-toggle.active { background: #ffe9b3; border-color: #8a5a00; color: #8a5a00; }
+
+                    .dbmrpp-selected-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+                    .dbmrpp-tag-filter { display: inline-flex; align-items: center; gap: 4px; background: #dde8ff; color: #1a3a8a; padding: 2px 6px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
+
+                    .dbmrpp-tag-remove { border: none; background: none; color: inherit; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; }
+                    .dbmrpp-tag-remove:hover { opacity: 0.7; }
 
                     .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin-bottom: 8px; border-bottom: 2px solid #eee; }
 
@@ -1700,6 +1883,9 @@
                     const leg = legs.find(l => l.kundenwunschId === trip.kundenwunschId) || legs[0];
                     const submitted = (leg && leg.fahrgastrechte && leg.fahrgastrechte.submittedAntragList) || [];
                     if (!submitted.length) {
+                        // No claim found — evict cache so a re-click always fetches
+                        // fresh data (the user might file a claim in the meantime).
+                        auftragDetailCache.delete(trip.auftragsnummer);
                         detailDiv.textContent = T.fgrNone;
                     } else {
                         detailDiv.innerHTML = submitted.map(a => {
@@ -1750,13 +1936,30 @@
         root.querySelectorAll('.dbmrpp-day-btn').forEach(btn =>
             btn.addEventListener('click', () => { filterState.days = Number(btn.getAttribute('data-days')); reRender(); })
         );
+        const tagSel = root.querySelector('#dbmrpp-tag-sel');
+        if (tagSel) tagSel.addEventListener('change', e => {
+            if (e.target.value) {
+                if (!filterState.tags.includes(e.target.value)) {
+                    filterState.tags.push(e.target.value);
+                }
+                e.target.value = '';
+                reRender();
+            }
+        });
+        root.querySelectorAll('.dbmrpp-tag-remove').forEach(btn =>
+            btn.addEventListener('click', () => {
+                const tagId = btn.getAttribute('data-tag');
+                filterState.tags = filterState.tags.filter(t => t !== tagId);
+                reRender();
+            })
+        );
         const changesToggle = root.querySelector('.dbmrpp-changes-toggle');
         if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyChanges = !filterState.onlyChanges; reRender(); });
         root.querySelectorAll('.dbmrpp-view-tab').forEach(tab =>
             tab.addEventListener('click', () => {
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
-                filterState.from = ''; filterState.to = '';
+                filterState.from = ''; filterState.to = ''; filterState.tags = [];
                 if (activeView === 'past') filterState.onlyChanges = false;
                 reRender();
             })
@@ -1770,7 +1973,8 @@
         const isPast = activeView === 'past';
         const sourcePool = isPast ? (pastTrips || []) : currentUpcomingPool(trips);
         const filtered    = filterTrips(sourcePool, filterState, isPast);
-        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyChanges: false }, isPast);
+        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyChanges: false, tags: [] }, isPast);
+        const availableTags = collectAvailableTags(filtered);
         const fromOptions = [...new Set(
             dayFiltered.filter(t => !filterState.to   || t.to   === filterState.to).map(t => t.from).filter(Boolean)
         )].sort();
@@ -1781,21 +1985,23 @@
 
         return `
         <h2>
-                    <span>${T.title}</span>
-          <span>
+                    <span class="dbmrpp-header-top">
+                        <span class="dbmrpp-title-wrap"><span>${T.title}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a></span>
+                        <button class="dbmrpp-close" title="${T.ttClose}">×</button>
+                    </span>
+                    <span class="dbmrpp-header-actions">
             <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
             <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
             <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
             <button class="dbmrpp-reset"    title="${T.ttReset}">Reset</button>
-            <button class="dbmrpp-close"    title="${T.ttClose}">×</button>
           </span>
         </h2>
-        ${buildFilterBar(fromOptions, toOptions, isPast)}
+        ${buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
         ${buildChangeBlock(changes, lastVisitTxt)}
         ${buildTripSection(filtered, sourcePool, orphans, isPast)}`;
     }
 
-    function buildFilterBar(fromOptions, toOptions, isPast) {
+    function buildFilterBar(fromOptions, toOptions, availableTags, isPast) {
         const opt = (val, options) => options.map(v =>
             `<option value="${esc(v)}"${filterState[val] === v ? ' selected' : ''}>${esc(v)}</option>`
         ).join('');
@@ -1808,6 +2014,10 @@
                         <select class="dbmrpp-select" id="dbmrpp-to-sel">
                             <option value="">${T.toAll}</option>${opt('to', toOptions)}
                         </select>
+                        <select class="dbmrpp-select" id="dbmrpp-tag-sel">
+                            <option value="">${T.tagsLabel}</option>
+                            ${availableTags.map(tagId => `<option value="${esc(tagId)}">${esc(getTagLabel(tagId))}</option>`).join('')}
+                        </select>
           </div>
                     <div class="dbmrpp-filter-row dbmrpp-filter-row-bottom">
                         <div class="dbmrpp-day-btns">
@@ -1815,6 +2025,7 @@
                                     `<button class="dbmrpp-day-btn${filterState.days === d ? ' active' : ''}" data-days="${d}">${d === 0 ? T.dayAll : T.dayN(d)}</button>`
                             ).join('')}
                         </div>
+                        ${filterState.tags.length > 0 ? `<div class="dbmrpp-selected-tags">${filterState.tags.map(t => `<span class="dbmrpp-tag-filter">${esc(getTagLabel(t))} <button class="dbmrpp-tag-remove" data-tag="${esc(t)}" style="border:none;background:none;color:inherit;cursor:pointer;padding:0;margin-left:4px;">×</button></span>`).join('')}</div>` : ''}
                         ${isPast ? '' : `<button class="dbmrpp-changes-toggle${filterState.onlyChanges ? ' active' : ''}">${T.onlyIssues}</button>`}
                     </div>
         </div>`;
@@ -1870,7 +2081,7 @@
 
     function renderShareLink(t) {
         if (t.fromReiseketten ? t.isOrphaned : !t.auftragsnummer) return '';
-        return ` <a class="dbmrpp-share-btn dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.shareTooltip}">⤴️</a>`;
+        return ` <button type="button" class="dbmrpp-share-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.shareTooltip}">⤴️</button>`;
     }
 
     function renderAbweichungBtn(t) {
@@ -1882,18 +2093,18 @@
         if (t.isVerbundticket) return '';
         const ok = (t.typ === 'AUFTRAG' && t.auftragsnummer && t.nachname) || t.typ === 'FREI' || t.typ === 'WIEDERHOLEND';
         if (!ok) return '';
-        return ` <a class="dbmrpp-ics-link dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.icsTooltip}">📅</a>`;
+        return ` <button type="button" class="dbmrpp-ics-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.icsTooltip}">📅</button>`;
     }
 
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
         if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') return '';
-        return ` <a class="dbmrpp-pdf-link dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.pdfTooltip}">🧾</a>`;
+        return ` <button type="button" class="dbmrpp-pdf-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.pdfTooltip}">🧾</button>`;
     }
 
     function renderRawJsonLink(t) {
         if (!t.uuid) return '';
-        return ` <a class="dbmrpp-json-link dbmrpp-action-icon" href="#" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{ }</a>`;
+        return ` <button type="button" class="dbmrpp-json-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{…}</button>`;
     }
 
     function renderFahrgastrechteBtn(t) {
@@ -1922,7 +2133,7 @@
         if (t.umreserviert)                              tags.push(tag('dbmrpp-tag-warn', T.tagReassigned));
         if (t.ueberwacht === false)                      tags.push(tag('dbmrpp-tag-warn', T.tagMuted));
         if (t.typ === 'FREI')                            tags.push(tag('dbmrpp-tag-ok',   T.tagSaved));
-        if (t.typ === 'WIEDERHOLEND')                    tags.push(tag('dbmrpp-tag-info', T.tagAbo));
+        if (t.typ === 'WIEDERHOLEND')                    tags.push(tag('dbmrpp-tag-ok',   T.tagWiederholend));
         if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT')
             tags.push(tag('dbmrpp-tag-bad',  esc(formatStorno(t.storniertStatus))));
         if (t.auftragStatus && t.auftragStatus !== 'ABGESCHLOSSEN' && t.typ === 'AUFTRAG')
@@ -1935,8 +2146,11 @@
 
     function renderTripLine(t) {
         const d    = t.departure ? formatDateTime(t.departure) : '?';
-        const a    = t.arrival   ? formatDateTime(t.arrival)   : '?';
+        const sameDay = t.departure && t.arrival &&
+            t.departure.slice(0, 10) === t.arrival.slice(0, 10);
+        const a    = t.arrival ? (sameDay ? formatTime(t.arrival) : formatDateTime(t.arrival)) : '?';
         const tags = buildTripTags(t);
+        const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
         <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}" data-uuid="${esc(t.uuid)}">
                     <div class="dbmrpp-route">${renderRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
@@ -1946,10 +2160,12 @@
             ${t.leistungsname ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
             ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
             ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-            ${t.zuege ? `<br>${esc(t.zuege)}` : ''}
-            ${t.seats ? `<br>${esc(t.seats)}` : ''}
+            ${t.zuege ? `<br>🚅 ${esc(t.zuege)}` : ''}
+            ${t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
             ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
             ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
+                        ${t.ueberwachungName ? `<br>${esc(T.metaRecurringName(t.ueberwachungName))}` : ''}
+            ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
             ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
           </div>
           ${tags.length ? `<div>${tags.join('')}</div>` : ''}
@@ -1987,10 +2203,31 @@
         return d.toLocaleString(DATE_LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
+    function formatTime(iso) {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString(DATE_LOCALE, { hour: '2-digit', minute: '2-digit' });
+    }
+
     function formatDate(iso) {
         const d = new Date(iso);
         if (isNaN(d.getTime())) return iso;
         return d.toLocaleDateString(DATE_LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+
+    function formatWochentage(days) {
+        const labels = IS_INT
+            ? { MO: 'Mon', DI: 'Tue', MI: 'Wed', DO: 'Thu', FR: 'Fri', SA: 'Sat', SO: 'Sun' }
+            : { MO: 'Mo', DI: 'Di', MI: 'Mi', DO: 'Do', FR: 'Fr', SA: 'Sa', SO: 'So' };
+        return (Array.isArray(days) ? days : []).map(d => labels[d] || d).join(', ');
+    }
+
+    function formatWiederholungRule(wiederholung) {
+        if (!wiederholung || !Array.isArray(wiederholung.wochentage) || !wiederholung.wochentage.length) return '';
+        const days = formatWochentage(wiederholung.wochentage);
+        const untilWord = IS_INT ? ' until ' : ' bis ';
+        const until = wiederholung.aktivBis ? `${untilWord}${formatDate(wiederholung.aktivBis)}` : '';
+        return `${T.tagWiederholend}: ${days}${until}`;
     }
 
     function esc(s) {
@@ -1999,7 +2236,3 @@
         );
     }
 })();
-
-
-
-

@@ -18,11 +18,13 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Export trips to **ICS format** (with stable UIDs for deduplication)
 - Maximalist bulk CSV export for spreadsheet analysis
 - Download individual PDF tickets
+- Download raw API responses JSON for individual trips (complete information at trip level) 
 
 **Filtering**
 - Filter by station (origin/destination)
 - Filter by date range (all/7/30/90)
 - Show only trips with issues
+- Filter by labels & indicators
 - Separate tabs for future and past trips
 
 **Labels & Indicators**
