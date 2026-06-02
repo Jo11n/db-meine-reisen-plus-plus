@@ -9,16 +9,24 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 **Full Trip Overview**
 - Display complete journey list (future/past) without pagination
 - View platform assignments, ticket category, and seat reservations without going to the detail page
+- Optional external train info links for train numbers (e.g. zugfinder.net, bahn.expert) *(experimental)*
+- Optional external routing links for upcoming trips (e.g. bahn.expert, chuuchuu) *(experimental)*
 
 **Change Tracking (alpha)**
 - Automatic snapshot comparison across visits (delays, cancellations, rebookings, platform changes)
 - Visual highlighting of what's changed
 
+**Past Trip Cache (reiseketten history)**
+- Optional: past trips can be enriched from locally cached reiseketten data captured on earlier visits.
+- Cached enrichment currently includes key operational fields such as train binding, status/disruption indicators, train list, seats, RT times/delay summary, tracks, and cached notifications (when available).
+- Cache data is browser-local (`localStorage`), capped and pruned over time, and only exists after prior successful captures.
+
 **Data Export**
 - Export trips to **ICS format** (with stable UIDs for deduplication)
 - Maximalist bulk CSV export for spreadsheet analysis
 - Download individual PDF tickets
-- Download raw API responses JSON for individual trips (complete information at trip level) 
+- Download raw API response JSON for individual trips (complete information at trip level)
+- Import/export snapshot + settings bundle *(merge mode, newest wins, experimental)*
 
 **Filtering**
 - Filter by station (origin/destination)
@@ -43,7 +51,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 ## Installation
 
 1. **Install a userscript manager, such as:**
-   - [Tampermonkey](https://tampermonkey.net/) 
+   - [Tampermonkey](https://tampermonkey.net/)
    - [Violentmonkey](https://violentmonkey.github.io/)
    - [Greasemonkey](https://www.greasespot.net/)
 
@@ -53,11 +61,11 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 3. **Visit your trips:**
    - Go to [https://www.bahn.de/meine-reisen](https://www.bahn.de/meine-reisen)
-   - Open the script by clicking on the hover button 🚆++ (lower right corner of the screen)
+   - Open the script by clicking the floating button 🚆++ (lower right corner of the screen)
 
 ## Trust & Security
 
-**unofficial, use at your own risk**
+**Unofficial, use at your own risk.**
 
 **Data Privacy**
 - Runs entirely in your browser
@@ -67,26 +75,29 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - All snapshots stored locally in your browser storage
 
 **No Permissions Needed**
-- Script runs with `@grant none` - requires no special browser permissions
+- Script runs with `@grant none` and requires no special browser permissions
 - Only interacts with bahn.de
 
 **Minimal API footprint**
-- uses API calls as the website itself
-- per trip API calls only on demand by user
+- Uses the same API calls as the website itself
+- Per-trip API calls are made only on user demand
 
 ## Limitations
 
-- **Does not modify bookings** - Only reads and displays data
+- **Intentional: Does not modify bookings** - Only reads and displays data
 - **Not guaranteed to catch all changes** - Only detects changes visible in the API (sometimes it wasn't entirely clear what caused the API to flag a trip with "relevant change", for example)
 - **Dependent on DB API stability** - If Deutsche Bahn changes their backend APIs, the script may require updates
 - **Browser/device bound** - Snapshots are stored locally per browser profile; changing browsers won't sync history
-- **Script likely does not know all kinds of tickets/flags** - as the API is not documented, I could only rely on my own trips to reverse engineer. 
-- **not optimized for mobile yet** - might look ugly on small screens
+- **Subdomain-separated storage** - `localStorage` is origin-scoped, so `www.bahn.de` and `int.bahn.de` do not share snapshot/settings/history automatically; use snapshot export/import to transfer data.
+- **Past cache is optional and opportunistic** - Enrichment for past trips is disabled by default and depends on previously captured reiseketten data; if no prior capture exists, only order-derived fields can be shown.
+- **Script likely does not know all ticket/flag variants** - Since the API is undocumented, reverse engineering is based on a limited set of observed trips.
+- **External link-building is somewhat unreliable** - There are many edge cases.
+- **Not optimized for mobile yet** - The panel may look rough on smaller screens.
 
 
 ## Support & Feedback
 
--  [Report issues/Propose features/enhancments](https://github.com/Jo11n/db-meine-reisen-plus-plus/issues)
+- [Report issues or propose features/enhancements](https://github.com/Jo11n/db-meine-reisen-plus-plus/issues)
 
 
 ## License

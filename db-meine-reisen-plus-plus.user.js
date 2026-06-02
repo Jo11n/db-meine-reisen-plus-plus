@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.3.0
+// @version      0.4.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -22,15 +22,22 @@
 
     // ----- Configuration -----
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
+    const SETTINGS_KEY     = 'dbmrpp.settings.v1';
+    const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
+    const REISEKETTEN_HISTORY_KEY = 'dbmrpp.reisekettenHistory.v1';
+    const REISEKETTEN_HISTORY_SCHEMA_VERSION = 2;
     const LAST_VISIT_KEY   = 'dbmrpp.lastVisit';
     const KUNDENPROFIL_KEY = 'dbmrpp.kundenprofilId';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.3.0';
+    const SCRIPT_VERSION  = '0.4.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
+    const REISEKETTEN_HISTORY_MAX_ENTRIES = 500;
+    const CACHE_NOTIFICATIONS_MAX_ITEMS = 8;
+    const CACHE_NOTIFICATION_TEXT_MAX_CHARS = 400;
     const RUN_DELAY_MS     = 800;
     const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
                               'departure','arrival','departureRt','arrivalRt',
@@ -51,9 +58,26 @@
             ttReload:          'Reload',
             ttIcsBulk:         'Download all visible trips as ICS',
             ttCsv:             'Download all visible trips as CSV',
-            ttReset:           'Reset snapshot',
+            ttReset:           'Reset trips snapshot',
+            ttSettings:        'Settings',
             ttClose:           'Close',
             ttReleaseLog:      'Open changelog',
+            settingsTitle:     'Settings',
+            settingsRememberFilter: 'Remember filters',
+            settingsOpenOnLoad: 'Open panel on page load',
+            settingsUsePastCache: 'Enhance past view from cache (experimental). Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was opened at least once before the trip.',
+            settingsShowJsonButton: 'Show JSON download button',
+            settingsExportSnapshot: 'Export snapshot (experimental)',
+            settingsImportSnapshot: 'Import snapshot (experimental)',
+            settingsTrainLinksEnabled: 'Link train numbers externally (experimental)',
+            settingsTrainLinkProvider: 'Train link provider',
+            settingsTrainProviderZugfinder: 'zugfinder.net',
+            settingsTrainProviderBahnExpert: 'bahn.expert',
+            settingsShowRoutingButton: 'Show external routing button (experimental)',
+            settingsRoutingLinkProvider: 'Route link provider',
+            settingsRoutingProviderBahnExpert: 'bahn.expert',
+            settingsRoutingProviderChuuchuu: 'chuuchuu',
+            settingsRoutingProviderTransitous: 'transitous.org',
             fromAll:           'From (all)',
             toAll:             'To (all)',
             dayAll:            'All',
@@ -89,6 +113,12 @@
             tagReassigned:     'Seat reassigned',
             tagMuted:          '🔕 No alerts',
             tagAuftragStatus:  s => `Order: ${s}`,
+            cacheLabel:        '🗄️ Cache',
+            cacheNotificationsLabel: 'Notifications',
+            cacheDelayDeparture: 'Departure delay',
+            cacheDelayArrival:   'Arrival delay',
+            cacheCapturedAt:   d => `🕒 Captured on ${d}`,
+            cacheMissing:      'ℹ️ No cached trip details available.',
             metaValidLabel:    'Valid:',
             metaPlatform:      'Pl.',
             metaPersons:       n => `${n} persons`,
@@ -99,9 +129,11 @@
             icsTooltip:        'Download ICS file',
             pdfTooltip:        'Download ticket PDF',
             shareTooltip:      'Share connection',
+            routeTooltip:      'Open route externally',
             rawJsonTooltip:    'Download raw API JSON',
             shareCopied:       '✓ Copied!',
             shareError:        'Share failed — see console.',
+            routeError:        'External route link failed — see console.',
             rawJsonError:      'Raw JSON download failed — see console.',
             abweichungTooltip: 'Show disruption details',
             abweichungLoading: 'Loading…',
@@ -146,6 +178,11 @@
             alertPdfError:       'PDF download failed — see console.',
             alertNoTripsExport:  'No trips to export.',
             alertResetConfirm:   'Delete snapshot? All trips will appear as new on next load.',
+            alertImportMergeConfirm: 'Import snapshot and merge with local snapshot/settings (newest wins)?',
+            alertImportInvalid:  'Invalid import file. Expected snapshot + settings export JSON.',
+            alertImportError:    'Snapshot import failed — see console.',
+            alertImportSuccess:  'Snapshot import completed.',
+            alertExportError:    'Snapshot export failed — see console.',
             icsDescTrains:       t => `Trains: ${t}`,
             icsDescOrder:        n => `Order: ${n}`,
             icsDescSeat:         s => `Seat: ${s}`,
@@ -170,9 +207,26 @@
             ttReload:          'Neu laden',
             ttIcsBulk:         'Alle sichtbaren Reisen als ICS herunterladen',
             ttCsv:             'Alle sichtbaren Reisen als CSV herunterladen',
-            ttReset:           'Snapshot zurücksetzen',
+            ttReset:           'Reisen-Snapshot zurücksetzen',
+            ttSettings:        'Einstellungen',
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
+            settingsTitle:     'Einstellungen',
+            settingsRememberFilter: 'Filter merken',
+            settingsOpenOnLoad: 'Panel beim Laden öffnen',
+            settingsUsePastCache: 'Vergangenheitsansicht mit Cache anreichern (experimentell). Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
+            settingsShowJsonButton: 'JSON-Download-Button anzeigen',
+            settingsExportSnapshot: 'Snapshot exportieren (experimentell)',
+            settingsImportSnapshot: 'Snapshot importieren (experimentell)',
+            settingsTrainLinksEnabled: 'Zugnummern extern verlinken (experimentell)',
+            settingsTrainLinkProvider: 'Anbieter für Zuglinks',
+            settingsTrainProviderZugfinder: 'zugfinder.net',
+            settingsTrainProviderBahnExpert: 'bahn.expert',
+            settingsShowRoutingButton: 'Externen Routing-Button anzeigen (experimentell)',
+            settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
+            settingsRoutingProviderBahnExpert: 'bahn.expert',
+            settingsRoutingProviderChuuchuu: 'chuuchuu',
+            settingsRoutingProviderTransitous: 'transitous.org',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
             dayAll:            'Alle',
@@ -208,6 +262,12 @@
             tagReassigned:     'Umplatziert',
             tagMuted:          '🔕 Keine Benachrichtigungen',
             tagAuftragStatus:  s => `Auftrag: ${s}`,
+            cacheLabel:        '🗄️ Cache',
+            cacheNotificationsLabel: 'Benachrichtigungen',
+            cacheDelayDeparture: 'Verspaetung Abfahrt',
+            cacheDelayArrival:   'Verspaetung Ankunft',
+            cacheCapturedAt:   d => `🕒 Erfasst am ${d}`,
+            cacheMissing:      'ℹ️ Keine zwischengespeicherten Reisedetails verfügbar.',
             metaValidLabel:    'Gültig:',
             metaPlatform:      'Gl.',
             metaPersons:       n => `${n} Personen`,
@@ -218,9 +278,11 @@
             icsTooltip:        'ICS-Datei herunterladen',
             pdfTooltip:        'Ticket-PDF herunterladen',
             shareTooltip:      'Verbindung teilen',
+            routeTooltip:      'Route extern öffnen',
             rawJsonTooltip:    'Raw-API-JSON herunterladen',
             shareCopied:       '✓ Link kopiert!',
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
+            routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
             rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
             abweichungTooltip: 'Abweichungsdetails anzeigen',
             abweichungLoading: 'Lade…',
@@ -265,6 +327,11 @@
             alertPdfError:       'PDF-Download fehlgeschlagen – siehe Konsole.',
             alertNoTripsExport:  'Keine Reisen zum Exportieren.',
             alertResetConfirm:   'Snapshot löschen? Beim nächsten Laden gelten alle Reisen als neu.',
+            alertImportMergeConfirm: 'Snapshot importieren und mit lokalem Snapshot/Einstellungen zusammenfuehren (neuester Stand gewinnt)?',
+            alertImportInvalid:  'Ungültige Import-Datei. Erwartet wird ein Snapshot+Settings-Export-JSON.',
+            alertImportError:    'Snapshot-Import fehlgeschlagen — siehe Konsole.',
+            alertImportSuccess:  'Snapshot-Import abgeschlossen.',
+            alertExportError:    'Snapshot-Export fehlgeschlagen — siehe Konsole.',
             icsDescTrains:       t => `Züge: ${t}`,
             icsDescOrder:        n => `Auftrag: ${n}`,
             icsDescSeat:         s => `Sitzplatz: ${s}`,
@@ -298,13 +365,99 @@
     let runTimerId      = null;
     let lastRenderArgs  = null;
     let filterState     = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
+    let uiSettings      = loadUiSettings();
+    let settingsOpen    = false;
     let activeView      = 'current';
     let pastTrips       = null;
     let auftraegeCache  = null;
-    let panelVisible    = false;
+    let reisekettenHistory = loadReisekettenHistory();
+    let panelVisible    = !!uiSettings.openOnLoad;
     let rawReisekettenMap = new Map();
     let tokenSyncTimer  = null;
     let is401Recovering = false;
+
+    function loadUiSettings() {
+        const defaults = {
+            rememberFilter: false,
+            openOnLoad: false,
+            usePastCache: false,
+            showJsonButton: false,
+            settingsUsePastCache: false,
+            trainLinksEnabled: false,
+            'traininfo-provider': 'bahn.expert',
+            showRoutingButton: false,
+            'routing-provider': 'bahn.expert'
+        };
+        try {
+            const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+            const rawProvider = parsed['traininfo-provider'] || parsed.trainLinkProvider;
+            const provider = rawProvider === 'bahn.expert' || rawProvider === 'bahnexpert' ? 'bahn.expert' : 'zugfinder';
+            const rawRoutingProvider = parsed['routing-provider'];
+            const routingProvider = (rawRoutingProvider === 'chuuchuu' || rawRoutingProvider === 'transitous.org')
+                ? rawRoutingProvider
+                : 'bahn.expert';
+            return {
+                rememberFilter: !!parsed.rememberFilter,
+                openOnLoad: !!parsed.openOnLoad,
+                usePastCache: parsed.usePastCache === true,
+                showJsonButton: parsed.showJsonButton !== false,
+                trainLinksEnabled: !!parsed.trainLinksEnabled,
+                'traininfo-provider': provider,
+                showRoutingButton: parsed.showRoutingButton !== undefined
+                    ? !!parsed.showRoutingButton
+                    : !!parsed.routingLinksEnabled,
+                'routing-provider': routingProvider
+            };
+        } catch (_) {
+            return defaults;
+        }
+    }
+
+    function saveUiSettings() {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings)); } catch (_) {}
+    }
+
+    function saveFilterState() {
+        if (!uiSettings.rememberFilter) {
+            try { localStorage.removeItem(FILTER_STATE_KEY); } catch (_) {}
+            return;
+        }
+        try {
+            localStorage.setItem(FILTER_STATE_KEY, JSON.stringify({
+                from: filterState.from || '',
+                to: filterState.to || '',
+                days: Number(filterState.days) || 0,
+                onlyChanges: !!filterState.onlyChanges,
+                tags: Array.isArray(filterState.tags) ? filterState.tags.slice() : [],
+                activeView
+            }));
+        } catch (_) {}
+    }
+
+    function loadFilterStateIfEnabled() {
+        if (!uiSettings.rememberFilter) return;
+        try {
+            const parsed = JSON.parse(localStorage.getItem(FILTER_STATE_KEY) || '{}');
+            filterState = {
+                from: parsed.from || '',
+                to: parsed.to || '',
+                days: Number(parsed.days) || 0,
+                onlyChanges: !!parsed.onlyChanges,
+                tags: Array.isArray(parsed.tags) ? parsed.tags.slice() : []
+            };
+            if (parsed.activeView === 'past' || parsed.activeView === 'current') {
+                activeView = parsed.activeView;
+            }
+        } catch (_) {}
+    }
+
+    function rememberUiState() {
+        saveUiSettings();
+        saveFilterState();
+    }
+
+    loadFilterStateIfEnabled();
+    seedReisekettenHistoryFromSnapshotStorage();
 
     // Cache for reiseketten (journey-chain) detail responses.
     // Share links and disruption details reuse the same endpoint.
@@ -432,7 +585,8 @@
     }
 
     function cleanup() {
-        panelVisible    = false;
+        panelVisible    = !!uiSettings.openOnLoad;
+        settingsOpen    = false;
         runInProgress   = false;
         if (runTimerId !== null) {
             clearTimeout(runTimerId);
@@ -640,13 +794,16 @@
             const auftragMap = buildAuftragMap(auftraege);
             const trips = (reisekettenData.reiseketten || []).map(simplify);
             trips.forEach(t => mergeAuftrag(t, auftragMap[t.kundenwunschId]));
-            trips.sort((a, b) => (a.departure || '').localeCompare(b.departure || ''));
+            upsertReisekettenHistoryFromTrips(trips);
 
             auftraegeCache = auftraege;
             pastTrips = null;
 
-            const matchedIds = new Set(trips.map(t => t.kundenwunschId).filter(Boolean));
-            const orphans = buildOrphans(auftraege, matchedIds);
+            const matchedKeys = new Set();
+            trips.forEach(t => getTripMatchKeys(t).forEach(k => matchedKeys.add(k)));
+            trips.push(...buildCurrentSupplementalTrips(auftraege));
+            trips.sort((a, b) => (a.departure || '').localeCompare(b.departure || ''));
+            const orphans = buildOrphans(auftraege, matchedKeys);
 
             const lastVisit = localStorage.getItem(LAST_VISIT_KEY);
 
@@ -668,10 +825,30 @@
     }
 
     async function fetchReiseketten() {
-        const url = `${ENDPOINT_PATH}?pagesize=${PAGESIZE}&types%5B%5D=AUFTRAG&types%5B%5D=FREI&types%5B%5D=WIEDERHOLEND`;
-        const res = await dbFetch(url);
-        if (!res.ok) { console.warn('[DBMRPP] reiseketten HTTP', res.status); return null; }
-        return res.json();
+        const all = [];
+        let startIndex = 0;
+        while (true) {
+            const url = `${ENDPOINT_PATH}?startIndex=${startIndex}&pagesize=${PAGESIZE}&types%5B%5D=AUFTRAG&types%5B%5D=FREI&types%5B%5D=WIEDERHOLEND`;
+            const res = await dbFetch(url);
+            if (!res.ok) {
+                console.warn('[DBMRPP] reiseketten HTTP', res.status);
+                return all.length ? { reiseketten: all } : null;
+            }
+            const data = await res.json();
+            const batch = data.reiseketten || [];
+            all.push(...batch);
+
+            // Prefer explicit hasMore flags when present, otherwise fall back to
+            // the batch size heuristic to avoid endless loops.
+            const hasMore = (typeof data.hasMoreReiseketten === 'boolean')
+                ? data.hasMoreReiseketten
+                : ((typeof data.hasMore === 'boolean') ? data.hasMore : (batch.length === PAGESIZE));
+            if (!hasMore || batch.length === 0) break;
+
+            startIndex += batch.length;
+            if (all.length > 1000) break;
+        }
+        return { reiseketten: all };
     }
 
     // Fetches kundenprofilId from /web/api/kundenkonto/v2 when URL-sniffing has not
@@ -712,7 +889,7 @@
             all.push(...batch);
             if (!data.hasMoreAuftraege || batch.length === 0) break;
             startIndex += batch.length;
-            if (all.length > 5000) break;
+            if (all.length > 1000) break;
         }
         return all;
     }
@@ -721,14 +898,329 @@
     // 4) Auftrag (order) data helpers
     // =========================================================
 
-    // Extract outbound and return legs from an auftrag entry.
-    function extractLegs(a) {
-        const legs = [];
+    // Extract all trip-like items from an auftrag entry.
+    // Besides regular hin/rueckfahrt legs, some products are exposed only as
+    // katalogwunsch LEISTUNG entries (for example bike day tickets).
+    function extractAuftragItems(a) {
+        const items = [];
         if (a.gesamtreisen && a.gesamtreisen[0]) {
-            if (a.gesamtreisen[0].hinfahrt)  legs.push(a.gesamtreisen[0].hinfahrt);
-            if (a.gesamtreisen[0].rueckfahrt) legs.push(a.gesamtreisen[0].rueckfahrt);
+            if (a.gesamtreisen[0].hinfahrt) items.push(a.gesamtreisen[0].hinfahrt);
+            if (a.gesamtreisen[0].rueckfahrt) items.push(a.gesamtreisen[0].rueckfahrt);
         }
-        return legs;
+        const leistung = normalizeKatalogwunschLeistung(a && a.katalogwunsch);
+        if (leistung) items.push(leistung);
+        return items;
+    }
+
+    function normalizeKatalogwunschLeistung(katalogwunsch) {
+        if (!katalogwunsch || katalogwunsch.positionTyp !== 'LEISTUNG') return null;
+        return {
+            positionTyp: katalogwunsch.positionTyp,
+            status: katalogwunsch.status || null,
+            name: katalogwunsch.name || null,
+            leistungsname: katalogwunsch.name || null,
+            leistungsklasse: katalogwunsch.klasse || null,
+            leistungsbuendelId: katalogwunsch.leistungsbuendelId || null,
+            materialisierungsKanalNames: Array.isArray(katalogwunsch.materialisierungsKanalNames)
+                ? katalogwunsch.materialisierungsKanalNames.slice()
+                : [],
+            abfahrt: katalogwunsch.ersterGeltungszeitpunkt || null,
+            ankunft: katalogwunsch.letzterGeltungszeitpunkt || null,
+            zeitlicheGueltigkeit: {
+                ersterGeltungszeitpunkt: katalogwunsch.ersterGeltungszeitpunkt || null,
+                letzterGeltungszeitpunkt: katalogwunsch.letzterGeltungszeitpunkt || null
+            },
+            reisende: []
+        };
+    }
+
+    function isLeistungAuftragItem(item) {
+        return !!(item && item.positionTyp === 'LEISTUNG');
+    }
+
+    // Identity helpers:
+    // - Keep a stable, source-aware ids model on trips.
+    // - Continue supporting legacy top-level fields for backward compatibility.
+    function getTripIds(t) {
+        const ids = (t && t.ids && typeof t.ids === 'object') ? t.ids : {};
+        const kundenwunschId = ids.kundenwunschId || (t && t.kundenwunschId) || null;
+        const auftragsnummer = ids.auftragsnummer || (t && t.auftragsnummer) || null;
+        const reisekettenUuid = ids.reisekettenUuid || ((t && t.fromReiseketten) ? t.uuid : null) || null;
+        const syntheticId = ids.syntheticId || null;
+        return { reisekettenUuid, kundenwunschId, auftragsnummer, syntheticId };
+    }
+
+    function getTripMatchKeys(t) {
+        const ids = getTripIds(t);
+        const keys = [];
+        if (ids.kundenwunschId) keys.push(`kw:${ids.kundenwunschId}`);
+        if (ids.auftragsnummer) keys.push(`ao:${ids.auftragsnummer}`);
+        if (ids.reisekettenUuid) keys.push(`rk:${ids.reisekettenUuid}`);
+        if (ids.syntheticId) keys.push(`sy:${ids.syntheticId}`);
+        return keys;
+    }
+
+    function loadReisekettenHistory() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
+            if (parsed && typeof parsed === 'object' && parsed.entries && typeof parsed.entries === 'object') {
+                return normalizeReisekettenHistory(parsed);
+            }
+        } catch (_) {}
+        return { entries: {} };
+    }
+
+    function normalizeHistoryEntry(entry) {
+        if (!entry || typeof entry !== 'object') return null;
+        const ids = getTripIds(entry);
+        if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
+        return {
+            ids,
+            fromExtId: entry.fromExtId || null,
+            toExtId: entry.toExtId || null,
+            departure: entry.departure || null,
+            arrival: entry.arrival || null,
+            departureTrack: entry.departureTrack || null,
+            arrivalTrack: entry.arrivalTrack || null,
+            departureRt: entry.departureRt || null,
+            arrivalRt: entry.arrivalRt || null,
+            zuege: entry.zuege || '',
+            seats: entry.seats || '',
+            zugbindung: entry.zugbindung || null,
+            status: entry.status || null,
+            relevanteAbweichung: !!entry.relevanteAbweichung,
+            alternativensuche: entry.alternativensuche || null,
+            ueberwacht: entry.ueberwacht === undefined ? null : entry.ueberwacht,
+            ueberwachungName: entry.ueberwachungName || null,
+            wiederholung: entry.wiederholung || null,
+            umreserviert: !!entry.umreserviert,
+            letzterReiseplanBearbeiter: entry.letzterReiseplanBearbeiter || null,
+            notifications: normalizeNotificationEntries(entry.notifications || []),
+            cachedAt: entry.cachedAt || null
+        };
+    }
+
+    function normalizeReisekettenHistory(raw) {
+        const entriesRaw = (raw && raw.entries && typeof raw.entries === 'object') ? raw.entries : {};
+        const normalizedEntries = {};
+        Object.entries(entriesRaw).forEach(([key, entry]) => {
+            const n = normalizeHistoryEntry(entry);
+            if (n) normalizedEntries[key] = n;
+        });
+        return {
+            schemaVersion: REISEKETTEN_HISTORY_SCHEMA_VERSION,
+            entries: normalizedEntries
+        };
+    }
+
+    function saveReisekettenHistory() {
+        try {
+            const normalized = normalizeReisekettenHistory(reisekettenHistory);
+            localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(normalized));
+            reisekettenHistory = normalized;
+        } catch (_) {}
+    }
+
+    function toNotificationText(m) {
+        if (m === null || m === undefined) return '';
+        const raw = typeof m === 'string'
+            ? m
+            : (m.text || m.meldungsText || m.kopfText || m.titel || m.title || '');
+        const text = String(raw || '').trim().replace(/\s+/g, ' ');
+        if (!text) return '';
+        return text.slice(0, CACHE_NOTIFICATION_TEXT_MAX_CHARS);
+    }
+
+    function normalizeNotificationEntries(entries) {
+        const seen = new Set();
+        const out = [];
+        (entries || []).forEach(m => {
+            if (out.length >= CACHE_NOTIFICATIONS_MAX_ITEMS) return;
+            const text = toNotificationText(m);
+            if (!text || seen.has(text)) return;
+            seen.add(text);
+            out.push({ text });
+        });
+        return out;
+    }
+
+    function collectNotificationsFromTripShape(tripLike) {
+        if (!tripLike || typeof tripLike !== 'object') return [];
+        const abschnitte = Array.isArray(tripLike.verbindungsAbschnitte) ? tripLike.verbindungsAbschnitte : [];
+        return normalizeNotificationEntries([
+            ...(tripLike.himMeldungen || []),
+            ...(tripLike.priorisierteMeldungen || []),
+            ...(tripLike.risNotizen || []),
+            ...abschnitte.flatMap(a => [
+                ...((a && a.himMeldungen) || []),
+                ...((a && a.priorisierteMeldungen) || []),
+                ...((a && a.risNotizen) || [])
+            ])
+        ]);
+    }
+
+    function buildReisekettenHistoryEntry(t, cachedAtOverride) {
+        const ids = getTripIds(t);
+        if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
+        const notifications = normalizeNotificationEntries(t.notifications || []);
+        return {
+            ids,
+            fromExtId: t.fromExtId || null,
+            toExtId: t.toExtId || null,
+            departure: t.departure || null,
+            arrival: t.arrival || null,
+            departureTrack: t.departureTrack || null,
+            arrivalTrack: t.arrivalTrack || null,
+            departureRt: t.departureRt || null,
+            arrivalRt: t.arrivalRt || null,
+            zuege: t.zuege || '',
+            seats: t.seats || '',
+            zugbindung: t.zugbindung || null,
+            status: t.status || null,
+            relevanteAbweichung: !!t.relevanteAbweichung,
+            alternativensuche: t.alternativensuche || null,
+            ueberwacht: t.ueberwacht === undefined ? null : t.ueberwacht,
+            ueberwachungName: t.ueberwachungName || null,
+            wiederholung: t.wiederholung || null,
+            umreserviert: !!t.umreserviert,
+            letzterReiseplanBearbeiter: t.letzterReiseplanBearbeiter || null,
+            notifications,
+            cachedAt: cachedAtOverride || new Date().toISOString()
+        };
+    }
+
+    function historyEntryPrimaryKey(entry) {
+        if (!entry || !entry.ids) return null;
+        if (entry.ids.kundenwunschId) return `kw:${entry.ids.kundenwunschId}`;
+        if (entry.ids.reisekettenUuid) return `rk:${entry.ids.reisekettenUuid}`;
+        if (entry.ids.auftragsnummer) return `ao:${entry.ids.auftragsnummer}:${entry.departure || ''}`;
+        return null;
+    }
+
+    function pruneReisekettenHistory() {
+        const entries = Object.entries(reisekettenHistory.entries || {});
+        if (entries.length <= REISEKETTEN_HISTORY_MAX_ENTRIES) return;
+        entries.sort((a, b) => {
+            const ta = Date.parse((a[1] && a[1].cachedAt) || 0) || 0;
+            const tb = Date.parse((b[1] && b[1].cachedAt) || 0) || 0;
+            return tb - ta;
+        });
+        reisekettenHistory.entries = Object.fromEntries(entries.slice(0, REISEKETTEN_HISTORY_MAX_ENTRIES));
+    }
+
+    function upsertReisekettenHistoryFromTrips(trips) {
+        if (!reisekettenHistory || !reisekettenHistory.entries) reisekettenHistory = { entries: {} };
+        let changed = false;
+        (trips || []).forEach(t => {
+            if (!t || !t.fromReiseketten) return;
+            const entry = buildReisekettenHistoryEntry(t);
+            if (!entry) return;
+            const key = historyEntryPrimaryKey(entry);
+            if (!key) return;
+            reisekettenHistory.entries[key] = entry;
+            changed = true;
+        });
+        if (!changed) return;
+        pruneReisekettenHistory();
+        saveReisekettenHistory();
+    }
+
+    function seedReisekettenHistoryFromSnapshot(snapshotObj) {
+        if (!isPlainObject(snapshotObj)) return;
+        const trips = Object.values(snapshotObj).filter(t =>
+            !!t && (
+                t.fromReiseketten === true ||
+                t.source === 'reisekette' ||
+                t.source === 'merged'
+            )
+        );
+        if (!trips.length) return;
+        upsertReisekettenHistoryFromTrips(trips);
+    }
+
+    function seedReisekettenHistoryFromSnapshotStorage() {
+        try {
+            const hasEntries = Object.keys((reisekettenHistory && reisekettenHistory.entries) || {}).length > 0;
+            if (hasEntries) return;
+            const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            seedReisekettenHistoryFromSnapshot(snapshot);
+        } catch (_) {}
+    }
+
+    function findReisekettenHistoryForTrip(trip) {
+        const ids = getTripIds(trip);
+        const entries = Object.values((reisekettenHistory && reisekettenHistory.entries) || {});
+        if (!entries.length) return null;
+
+        if (ids.kundenwunschId) {
+            const byKw = entries.find(e => e && e.ids && e.ids.kundenwunschId === ids.kundenwunschId);
+            if (byKw) return byKw;
+        }
+        if (ids.reisekettenUuid) {
+            const byRk = entries.find(e => e && e.ids && e.ids.reisekettenUuid === ids.reisekettenUuid);
+            if (byRk) return byRk;
+        }
+        if (!ids.auftragsnummer) return null;
+
+        const depTs = trip && trip.departure ? Date.parse(trip.departure) : NaN;
+        let best = null;
+        let bestDelta = Infinity;
+        entries.forEach(e => {
+            if (!e || !e.ids || e.ids.auftragsnummer !== ids.auftragsnummer) return;
+            if (!Number.isFinite(depTs) || !e.departure) {
+                if (!best) best = e;
+                return;
+            }
+            const eTs = Date.parse(e.departure);
+            if (!Number.isFinite(eTs)) return;
+            const delta = Math.abs(eTs - depTs);
+            if (delta < bestDelta) {
+                bestDelta = delta;
+                best = e;
+            }
+        });
+        if (!best) return null;
+        // Keep fallback strict enough to avoid cross-matching unrelated order legs.
+        if (Number.isFinite(depTs) && best.departure && bestDelta > 36 * 3600 * 1000) return null;
+        return best;
+    }
+
+    function mergeReisekettenHistoryIntoPastTrip(trip, entry) {
+        if (!trip || !entry) return trip;
+        const fillIfMissing = ['fromExtId','toExtId','departureTrack','arrivalTrack','departureRt','arrivalRt','status',
+            'alternativensuche','ueberwacht','ueberwachungName','wiederholung','letzterReiseplanBearbeiter','zugbindung'];
+        fillIfMissing.forEach(f => {
+            if (trip[f] === null || trip[f] === undefined || trip[f] === '') trip[f] = entry[f];
+        });
+        if (!trip.zuege && entry.zuege) trip.zuege = entry.zuege;
+        if (!trip.seats && entry.seats) trip.seats = entry.seats;
+        if ((!Array.isArray(trip.notifications) || !trip.notifications.length) && Array.isArray(entry.notifications) && entry.notifications.length) {
+            trip.notifications = normalizeNotificationEntries(entry.notifications);
+        }
+        if (entry.relevanteAbweichung) trip.relevanteAbweichung = true;
+        if (entry.umreserviert) trip.umreserviert = true;
+
+        if (!trip.ids || typeof trip.ids !== 'object') trip.ids = {};
+        if (!trip.ids.reisekettenUuid && entry.ids && entry.ids.reisekettenUuid) {
+            trip.ids.reisekettenUuid = entry.ids.reisekettenUuid;
+        }
+        trip.cacheInfo = {
+            departureRt: entry.departureRt || null,
+            arrivalRt: entry.arrivalRt || null,
+            departureTrack: entry.departureTrack || null,
+            arrivalTrack: entry.arrivalTrack || null,
+            zugbindung: entry.zugbindung || null,
+            status: entry.status || null,
+            relevanteAbweichung: !!entry.relevanteAbweichung,
+            alternativensuche: entry.alternativensuche || null,
+            zuege: entry.zuege || '',
+            seats: entry.seats || '',
+            notifications: normalizeNotificationEntries(entry.notifications || []),
+            cachedAt: entry.cachedAt || null
+        };
+        trip.hasReisekettenCache = true;
+        trip.source = 'merged';
+        return trip;
     }
 
     // Builds the common base for synthetic trip objects (orphans + past trips).
@@ -737,7 +1229,15 @@
         const kanals = fahrt.materialisierungsKanalNames || [];
         return {
             typ:                 'AUFTRAG',
+            source:              'auftrag',
             fromReiseketten:     false,
+            positionTyp:         fahrt.positionTyp || null,
+            ids:                 {
+                reisekettenUuid: null,
+                kundenwunschId: fahrt.kundenwunschId || null,
+                auftragsnummer: a.auftragsnummer || null,
+                syntheticId: null
+            },
             from:                fahrt.startort || null,
             to:                  fahrt.zielort  || null,
             departure:           fahrt.abfahrt  || null,
@@ -765,6 +1265,7 @@
             zuege: '', seats: '', zugbindung: null, status: null,
             relevanteAbweichung: false, alternativensuche: null,
             departureRt: null, arrivalRt: null, departureTrack: null, arrivalTrack: null,
+            notifications: [],
             ueberwacht: null, umreserviert: false, letzterReiseplanBearbeiter: null,
             ...overrides
         };
@@ -773,7 +1274,7 @@
     function buildAuftragMap(auftraege) {
         const map = {};
         auftraege.forEach(a => {
-            extractLegs(a).forEach(fahrt => {
+            extractAuftragItems(a).forEach(fahrt => {
                 if (!fahrt.kundenwunschId) return;
                 const kanals = fahrt.materialisierungsKanalNames || [];
                 map[fahrt.kundenwunschId] = {
@@ -801,18 +1302,50 @@
         return map;
     }
 
-    function buildOrphans(auftraege, matchedIds) {
+    function buildCurrentSupplementalTrips(auftraege) {
+        const now = Date.now();
+        const result = [];
+        auftraege.forEach(a => {
+            extractAuftragItems(a).forEach((fahrt, idx) => {
+                if (!isLeistungAuftragItem(fahrt)) return;
+                const end = fahrt.ankunft ? new Date(fahrt.ankunft).getTime() : NaN;
+                if (!Number.isFinite(end) || end <= now) return;
+                const syntheticId = `${a.auftragsnummer}_leistung_${idx}`;
+                result.push(buildSyntheticTrip(a, fahrt, {
+                    uuid: syntheticId,
+                    ids: {
+                        reisekettenUuid: null,
+                        kundenwunschId: null,
+                        auftragsnummer: a.auftragsnummer || null,
+                        syntheticId
+                    },
+                    leistungsklasse: fahrt.leistungsklasse || null,
+                    klasse: fahrt.leistungsklasse === 'KLASSE_1' ? 1 : 2,
+                    isLeistungTicket: true
+                }));
+            });
+        });
+        return result;
+    }
+
+    function buildOrphans(auftraege, matchedKeys) {
         const cutoff = Date.now() - 2 * 3600 * 1000;
         const result = [];
         auftraege.forEach(a => {
-            extractLegs(a).forEach(fahrt => {
+            extractAuftragItems(a).forEach(fahrt => {
                 if (!fahrt.kundenwunschId) return;
-                if (matchedIds.has(fahrt.kundenwunschId)) return;
+                if (matchedKeys.has(`kw:${fahrt.kundenwunschId}`)) return;
                 const dep = fahrt.abfahrt ? new Date(fahrt.abfahrt).getTime() : 0;
                 if (dep <= cutoff) return;
                 if (fahrt.storniertStatus === 'NICHT_STORNIERT') return;
                 result.push(buildSyntheticTrip(a, fahrt, {
                     uuid:       fahrt.kundenwunschId,
+                    ids: {
+                        reisekettenUuid: null,
+                        kundenwunschId: fahrt.kundenwunschId,
+                        auftragsnummer: a.auftragsnummer || null,
+                        syntheticId: null
+                    },
                     isOrphaned: true
                 }));
             });
@@ -825,15 +1358,25 @@
         const now = Date.now();
         const result = [];
         auftraege.forEach(a => {
-            extractLegs(a).forEach((fahrt, idx) => {
+            extractAuftragItems(a).forEach((fahrt, idx) => {
                 if (!fahrt.abfahrt) return;
                 if (new Date(fahrt.abfahrt).getTime() >= now) return;
-                if (fahrt.storniertStatus && fahrt.storniertStatus !== 'NICHT_STORNIERT') return;
+                if (!isLeistungAuftragItem(fahrt) && fahrt.storniertStatus && fahrt.storniertStatus !== 'NICHT_STORNIERT') return;
                 const isVerbundticket = !!fahrt.verbundCode;
                 const gs = fahrt.gueltigkeitsstrecke || {};
                 const kanals = fahrt.materialisierungsKanalNames || [];
-                result.push(buildSyntheticTrip(a, fahrt, {
-                    uuid:         fahrt.kundenwunschId || `${a.auftragsnummer}_${idx}`,
+                const syntheticId = isLeistungAuftragItem(fahrt)
+                    ? `${a.auftragsnummer}_leistung_${idx}`
+                    : `${a.auftragsnummer}_${idx}`;
+                const tripUuid = fahrt.kundenwunschId || syntheticId;
+                const trip = buildSyntheticTrip(a, fahrt, {
+                    uuid:         tripUuid,
+                    ids: {
+                        reisekettenUuid: null,
+                        kundenwunschId: fahrt.kundenwunschId || null,
+                        auftragsnummer: a.auftragsnummer || null,
+                        syntheticId
+                    },
                     from:         fahrt.startort || gs.abgangsbahnhofName || null,
                     to:           fahrt.zielort  || gs.zielbahnhofName    || null,
                     pdfVerfuegbar: !isVerbundticket && !!(kanals.includes('WEB') || kanals.includes('BUCHUNG')),
@@ -841,10 +1384,31 @@
                     klasse:       fahrt.leistungsklasse === 'KLASSE_1' ? 1 : 2,
                     isVerbundticket,
                     verbundCode:  fahrt.verbundCode || null,
+                    isLeistungTicket: isLeistungAuftragItem(fahrt),
                     isPastTrip:   true
-                }));
+                });
+                if (uiSettings.usePastCache) {
+                    const cached = findReisekettenHistoryForTrip(trip);
+                    result.push(mergeReisekettenHistoryIntoPastTrip(trip, cached));
+                } else {
+                    result.push(trip);
+                }
             });
         });
+        // Add cached saved trips (FREI/WIEDERHOLEND) not already present
+        if (uiSettings.usePastCache && reisekettenHistory && reisekettenHistory.entries) {
+            const now = Date.now();
+            const existingUuids = new Set(result.map(t => t.uuid));
+            Object.values(reisekettenHistory.entries).forEach(t => {
+                if ((t.typ === 'FREI' || t.typ === 'WIEDERHOLEND') && t.departure && new Date(t.departure).getTime() < now) {
+                    if (!existingUuids.has(t.uuid)) {
+                        // Mark as past trip for UI consistency
+                        t.isPastTrip = true;
+                        result.push(t);
+                    }
+                }
+            });
+        }
         result.sort((a, b) => (b.departure || '').localeCompare(a.departure || ''));
         return result;
     }
@@ -854,6 +1418,10 @@
     // =========================================================
     async function downloadIcs(t) {
         try {
+            if (!isIcsSupportedTrip(t)) {
+                alert(T.alertIcsUnknownType);
+                return;
+            }
             let payload = null;
             if (t.typ === 'AUFTRAG') {
                 if (!t.auftragsnummer || !t.nachname) { alert(T.alertIcsNoAuftrag); return; }
@@ -1079,7 +1647,7 @@
         const data = await fetchDetail(t.uuid);
         const trip0 = getDetailTrip(data);
         const abschnitte = Array.isArray(trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
-        return [
+        const messages = [
             ...(trip0.himMeldungen         || []),
             ...(trip0.priorisierteMeldungen || []),
             ...(trip0.risNotizen           || []),
@@ -1089,6 +1657,12 @@
                 ...((a && a.risNotizen) || [])
             ])
         ];
+        const normalized = normalizeNotificationEntries(messages);
+        if (t && normalized.length) {
+            t.notifications = normalized;
+            if (t.fromReiseketten) upsertReisekettenHistoryFromTrips([t]);
+        }
+        return normalized;
     }
 
     // =========================================================
@@ -1101,12 +1675,22 @@
 
     function simplify(r) {
         const wiederholung = r.ueberwachung && r.ueberwachung.wiederholung;
+        const notifications = collectNotificationsFromTripShape(r);
         return {
             uuid:                    r.reisekettenUuid,
             typ:                     r.typ,
+            source:                  'reisekette',
             fromReiseketten:         true,
+            ids:                     {
+                reisekettenUuid: r.reisekettenUuid,
+                kundenwunschId: r.auftrag && r.auftrag.kundenwunschId,
+                auftragsnummer: r.auftrag && r.auftrag.auftragsnummer,
+                syntheticId: null
+            },
             from:                    r.origin      && r.origin.name,
             to:                      r.destination && r.destination.name,
+            fromExtId:               r.origin      && r.origin.extId,
+            toExtId:                 r.destination && r.destination.extId,
             departure:               r.origin      && r.origin.dateTime      && r.origin.dateTime.local,
             arrival:                 r.destination && r.destination.dateTime && r.destination.dateTime.local,
             departureTrack:          r.origin      && r.origin.track,
@@ -1123,6 +1707,7 @@
             klasse:                  (r.einstiegsInformationen || []).some(e => e.leistungsKlasse === 'KLASSE_1') ? 1 : 2,
             zuege:                   (r.einstiegsInformationen || []).map(e => e.name).join(' → '),
             seats:                   collectSeats(r.einstiegsInformationen || []),
+            notifications,
             ueberwacht:              r.ueberwacht !== undefined ? r.ueberwacht : null,
             ueberwachungName:        r.ueberwachung && r.ueberwachung.name || null,
             wiederholung:            wiederholung ? {
@@ -1261,7 +1846,7 @@
         return result;
     }
 
-    function currentUpcomingPool(trips) {
+    function filterUpcomingTrips(trips) {
         const now = Date.now();
         return trips.filter(t => {
             const end = t.arrival   ? new Date(t.arrival).getTime()   + 2  * 3600 * 1000
@@ -1407,6 +1992,139 @@
         URL.revokeObjectURL(url);
     }
 
+    function isPlainObject(v) {
+        return !!v && typeof v === 'object' && !Array.isArray(v);
+    }
+
+    function exportSnapshotBundle() {
+        try {
+            const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+            const history = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
+            const payload = {
+                format: 'dbmrpp-snapshot-export-v1',
+                exportedAt: new Date().toISOString(),
+                snapshot: isPlainObject(snapshot) ? snapshot : {},
+                lastVisit: localStorage.getItem(LAST_VISIT_KEY),
+                settings: isPlainObject(settings) ? settings : {},
+                reisekettenHistory: isPlainObject(history) && isPlainObject(history.entries)
+                    ? { entries: history.entries }
+                    : { entries: {} }
+            };
+            triggerDownload(
+                new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }),
+                `dbmrpp-snapshot-${new Date().toISOString().slice(0, 10)}.json`
+            );
+        } catch (err) {
+            console.error('[DBMRPP] Snapshot-Export-Fehler', err);
+            alert(T.alertExportError);
+        }
+    }
+
+    function mergeObjects(localObj, importedObj, preferImported) {
+        const localSafe = isPlainObject(localObj) ? localObj : {};
+        const importedSafe = isPlainObject(importedObj) ? importedObj : {};
+        return preferImported
+            ? { ...localSafe, ...importedSafe }
+            : { ...importedSafe, ...localSafe };
+    }
+
+    function mergeHistoryEntriesNewestWins(localEntries, importedEntries) {
+        const merged = { ...(isPlainObject(localEntries) ? localEntries : {}) };
+        Object.entries(isPlainObject(importedEntries) ? importedEntries : {}).forEach(([key, importedEntry]) => {
+            const localEntry = merged[key];
+            if (!localEntry) {
+                merged[key] = importedEntry;
+                return;
+            }
+            const localTs = Date.parse(localEntry.cachedAt || 0) || 0;
+            const importedTs = Date.parse((importedEntry && importedEntry.cachedAt) || 0) || 0;
+            if (importedTs >= localTs) merged[key] = importedEntry;
+        });
+        return merged;
+    }
+
+    function buildHistoryEntriesFromSnapshot(snapshotObj, cachedAtOverride) {
+        if (!isPlainObject(snapshotObj)) return {};
+        const entries = {};
+        const trips = Object.values(snapshotObj).filter(t =>
+            !!t && (
+                t.fromReiseketten === true ||
+                t.source === 'reisekette' ||
+                t.source === 'merged'
+            )
+        );
+        trips.forEach(t => {
+            const entry = buildReisekettenHistoryEntry(t, cachedAtOverride || null);
+            if (!entry) return;
+            const key = historyEntryPrimaryKey(entry);
+            if (!key) return;
+            entries[key] = entry;
+        });
+        return entries;
+    }
+
+    async function importSnapshotBundle(file) {
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            const looksLikeBundle = data && data.format === 'dbmrpp-snapshot-export-v1';
+            const hasShape = isPlainObject(data && data.snapshot) && isPlainObject(data && data.settings);
+            if (!looksLikeBundle || !hasShape) {
+                alert(T.alertImportInvalid);
+                return;
+            }
+            if (!confirm(T.alertImportMergeConfirm)) return;
+
+            const localSnapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+            const localSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+            const localHistory = normalizeReisekettenHistory(JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}'));
+
+            const localLastVisit = localStorage.getItem(LAST_VISIT_KEY);
+            const importedLastVisit = (typeof data.lastVisit === 'string' && data.lastVisit) ? data.lastVisit : null;
+            const localTs = Date.parse(localLastVisit || 0) || 0;
+            const importedTs = Date.parse(importedLastVisit || 0) || 0;
+            const preferImported = importedTs >= localTs;
+
+            const mergedSnapshot = mergeObjects(localSnapshot, data.snapshot, preferImported);
+            const mergedSettings = mergeObjects(localSettings, data.settings, preferImported);
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedSnapshot));
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(mergedSettings));
+
+            const chosenLastVisit = localTs >= importedTs ? localLastVisit : importedLastVisit;
+            if (typeof chosenLastVisit === 'string' && chosenLastVisit) {
+                localStorage.setItem(LAST_VISIT_KEY, chosenLastVisit);
+            } else {
+                localStorage.removeItem(LAST_VISIT_KEY);
+            }
+
+            const importedHistory = data && data.reisekettenHistory;
+            const hasHistoryShape = isPlainObject(importedHistory) && isPlainObject(importedHistory.entries);
+            const normalizedImportedHistory = hasHistoryShape
+                ? normalizeReisekettenHistory(importedHistory)
+                : normalizeReisekettenHistory({
+                    entries: buildHistoryEntriesFromSnapshot(data.snapshot, importedLastVisit)
+                });
+            const mergedHistory = normalizeReisekettenHistory({
+                entries: mergeHistoryEntriesNewestWins(localHistory.entries, normalizedImportedHistory.entries)
+            });
+            localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(mergedHistory));
+            reisekettenHistory = mergedHistory;
+
+            uiSettings = loadUiSettings();
+            filterState = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
+            activeView = 'current';
+            loadFilterStateIfEnabled();
+
+            alert(T.alertImportSuccess);
+            run();
+        } catch (err) {
+            console.error('[DBMRPP] Snapshot-Import-Fehler', err);
+            alert(T.alertImportError);
+        }
+    }
+
     function routeSlug(t) {
         return (t.from || 'Reise').replace(/[^a-z0-9]+/gi, '_')
              + '-' + (t.to || '').replace(/[^a-z0-9]+/gi, '_');
@@ -1453,9 +2171,14 @@
         injectStyles();
         const fab = document.createElement('button');
         fab.id = 'dbmrpp-fab';
+        fab.type = 'button';
         fab.title = T.title;
         fab.innerHTML = '<span class="dbmrpp-fab-icon" aria-hidden="true">🚆</span><span class="dbmrpp-fab-plus" aria-hidden="true">++</span>';
-        fab.addEventListener('click', togglePanel);
+        fab.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            togglePanel();
+        });
         document.body.appendChild(fab);
     }
 
@@ -1621,7 +2344,7 @@
                     .dbmrpp-abweichung-msg { margin: 2px 0; line-height: 1.4; }
 
                     .dbmrpp-fgr-detail {
-                        margin-top: 5px;
+                        margin: 4px 0 2px 14px;
                         padding: 5px 10px;
                         background: #f0f4ff;
                         border-left: 3px solid #4a7cdc;
@@ -1633,6 +2356,34 @@
                     .dbmrpp-fgr-claim { margin: 2px 0; line-height: 1.4; }
                     .dbmrpp-meta { color: var(--dbmrpp-text-muted); font-size: 11.5px; line-height: 1.4; }
                     .dbmrpp-meta-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #999; }
+                    .dbmrpp-cache-block {
+                        margin: 4px 0 2px 14px;
+                        padding: 5px 10px;
+                        background: #f0f4ff;
+                        border-left: 3px solid #4a7cdc;
+                        border-radius: 2px;
+                        color: #555;
+                        font-size: 11px;
+                        line-height: 1.35;
+                    }
+                    .dbmrpp-cache-label {
+                        font-weight: 600;
+                        color: #222;
+                    }
+                    .dbmrpp-cache-msg {
+                        margin-top: 3px;
+                        padding-left: 2px;
+                    }
+                    .dbmrpp-cache-missing {
+                        background: #f7f7f7;
+                        border-left-color: #9ca3af;
+                        color: #666;
+                    }
+                    .dbmrpp-cache-tags {
+                        margin-top: 4px;
+                    }
+                    .dbmrpp-train-link { color: #1a3a8a; text-decoration: none; }
+                    .dbmrpp-train-link:hover { text-decoration: underline; }
 
                     .dbmrpp-tag {
                         display: inline-block;
@@ -1668,6 +2419,71 @@
                         gap: 6px;
                         flex-wrap: wrap;
                     }
+
+                    .dbmrpp-settings-bar {
+                        display: grid;
+                        gap: 8px;
+                        padding: 8px 14px;
+                        border-bottom: 1px solid #eee;
+                        background: #f7f9ff;
+                    }
+
+                    .dbmrpp-settings-title {
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: #27408a;
+                    }
+
+                    .dbmrpp-settings-row {
+                        display: grid;
+                        gap: 6px;
+                        justify-items: start;
+                    }
+
+                    .dbmrpp-settings-toggle {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        font-size: 12px;
+                        color: #333;
+                        cursor: pointer;
+                        user-select: none;
+                    }
+
+                    .dbmrpp-settings-toggle input { margin: 0; }
+
+                    .dbmrpp-settings-provider {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 6px;
+                        font-size: 12px;
+                        color: #333;
+                    }
+
+                    .dbmrpp-settings-provider select {
+                        min-width: 140px;
+                        padding: 2px 6px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        background: #fff;
+                        font-size: 12px;
+                    }
+
+                    .dbmrpp-settings-provider select:disabled {
+                        background: #f0f0f0;
+                        color: #888;
+                    }
+
+                    .dbmrpp-settings-reset {
+                        padding: 2px 8px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        cursor: pointer;
+                        font-size: 11px;
+                        background: #fff;
+                    }
+
+                    .dbmrpp-settings-hidden { display: none; }
 
                     .dbmrpp-filter-row-top .dbmrpp-select {
                         flex: 1;
@@ -1795,7 +2611,28 @@
         if (fab) fab.classList.toggle('active', panelVisible);
 
         root.querySelector('.dbmrpp-close').addEventListener('click', hidePanel);
-        root.querySelector('.dbmrpp-reset').addEventListener('click', () => {
+        const settingsBtn = root.querySelector('.dbmrpp-settings-btn');
+        if (settingsBtn) settingsBtn.addEventListener('click', () => {
+            settingsOpen = !settingsOpen;
+            reRender();
+        });
+
+        const exportSnapshotBtn = root.querySelector('.dbmrpp-settings-export-snapshot');
+        if (exportSnapshotBtn) exportSnapshotBtn.addEventListener('click', () => exportSnapshotBundle());
+
+        const importSnapshotBtn = root.querySelector('.dbmrpp-settings-import-snapshot');
+        if (importSnapshotBtn) importSnapshotBtn.addEventListener('click', () => {
+            const picker = document.createElement('input');
+            picker.type = 'file';
+            picker.accept = '.json,application/json';
+            picker.addEventListener('change', async () => {
+                const file = picker.files && picker.files[0];
+                if (file) await importSnapshotBundle(file);
+            }, { once: true });
+            picker.click();
+        });
+
+        root.querySelector('.dbmrpp-settings-reset-snapshot').addEventListener('click', () => {
             if (confirm(T.alertResetConfirm)) {
                 localStorage.removeItem(STORAGE_KEY);
                 localStorage.removeItem(LAST_VISIT_KEY);
@@ -1804,16 +2641,75 @@
             }
         });
 
+        const rememberFilterCb = root.querySelector('#dbmrpp-setting-remember-filter');
+        if (rememberFilterCb) rememberFilterCb.addEventListener('change', e => {
+            uiSettings.rememberFilter = !!e.target.checked;
+            if (!uiSettings.rememberFilter) {
+                try { localStorage.removeItem(FILTER_STATE_KEY); } catch (_) {}
+            }
+            rememberUiState();
+        });
+
+        const openOnLoadCb = root.querySelector('#dbmrpp-setting-open-on-load');
+        if (openOnLoadCb) openOnLoadCb.addEventListener('change', e => {
+            uiSettings.openOnLoad = !!e.target.checked;
+            rememberUiState();
+        });
+
+        const usePastCacheCb = root.querySelector('#dbmrpp-setting-use-past-cache');
+        if (usePastCacheCb) usePastCacheCb.addEventListener('change', e => {
+            uiSettings.usePastCache = !!e.target.checked;
+            rememberUiState();
+            reRender();
+        });
+
+        const showJsonButtonCb = root.querySelector('#dbmrpp-setting-show-json-button');
+        if (showJsonButtonCb) showJsonButtonCb.addEventListener('change', e => {
+            uiSettings.showJsonButton = !!e.target.checked;
+            rememberUiState();
+            reRender();
+        });
+
+        const trainLinksCb = root.querySelector('#dbmrpp-setting-train-links');
+        if (trainLinksCb) trainLinksCb.addEventListener('change', e => {
+            uiSettings.trainLinksEnabled = !!e.target.checked;
+            rememberUiState();
+            reRender();
+        });
+
+        const routingLinksCb = root.querySelector('#dbmrpp-setting-show-routing-button');
+        if (routingLinksCb) routingLinksCb.addEventListener('change', e => {
+            uiSettings.showRoutingButton = !!e.target.checked;
+            rememberUiState();
+            reRender();
+        });
+
+        const trainProviderSel = root.querySelector('#dbmrpp-setting-traininfo-provider');
+        if (trainProviderSel) trainProviderSel.addEventListener('change', e => {
+            uiSettings['traininfo-provider'] = e.target.value === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+            rememberUiState();
+            reRender();
+        });
+
+        const routingProviderSel = root.querySelector('#dbmrpp-setting-routing-provider');
+        if (routingProviderSel) routingProviderSel.addEventListener('change', e => {
+            const v = e.target.value;
+            uiSettings['routing-provider'] = (v === 'chuuchuu' || v === 'transitous.org') ? v : 'bahn.expert';
+            rememberUiState();
+            reRender();
+        });
+
         const getFilteredPool = () => {
-            const pool = activeView === 'past' ? (pastTrips || []) : currentUpcomingPool(trips);
+            const pool = activeView === 'past' ? (pastTrips || []) : filterUpcomingTrips(trips);
             return filterTrips(pool, filterState, activeView === 'past');
         };
 
         root.querySelector('.dbmrpp-ics-bulk').addEventListener('click', () => {
             const filtered = getFilteredPool();
-            if (!filtered.length) { alert(T.alertNoTripsExport); return; }
+            const icsTrips = filtered.filter(isIcsSupportedTrip);
+            if (!icsTrips.length) { alert(T.alertNoTripsExport); return; }
             triggerDownload(
-                new Blob([buildBulkIcs(filtered)], { type: 'text/calendar;charset=utf-8' }),
+                new Blob([buildBulkIcs(icsTrips)], { type: 'text/calendar;charset=utf-8' }),
                 `db-reisen-${new Date().toISOString().slice(0, 10)}.ics`
             );
         });
@@ -1844,6 +2740,26 @@
                 ev.preventDefault();
                 const trip = findTrip(rawJsonLink.getAttribute('data-uuid'));
                 if (trip) downloadRawJson(trip);
+                return;
+            }
+            const routeBtn = ev.target.closest('.dbmrpp-route-ext-btn');
+            if (routeBtn) {
+                ev.preventDefault();
+                const trip = findTrip(routeBtn.getAttribute('data-uuid'));
+                if (!trip) return;
+                const origTitle = routeBtn.title;
+                const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+                routeBtn.textContent = '⏳'; routeBtn.style.opacity = '1';
+                try {
+                    const url = await getExternalRoutingUrl(trip);
+                    if (!url) throw new Error('No external routing URL available');
+                    if (!openExternalUrlInNewTab(url, popup)) throw new Error('Could not open external routing URL');
+                    routeBtn.textContent = '🧭'; routeBtn.title = origTitle; routeBtn.style.opacity = '';
+                } catch (err) {
+                    console.error('[DBMRPP] Routing-Link-Fehler', err);
+                    routeBtn.textContent = '🧭'; routeBtn.title = origTitle; routeBtn.style.opacity = '';
+                    alert(T.routeError);
+                }
                 return;
             }
             const shareBtn = ev.target.closest('.dbmrpp-share-btn');
@@ -1918,7 +2834,7 @@
                         detailDiv.textContent = T.abweichungNone;
                     } else {
                         detailDiv.innerHTML = msgs.map(m =>
-                            `<div class="dbmrpp-abweichung-msg">${esc(m.text || m.meldungsText || m.kopfText || JSON.stringify(m))}</div>`
+                            `<div class="dbmrpp-abweichung-msg">${esc((m && m.text) || '')}</div>`
                         ).join('');
                     }
                 } catch (err) {
@@ -1930,11 +2846,11 @@
         });
 
         const fromSel = root.querySelector('#dbmrpp-from-sel');
-        if (fromSel) fromSel.addEventListener('change', e => { filterState.from = e.target.value; reRender(); });
+        if (fromSel) fromSel.addEventListener('change', e => { filterState.from = e.target.value; rememberUiState(); reRender(); });
         const toSel = root.querySelector('#dbmrpp-to-sel');
-        if (toSel)   toSel.addEventListener('change',   e => { filterState.to   = e.target.value; reRender(); });
+        if (toSel)   toSel.addEventListener('change',   e => { filterState.to   = e.target.value; rememberUiState(); reRender(); });
         root.querySelectorAll('.dbmrpp-day-btn').forEach(btn =>
-            btn.addEventListener('click', () => { filterState.days = Number(btn.getAttribute('data-days')); reRender(); })
+            btn.addEventListener('click', () => { filterState.days = Number(btn.getAttribute('data-days')); rememberUiState(); reRender(); })
         );
         const tagSel = root.querySelector('#dbmrpp-tag-sel');
         if (tagSel) tagSel.addEventListener('change', e => {
@@ -1943,6 +2859,7 @@
                     filterState.tags.push(e.target.value);
                 }
                 e.target.value = '';
+                rememberUiState();
                 reRender();
             }
         });
@@ -1950,17 +2867,21 @@
             btn.addEventListener('click', () => {
                 const tagId = btn.getAttribute('data-tag');
                 filterState.tags = filterState.tags.filter(t => t !== tagId);
+                rememberUiState();
                 reRender();
             })
         );
         const changesToggle = root.querySelector('.dbmrpp-changes-toggle');
-        if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyChanges = !filterState.onlyChanges; reRender(); });
+        if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyChanges = !filterState.onlyChanges; rememberUiState(); reRender(); });
         root.querySelectorAll('.dbmrpp-view-tab').forEach(tab =>
             tab.addEventListener('click', () => {
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
-                filterState.from = ''; filterState.to = ''; filterState.tags = [];
-                if (activeView === 'past') filterState.onlyChanges = false;
+                if (!uiSettings.rememberFilter) {
+                    filterState.from = ''; filterState.to = ''; filterState.tags = [];
+                    if (activeView === 'past') filterState.onlyChanges = false;
+                }
+                rememberUiState();
                 reRender();
             })
         );
@@ -1971,7 +2892,7 @@
     // =========================================================
     function buildHTML(trips, orphans, changes, lastVisit) {
         const isPast = activeView === 'past';
-        const sourcePool = isPast ? (pastTrips || []) : currentUpcomingPool(trips);
+        const sourcePool = isPast ? (pastTrips || []) : filterUpcomingTrips(trips);
         const filtered    = filterTrips(sourcePool, filterState, isPast);
         const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyChanges: false, tags: [] }, isPast);
         const availableTags = collectAvailableTags(filtered);
@@ -1993,9 +2914,56 @@
             <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
             <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
             <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
-            <button class="dbmrpp-reset"    title="${T.ttReset}">Reset</button>
+            <button class="dbmrpp-settings-btn" title="${T.ttSettings}">⚙️</button>
           </span>
         </h2>
+        <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
+            <div class="dbmrpp-settings-title">${T.settingsTitle}</div>
+            <div class="dbmrpp-settings-row">
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-remember-filter"${uiSettings.rememberFilter ? ' checked' : ''}>
+                    <span>${T.settingsRememberFilter}</span>
+                </label>
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-open-on-load"${uiSettings.openOnLoad ? ' checked' : ''}>
+                    <span>${T.settingsOpenOnLoad}</span>
+                </label>
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-use-past-cache"${uiSettings.usePastCache ? ' checked' : ''}>
+                    <span>${T.settingsUsePastCache}</span>
+                </label>
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-show-json-button"${uiSettings.showJsonButton !== false ? ' checked' : ''}>
+                    <span>${T.settingsShowJsonButton}</span>
+                </label>
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-show-routing-button"${uiSettings.showRoutingButton ? ' checked' : ''}>
+                    <span>${T.settingsShowRoutingButton}</span>
+                </label>
+                <label class="dbmrpp-settings-provider">
+                    <span>${T.settingsRoutingLinkProvider}</span>
+                    <select id="dbmrpp-setting-routing-provider">
+                        <option value="bahn.expert"${uiSettings['routing-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsRoutingProviderBahnExpert}</option>
+                        <option value="chuuchuu"${uiSettings['routing-provider'] === 'chuuchuu' ? ' selected' : ''}>${T.settingsRoutingProviderChuuchuu}</option>
+                        <option value="transitous.org"${uiSettings['routing-provider'] === 'transitous.org' ? ' selected' : ''}>${T.settingsRoutingProviderTransitous}</option>
+                    </select>
+                </label>
+                <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-train-links"${uiSettings.trainLinksEnabled ? ' checked' : ''}>
+                    <span>${T.settingsTrainLinksEnabled}</span>
+                </label>
+                <label class="dbmrpp-settings-provider">
+                    <span>${T.settingsTrainLinkProvider}</span>
+                    <select id="dbmrpp-setting-traininfo-provider"${uiSettings.trainLinksEnabled ? '' : ' disabled'}>
+                        <option value="zugfinder"${uiSettings['traininfo-provider'] === 'zugfinder' ? ' selected' : ''}>${T.settingsTrainProviderZugfinder}</option>
+                        <option value="bahn.expert"${uiSettings['traininfo-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsTrainProviderBahnExpert}</option>
+                    </select>
+                </label>
+                <button class="dbmrpp-settings-export-snapshot dbmrpp-settings-reset">${T.settingsExportSnapshot}</button>
+                <button class="dbmrpp-settings-import-snapshot dbmrpp-settings-reset">${T.settingsImportSnapshot}</button>
+                <button class="dbmrpp-settings-reset dbmrpp-settings-reset-snapshot" title="${T.ttReset}">Reset Trips Snapshot</button>
+            </div>
+        </div>
         ${buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
         ${buildChangeBlock(changes, lastVisitTxt)}
         ${buildTripSection(filtered, sourcePool, orphans, isPast)}`;
@@ -2076,24 +3044,50 @@
     }
 
     function renderRouteLink(t) {
-        return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(t.from || '?')} → ${esc(t.to || '?')}</a>`;
+        const hasRoute = !!(t && (t.from || t.to));
+        const label = hasRoute
+            ? `${t.from || '?'} → ${t.to || '?'}`
+            : (t.leistungsname || t.name || '?');
+        return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
     }
 
     function renderShareLink(t) {
-        if (t.fromReiseketten ? t.isOrphaned : !t.auftragsnummer) return '';
+        if (t.fromReiseketten ? t.isOrphaned : (!t.auftragsnummer || !t.kundenwunschId)) return '';
         return ` <button type="button" class="dbmrpp-share-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.shareTooltip}">⤴️</button>`;
+    }
+
+    function isRoutingEligibleTrip(t) {
+        if (!t || !t.fromReiseketten || t.isOrphaned || t.isPastTrip) return false;
+        const now = Date.now();
+        const end = t.arrival
+            ? new Date(t.arrival).getTime() + 2 * 3600 * 1000
+            : (t.departure ? new Date(t.departure).getTime() + 12 * 3600 * 1000 : NaN);
+        return Number.isFinite(end) && end > now;
+    }
+
+    function renderExternalRouteLink(t) {
+        if (!uiSettings.showRoutingButton) return '';
+        if (!isRoutingEligibleTrip(t)) return '';
+        return ` <button class="dbmrpp-route-ext-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.routeTooltip}">🧭</button>`;
     }
 
     function renderAbweichungBtn(t) {
         if (!t.relevanteAbweichung || !t.fromReiseketten) return '';
-        return ` <button class="dbmrpp-abweichung-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.abweichungTooltip}">ℹ️</button>`;
+        return ` <button type="button" class="dbmrpp-abweichung-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.abweichungTooltip}">ℹ️</button>`;
     }
 
     function renderIcsLink(t) {
-        if (t.isVerbundticket) return '';
-        const ok = (t.typ === 'AUFTRAG' && t.auftragsnummer && t.nachname) || t.typ === 'FREI' || t.typ === 'WIEDERHOLEND';
-        if (!ok) return '';
+        if (!isIcsSupportedTrip(t)) return '';
         return ` <button type="button" class="dbmrpp-ics-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.icsTooltip}">📅</button>`;
+    }
+
+    function isIcsSupportedTrip(t) {
+        if (!t || t.isVerbundticket) return false;
+        // LEISTUNG-only products (for example many bike tickets) cannot be exported via kalender API.
+        if (t.isLeistungTicket || t.positionTyp === 'LEISTUNG') return false;
+        return (t.typ === 'AUFTRAG' && t.auftragsnummer && t.nachname)
+            || t.typ === 'FREI'
+            || t.typ === 'WIEDERHOLEND';
     }
 
     function renderPdfLink(t) {
@@ -2103,13 +3097,373 @@
     }
 
     function renderRawJsonLink(t) {
+        if (uiSettings.showJsonButton === false) return '';
         if (!t.uuid) return '';
         return ` <button type="button" class="dbmrpp-json-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{…}</button>`;
     }
 
     function renderFahrgastrechteBtn(t) {
         if (!t.auftragsnummer || !t.isPastTrip) return '';
-        return ` <button class="dbmrpp-fgr-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.fgrBtnTooltip}">§</button>`;
+        return ` <button type="button" class="dbmrpp-fgr-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.fgrBtnTooltip}">§</button>`;
+    }
+
+    function getEndpointName(value) {
+        if (!value) return '';
+        if (typeof value === 'string') return value;
+        if (typeof value === 'object') return value.name || value.label || '';
+        return '';
+    }
+
+    function normalizeExtId(value) {
+        if (value === null || value === undefined || value === '') return '';
+        return String(value).trim();
+    }
+
+    function getAbschnittExtId(abschnitt, kind) {
+        if (!abschnitt || typeof abschnitt !== 'object') return '';
+        const candidates = kind === 'origin'
+            ? [
+                abschnitt.externeBahnhofsinfoIdOrigin,
+                abschnitt.abfahrtsOrt && abschnitt.abfahrtsOrt.externeBahnhofsId,
+                abschnitt.abfahrtsOrt && abschnitt.abfahrtsOrt.extId,
+                abschnitt.abfahrtsOrt && abschnitt.abfahrtsOrt.id
+            ]
+            : [
+                abschnitt.externeBahnhofsinfoIdDestination,
+                abschnitt.ankunftsOrt && abschnitt.ankunftsOrt.externeBahnhofsId,
+                abschnitt.ankunftsOrt && abschnitt.ankunftsOrt.extId,
+                abschnitt.ankunftsOrt && abschnitt.ankunftsOrt.id
+            ];
+        return normalizeExtId(candidates.find(Boolean));
+    }
+
+    function parseCtxReconStops(ctxRecon) {
+        const text = String(ctxRecon || '');
+        if (!text) return [];
+        const stops = [];
+        const nameRe = /@O=([^@$§¶]+)/g;
+        let match;
+        while ((match = nameRe.exec(text)) !== null) {
+            const name = match[1] ? match[1].trim() : '';
+            const segStart = match.index;
+            const segEnd = (() => {
+                const d = text.indexOf('$', segStart);
+                const s = text.indexOf('§', segStart);
+                const p = text.indexOf('¶', segStart);
+                const candidates = [d, s, p].filter(i => i !== -1);
+                return candidates.length ? Math.min(...candidates) : text.length;
+            })();
+            const segment = text.slice(segStart, segEnd);
+            const xMatch = /@X=(-?\d+(?:\.\d+)?)/.exec(segment);
+            const yMatch = /@Y=(-?\d+(?:\.\d+)?)/.exec(segment);
+            const lMatch = /@L=([^@$§¶]+)/.exec(segment);
+            if (!xMatch || !yMatch || !lMatch) continue;
+
+            const rawLon = Number(xMatch[1]);
+            const rawLat = Number(yMatch[1]);
+            if (!Number.isFinite(rawLon) || !Number.isFinite(rawLat)) continue;
+            const lon = Math.abs(rawLon) > 180 ? rawLon / 1e6 : rawLon;
+            const lat = Math.abs(rawLat) > 90 ? rawLat / 1e6 : rawLat;
+
+            stops.push({
+                name,
+                lon,
+                lat,
+                id: String(lMatch[1] || '').trim()
+            });
+        }
+        return stops;
+    }
+
+    function extractRoutingEndpoints(data, t) {
+        const ctxRecon = extractCtxReconFromDetail(data);
+        const stops = parseCtxReconStops(ctxRecon);
+        if (stops.length) {
+            const first = stops[0];
+            const last = stops[stops.length - 1];
+            return {
+                fromId: first.id,
+                toId: last.id,
+                fromName: t && t.from ? t.from : first.name,
+                toName: t && t.to ? t.to : last.name
+            };
+        }
+        return { fromId: '', toId: '', fromName: t && t.from ? t.from : '', toName: t && t.to ? t.to : '' };
+    }
+
+    function parseCtxReconCoordinates(ctxRecon) {
+        const points = parseCtxReconStops(ctxRecon).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+        if (!points.length) return null;
+        return {
+            from: points[0],
+            to: points[points.length - 1]
+        };
+    }
+
+    function extractRoutingEndpointsFromCtxRecon(ctxRecon, t) {
+        const stops = parseCtxReconStops(ctxRecon);
+        if (!stops.length) return null;
+        const first = stops[0];
+        const last = stops[stops.length - 1];
+        return {
+            fromId: first.id,
+            toId: last.id,
+            fromName: t && t.from ? t.from : first.name,
+            toName: t && t.to ? t.to : last.name
+        };
+    }
+
+    function getTimeZoneOffsetMinutes(timeZone, date) {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            timeZoneName: 'shortOffset',
+            hour: '2-digit'
+        }).formatToParts(date);
+        const tzPart = parts.find(p => p.type === 'timeZoneName');
+        const raw = tzPart ? tzPart.value : 'GMT+0';
+        const m = /^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(raw);
+        if (!m) return 0;
+        const sign = m[1] === '-' ? -1 : 1;
+        const hh = Number(m[2]) || 0;
+        const mm = Number(m[3]) || 0;
+        return sign * (hh * 60 + mm);
+    }
+
+    function berlinLocalIsoToUtcIso(localIso) {
+        const txt = String(localIso || '').trim();
+        if (!txt) return '';
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(txt);
+        if (!m) {
+            const compact = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?$/.exec(txt);
+            if (compact) {
+                const y = Number(compact[1]);
+                const mo = Number(compact[2]);
+                const d = Number(compact[3]);
+                const h = Number(compact[4]);
+                const mi = Number(compact[5]);
+                const s = Number(compact[6] || 0);
+
+                const guessUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+                const off1 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(guessUtc));
+                const utc1 = guessUtc - off1 * 60000;
+                const off2 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(utc1));
+                const utc2 = guessUtc - off2 * 60000;
+                return new Date(utc2).toISOString().replace('.000Z', 'Z');
+            }
+            const parsed = new Date(txt);
+            return isNaN(parsed.getTime()) ? '' : parsed.toISOString().replace('.000Z', 'Z');
+        }
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const h = Number(m[4]);
+        const mi = Number(m[5]);
+        const s = Number(m[6] || 0);
+
+        const guessUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+        const off1 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(guessUtc));
+        const utc1 = guessUtc - off1 * 60000;
+        const off2 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(utc1));
+        const utc2 = guessUtc - off2 * 60000;
+        return new Date(utc2).toISOString().replace('.000Z', 'Z');
+    }
+
+    function getRouteScheduledDeparture(data, t) {
+        const trip = getDetailTrip(data);
+        const abschnitte = Array.isArray(trip.verbindungsAbschnitte) ? trip.verbindungsAbschnitte.filter(Boolean) : [];
+        const first = abschnitte[0] || null;
+        return (
+            (first && first.abfahrt && first.abfahrt.sollzeit) ||
+            (first && first.startHalt && first.startHalt.abfahrt && first.startHalt.abfahrt.sollzeit) ||
+            t.departure ||
+            ''
+        );
+    }
+
+    function logRoutingUrlUnavailable(reason, details = {}) {
+        try {
+            console.warn('[DBMRPP] routing unavailable:', reason, details);
+        } catch (_) {}
+    }
+
+    async function getExternalRoutingUrl(t) {
+        if (!t || !t.uuid || !t.departure || !t.fromReiseketten) {
+            logRoutingUrlUnavailable('invalid-trip-input', {
+                hasTrip: !!t,
+                uuid: t && t.uuid,
+                departure: t && t.departure,
+                fromReiseketten: !!(t && t.fromReiseketten)
+            });
+            return null;
+        }
+        // Always use the detail response for endpoint IDs: the bulk reiseketten
+        // response often returns a wrong toExtId (e.g. the train's ultimate
+        // terminus rather than the booked destination). fetchDetail is cached, so
+        // repeated clicks cause no extra network round-trip.
+        const detail = await fetchDetail(t.uuid);
+        const detailCtxRecon = extractCtxReconFromDetail(detail);
+
+        // Some NICHT_REKONSTRUIERBAR trips have no usable ctxRecon in reiseketten
+        // detail. Reuse auftrag-detail fallback similar to share-link handling.
+        let routingCtxRecon = detailCtxRecon;
+        if (!routingCtxRecon && t.auftragsnummer) {
+            try {
+                const auftrag = await fetchAuftragDetail(t.auftragsnummer);
+                routingCtxRecon = extractCtxReconFromAuftrag(auftrag) || null;
+            } catch (err) {
+                console.warn('[DBMRPP] routing: auftrag fallback failed', err);
+            }
+        }
+
+        let endpoints = extractRoutingEndpoints(detail, t);
+        if ((!endpoints.fromId || !endpoints.toId) && routingCtxRecon) {
+            endpoints = extractRoutingEndpointsFromCtxRecon(routingCtxRecon, t) || endpoints;
+        }
+        if (!endpoints.fromId || !endpoints.toId) {
+            logRoutingUrlUnavailable('missing-routing-endpoints', {
+                uuid: t.uuid,
+                typ: t.typ,
+                status: t.status,
+                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                fromId: endpoints.fromId || null,
+                toId: endpoints.toId || null,
+                hasCtxReconDetail: !!detailCtxRecon,
+                hasCtxReconAuftragFallback: !!routingCtxRecon && !detailCtxRecon,
+                parsedStops: parseCtxReconStops(routingCtxRecon || '').length
+            });
+            return null;
+        }
+
+        const provider = (uiSettings['routing-provider'] === 'chuuchuu' || uiSettings['routing-provider'] === 'transitous.org')
+            ? uiSettings['routing-provider']
+            : 'bahn.expert';
+        if (provider === 'bahn.expert') {
+            const localDeparture = getRouteScheduledDeparture(detail, t);
+            const utcIso = berlinLocalIsoToUtcIso(localDeparture);
+            if (!utcIso) {
+                logRoutingUrlUnavailable('invalid-departure-time-bahn-expert', {
+                    uuid: t.uuid,
+                    typ: t.typ,
+                    status: t.status,
+                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                    localDeparture,
+                    departure: t.departure
+                });
+                return null;
+            }
+            return `https://bahn.expert/routing/${encodeURIComponent(endpoints.fromId)}/${encodeURIComponent(endpoints.toId)}/${encodeURIComponent(utcIso)}/`;
+        }
+
+        if (provider === 'transitous.org') {
+            const coords = parseCtxReconCoordinates(routingCtxRecon);
+            if (!coords || !coords.from || !coords.to) {
+                logRoutingUrlUnavailable('missing-coordinates-transitous', {
+                    uuid: t.uuid,
+                    typ: t.typ,
+                    status: t.status,
+                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                    hasCtxReconDetail: !!detailCtxRecon,
+                    hasCtxReconAuftragFallback: !!routingCtxRecon && !detailCtxRecon,
+                    parsedStops: parseCtxReconStops(routingCtxRecon || '').length
+                });
+                return null;
+            }
+
+            const localDeparture = getRouteScheduledDeparture(detail, t);
+            const utcIso = berlinLocalIsoToUtcIso(localDeparture);
+            if (!utcIso) {
+                logRoutingUrlUnavailable('invalid-departure-time-transitous', {
+                    uuid: t.uuid,
+                    typ: t.typ,
+                    status: t.status,
+                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                    localDeparture,
+                    departure: t.departure
+                });
+                return null;
+            }
+            // We look for the connection based on the geographical coordinates, which will add some walking at the start. To compensate for that, we set the departure time a few minutes earlier than the actual train departure, so that the correct connection is more likely to be found.
+            const departureTime = new Date(utcIso);
+            departureTime.setMinutes(departureTime.getMinutes() - 5);
+            const adjustedTime = departureTime.toISOString().replace('.000Z', 'Z');
+
+            const params = new URLSearchParams();
+            params.set('time', adjustedTime);
+            params.set('fromPlace', `${coords.from.lat},${coords.from.lon}`);
+            params.set('toPlace', `${coords.to.lat},${coords.to.lon}`);
+            params.set('fromName', endpoints.fromName || '');
+            params.set('toName', endpoints.toName || '');
+            return `https://api.transitous.org/?${params.toString()}`;
+        }
+
+        const localDateTime = String(t.departure).slice(0, 16);
+        const params = new URLSearchParams();
+        params.set('from', endpoints.fromId);
+        params.set('to', endpoints.toId);
+        params.set('fromName', encodeURIComponent(endpoints.fromName || ''));
+        params.set('toName', encodeURIComponent(endpoints.toName || ''));
+        params.set('date', localDateTime);
+        return `https://chuuchuu.com/journeys?${params.toString()}`;
+    }
+
+    function openExternalUrlInNewTab(url, popupRef) {
+        if (!url) return false;
+        if (popupRef && !popupRef.closed) {
+            try {
+                popupRef.location.replace(url);
+                return true;
+            } catch (err) {
+                console.warn('[DBMRPP] Could not reuse pre-opened tab', err);
+            }
+        }
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        return true;
+    }
+
+    function parseTrainNames(zuege) {
+        return String(zuege || '')
+            .split('→')
+            .map(s => s.trim())
+            .filter(Boolean);
+    }
+
+    function isNumericOnlyTrainName(name) {
+        if (!name) return false;
+        return /^\d+$/.test(String(name).replace(/\s+/g, ''));
+    }
+
+    function getTrainExternalUrl(trainName, t) {
+        if (!uiSettings.trainLinksEnabled) return null;
+        const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+
+        if (provider === 'zugfinder') {
+            if (isNumericOnlyTrainName(trainName)) return null;
+            const slug = String(trainName).trim().replace(/\s+/g, '_');
+            return `https://www.zugfinder.net/de/zug-${encodeURIComponent(slug)}`;
+        }
+
+        if (!t || !t.departure) return null;
+        const dep = new Date(t.departure);
+        if (isNaN(dep.getTime())) return null;
+        const iso = dep.toISOString();
+        return `https://bahn.expert/details/${encodeURIComponent(String(trainName).trim())}/${encodeURIComponent(iso)}`;
+    }
+
+    function renderTrainList(t, linkContext) {
+        const names = parseTrainNames(t && t.zuege);
+        if (!names.length) return '';
+        return names.map(name => {
+            const url = getTrainExternalUrl(name, linkContext || t);
+            if (!url) return esc(name);
+            return `<a class="dbmrpp-train-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a>`;
+        }).join(' → ');
     }
 
     function delayTag(soll, ist) {
@@ -2117,6 +3471,14 @@
         const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
         if (min === 0) return '';
         return min > 0 ? `<span class="dbmrpp-delay"> +${min}'</span>` : `<span class="dbmrpp-early"> ${min}'</span>`;
+    }
+
+    function formatDelaySummary(label, soll, ist) {
+        if (!soll || !ist || soll === ist) return '';
+        const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
+        if (min === 0 || !Number.isFinite(min)) return '';
+        const sign = min > 0 ? '+' : '';
+        return `${label} ${sign}${min}'`;
     }
 
     function buildTripTags(t) {
@@ -2149,34 +3511,79 @@
         const sameDay = t.departure && t.arrival &&
             t.departure.slice(0, 10) === t.arrival.slice(0, 10);
         const a    = t.arrival ? (sameDay ? formatTime(t.arrival) : formatDateTime(t.arrival)) : '?';
+        const showLeistungsnameMeta = !!t.leistungsname && !!(t.from || t.to);
+        const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasReisekettenCache);
+        const showPrimaryTrainInfo = !(t.isPastTrip && t.hasReisekettenCache);
         const tags = buildTripTags(t);
+        const showCacheTagsInline = t.isPastTrip && t.hasReisekettenCache && tags.length > 0;
+        const cacheTags = showCacheTagsInline ? `<div class="dbmrpp-cache-tags">${tags.join('')}</div>` : '';
         const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
         <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}" data-uuid="${esc(t.uuid)}">
-                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
+                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
           <div class="dbmrpp-meta">
             ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
-            ${t.departureTrack && !t.isVerbundticket ? ` · ${T.metaPlatform} ${esc(t.departureTrack)}` : ''}
-            ${t.leistungsname ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
+                        ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
+                        ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
             ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
             ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-            ${t.zuege ? `<br>🚅 ${esc(t.zuege)}` : ''}
-            ${t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
+            ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${renderTrainList(t)}` : ''}
+            ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
             ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
             ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
                         ${t.ueberwachungName ? `<br>${esc(T.metaRecurringName(t.ueberwachungName))}` : ''}
             ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
             ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
           </div>
-          ${tags.length ? `<div>${tags.join('')}</div>` : ''}
+                    ${renderCacheInfo(t, cacheTags)}
+                    ${!showCacheTagsInline && tags.length ? `<div>${tags.join('')}</div>` : ''}
         </div>`;
+    }
+
+        function renderCacheInfo(t, tagsHtml) {
+        if (!t) return '';
+        if (!uiSettings.usePastCache) return '';
+        if (!t.hasReisekettenCache || !t.cacheInfo) {
+            if (!t.isPastTrip) return '';
+            return `<div class="dbmrpp-cache-block dbmrpp-cache-missing"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${esc(T.cacheMissing)}</div>`;
+        }
+        const c = t.cacheInfo;
+        const facts = [];
+        if (c.cachedAt) {
+            const ts = formatDateTime(c.cachedAt);
+            facts.push(esc(T.cacheCapturedAt(ts)));
+        }
+        if (c.departureRt || c.arrivalRt) {
+            const dep = c.departureRt ? formatDateTime(c.departureRt) : '?';
+            const arr = c.arrivalRt ? formatDateTime(c.arrivalRt) : '?';
+            facts.push(`RT ${esc(dep)} → ${esc(arr)}`);
+        }
+        const depDelay = formatDelaySummary(T.cacheDelayDeparture, t.departure, c.departureRt);
+        const arrDelay = formatDelaySummary(T.cacheDelayArrival, t.arrival, c.arrivalRt);
+        if (depDelay) facts.push(esc(depDelay));
+        if (arrDelay) facts.push(esc(arrDelay));
+        if (c.departureTrack) facts.push(`⇢ ${esc(T.metaPlatform)} ${esc(c.departureTrack)}`);
+        if (c.arrivalTrack) facts.push(`⇠ ${esc(T.metaPlatform)} ${esc(c.arrivalTrack)}`);
+
+        const lines = [];
+        if (facts.length) lines.push(facts.join(' · '));
+        if (c.zuege) lines.push(`🚅 ${renderTrainList(c, t)}`);
+        if (c.seats) lines.push(`💺 ${esc(c.seats)}`);
+
+        const notifEntries = normalizeNotificationEntries(c.notifications || []);
+        const notifBlock = notifEntries.length
+            ? `<div class="dbmrpp-cache-msg"><strong>${esc(T.cacheNotificationsLabel)}:</strong><br>${notifEntries.map(n => `ℹ️ ${esc(n.text)}`).join('<br>')}</div>`
+            : '';
+
+        if (!lines.length && !notifBlock && !tagsHtml) return '';
+        return `<div class="dbmrpp-cache-block"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${lines.join('<br>')}${notifBlock}${tagsHtml || ''}</div>`;
     }
 
     function renderChangedTrip(c) {
         const t = c.trip;
         return `
         <div class="dbmrpp-trip">
-                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
+                                        <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
             <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
           </div>
           ${c.changes.map(d => `
@@ -2215,7 +3622,7 @@
         return d.toLocaleDateString(DATE_LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
 
-    function formatWochentage(days) {
+    function formatWeekdayLabels(days) {
         const labels = IS_INT
             ? { MO: 'Mon', DI: 'Tue', MI: 'Wed', DO: 'Thu', FR: 'Fri', SA: 'Sat', SO: 'Sun' }
             : { MO: 'Mo', DI: 'Di', MI: 'Mi', DO: 'Do', FR: 'Fr', SA: 'Sa', SO: 'So' };
@@ -2224,7 +3631,7 @@
 
     function formatWiederholungRule(wiederholung) {
         if (!wiederholung || !Array.isArray(wiederholung.wochentage) || !wiederholung.wochentage.length) return '';
-        const days = formatWochentage(wiederholung.wochentage);
+        const days = formatWeekdayLabels(wiederholung.wochentage);
         const untilWord = IS_INT ? ' until ' : ' bis ';
         const until = wiederholung.aktivBis ? `${untilWord}${formatDate(wiederholung.aktivBis)}` : '';
         return `${T.tagWiederholend}: ${days}${until}`;

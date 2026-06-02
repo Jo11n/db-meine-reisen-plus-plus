@@ -6,7 +6,33 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.3.0] - 2026-05-22
+## [0.4.0] - 2026-06-02 "Warten auf Anschlussreisende"
+
+### Added
+
+- **`LEISTUNG` order-item support** - Added handling for `auftraege[].katalogwunsch.positionTyp === 'LEISTUNG'` products such as bicycle day tickets, including current/past list display and product-name rendering when no route exists.
+- **Settings area in panel** - Added a dedicated settings section between header actions and the filter bar.
+- **Settings toggle button in header** - Replaced the previous header reset button with a `⚙️` button that opens/closes the settings area.
+- **Remember filters option** - Added optional persistence for filter state (`from`, `to`, day range, tags, issues toggle) and active view across panel reloads.
+- **Open panel on page load option** - Added optional persistence for automatically showing the panel when the page is opened.
+- **Dedicated settings storage** - UI settings are now stored separately (`dbmrpp.settings.v1`), and filter persistence uses its own key (`dbmrpp.filterState.v1`) to keep snapshot diff data clean.
+- **External train info links (experimental)** - Added optional linking of train names in the trip meta line, configurable in Settings with provider selection (`zugfinder.net` or `bahn.expert`).
+- **External routing links for upcoming trips (experimental)** - Added optional `🧭` action for upcoming trips with selectable provider (`bahn.expert`,  `chuuchuu`, or `transitous.org`).
+- **Snapshot import/export (experimental)** - Added snapshot+settings bundle export and replace-mode import in Settings.
+- **Optional past-view cache enhancement** - Added a optional setting to enrich the past view from locally cached reiseketten data
+
+
+### Changed
+- **Reset snapshot relocated** - Moved the reset action from header actions into the settings area.
+- **View switch behavior with remembered filters** - Switching between Upcoming and Past no longer clears filters when "Remember filters" is enabled; legacy reset behavior remains when disabled.
+- **Upcoming reiseketten pagination** - The reiseketten fetch now loads multiple pages, so upcoming trips are no longer limited to the first 100 API entries.
+- **Button type normalization** – All action buttons (e.g., routing, share, PDF, ICS, JSON, disruption, passenger rights) now explicitly use `type="button"` to prevent accidental form submissions or navigation issues, improving compatibility across browsers and mobile environments.
+
+### Fixed
+- **Android Edge/Tampermonkey panel tap causing page reload** - The floating `DB Meine Reisen++` launch button (`#dbmrpp-fab`) now uses `type="button"` and prevents default/propagation on click, avoiding accidental host-page submit/navigation behavior on mobile.
+- **Abweichung detail text cleanup** - The `ℹ️` disruption detail view now renders normalized, deduplicated message text and no longer falls back to raw JSON object dumps, reducing malformed and redundant output.
+
+## [0.3.0] - 2026-05-22 "Verspaetung eines vorausfahrenden Zuges"
 
 ### Added
 - **Tag filter dropdown** – new dropdown in filter bar displaying all tags present in the currently filtered trip list. Users can select multiple tags; only trips containing *all* selected tags are shown (AND logic). Selected tags are displayed as removable chips in the filter bar.
