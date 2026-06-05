@@ -31,7 +31,7 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.4.0';
+    const SCRIPT_VERSION  = '0.4.1';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
