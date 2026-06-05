@@ -8,23 +8,23 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 **Full Trip Overview**
 - Display complete journey list (future/past) without pagination
-- View platform assignments, ticket category, and seat reservations without going to the detail page
+- View platform assignments, ticket category, and seat reservations without going to the detail page (if info available from bulk api call)
 - Optional external train info links for train numbers (e.g. zugfinder.net, bahn.expert) *(experimental)*
-- Optional external routing links for upcoming trips (e.g. bahn.expert, chuuchuu) *(experimental)*
+- Optional external routing links for upcoming trips (e.g. bahn.expert, chuuchuu, transitous.org) *(experimental)*
 
 **Change Tracking (alpha)**
-- Automatic snapshot comparison across visits (delays, cancellations, rebookings, platform changes)
+- Automatic snapshot comparison across visits (delays, cancellations, reroutings, platform changes)
 - Visual highlighting of what's changed
 
 **Past Trip Cache (reiseketten history)**
 - Optional: past trips can be enriched from locally cached reiseketten data captured on earlier visits.
-- Cached enrichment currently includes key operational fields such as train binding, status/disruption indicators, train list, seats, RT times/delay summary, tracks, and cached notifications (when available).
+- Cached enrichment currently includes key operational fields such as train binding, status/disruption indicators, train list, seats, RT times/delay summary, tracks, cached notifications and saved trips (when available)
 - Cache data is browser-local (`localStorage`), capped and pruned over time, and only exists after prior successful captures.
 
 **Data Export**
-- Export trips to **ICS format** (with stable UIDs for deduplication)
+- Export trips to ICS format (with stable UIDs for deduplication)
 - Maximalist bulk CSV export for spreadsheet analysis
-- Download individual PDF tickets
+- Download individual PDF tickets with one click
 - Download raw API response JSON for individual trips (complete information at trip level)
 - Import/export snapshot + settings bundle *(merge mode, newest wins, experimental)*
 
@@ -37,7 +37,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 
 **Labels & Indicators**
 - First class markers
-- Rebooking required warnings
+- Rerouting required warnings
 - Zugbindung: Train binding status
 - Subscription indicators
 - Seat/bike cancellation notices
@@ -71,7 +71,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Runs entirely in your browser
 - Uses only Deutsche Bahn APIs (the same ones the website uses)
 - No data collection or tracking
-- No third-party servers involved
+- No third-party servers involved (Links to external pages do not rely on external API calls)
 - All snapshots stored locally in your browser storage
 
 **No Permissions Needed**
@@ -94,11 +94,9 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - **External link-building is somewhat unreliable** - There are many edge cases.
 - **Not optimized for mobile yet** - The panel may look rough on smaller screens.
 
-
 ## Support & Feedback
 
 - [Report issues or propose features/enhancements](https://github.com/Jo11n/db-meine-reisen-plus-plus/issues)
-
 
 ## License
 
