@@ -100,7 +100,7 @@
             tagAuftragStatusLabel: 'Order',
             tagZugbindung:     'Train binding lifted',
             tagNotRecon:       'Not reconstructable',
-            tagMustRebook:     'Rebooking required',
+            tagMustReroute:     'Connection not available',
             tagAltPossible:    'Alternatives available',
             tagDisruption:     'Disruption',
             tagSaved:          'Saved',
@@ -249,8 +249,8 @@
             tagAuftragStatusLabel: 'Auftrag',
             tagZugbindung:     'Zugbindung aufgehoben',
             tagNotRecon:       'Nicht rekonstruierbar',
-            tagMustRebook:     'Umbuchung nötig',
-            tagAltPossible:    'Alt. möglich',
+            tagMustReroute:     'Verbindung nicht möglich',
+            tagAltPossible:    'Alternative möglich',
             tagDisruption:     'Abweichung',
             tagSaved:          'Gemerkt',
             tagWiederholend:   'Wiederholend',
@@ -975,6 +975,10 @@
         const ids = getTripIds(entry);
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
         return {
+            uuid: entry.uuid || ids.reisekettenUuid || null,
+            typ: entry.typ || null,
+            from: entry.from || null,
+            to: entry.to || null,
             ids,
             fromExtId: entry.fromExtId || null,
             toExtId: entry.toExtId || null,
@@ -1064,6 +1068,10 @@
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
         const notifications = normalizeNotificationEntries(t.notifications || []);
         return {
+            uuid: t.uuid || ids.reisekettenUuid || null,
+            typ: t.typ || null,
+            from: t.from || null,
+            to: t.to || null,
             ids,
             fromExtId: t.fromExtId || null,
             toExtId: t.toExtId || null,
@@ -1113,10 +1121,13 @@
         let changed = false;
         (trips || []).forEach(t => {
             if (!t || !t.fromReiseketten) return;
-            const entry = buildReisekettenHistoryEntry(t);
-            if (!entry) return;
-            const key = historyEntryPrimaryKey(entry);
+            const probe = buildReisekettenHistoryEntry(t);
+            if (!probe) return;
+            const key = historyEntryPrimaryKey(probe);
             if (!key) return;
+            const prev = reisekettenHistory.entries[key] || null;
+            const entry = buildReisekettenHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
+            if (!entry) return;
             reisekettenHistory.entries[key] = entry;
             changed = true;
         });
@@ -1398,14 +1409,40 @@
         // Add cached saved trips (FREI/WIEDERHOLEND) not already present
         if (uiSettings.usePastCache && reisekettenHistory && reisekettenHistory.entries) {
             const now = Date.now();
-            const existingUuids = new Set(result.map(t => t.uuid));
-            Object.values(reisekettenHistory.entries).forEach(t => {
+            const tripIdentity = t => (t && (t.uuid || (t.ids && t.ids.reisekettenUuid) || `ao:${t.auftragsnummer || ''}:${t.departure || ''}`)) || '';
+            const existingUuids = new Set(result.map(tripIdentity).filter(Boolean));
+            Object.entries(reisekettenHistory.entries).forEach(([entryKey, t]) => {
+                if (!t) return;
                 if ((t.typ === 'FREI' || t.typ === 'WIEDERHOLEND') && t.departure && new Date(t.departure).getTime() < now) {
-                    if (!existingUuids.has(t.uuid)) {
-                        // Mark as past trip for UI consistency
-                        t.isPastTrip = true;
-                        result.push(t);
-                    }
+                    const rkUuid = (t.ids && t.ids.reisekettenUuid) || t.uuid || null;
+                    const identity = tripIdentity({ ...t, uuid: rkUuid || t.uuid || `hist:${entryKey}` });
+                    if (existingUuids.has(identity)) return;
+
+                    // Clone the persisted entry so we do not mutate history records in-place.
+                    const cachedTrip = {
+                        ...t,
+                        uuid: rkUuid || t.uuid || `hist:${entryKey}`,
+                        fromReiseketten: !!rkUuid,
+                        isPastTrip: true,
+                        isFromHistoryCache: true,
+                        hasReisekettenCache: true,
+                        cacheInfo: {
+                            departureRt: t.departureRt || null,
+                            arrivalRt: t.arrivalRt || null,
+                            departureTrack: t.departureTrack || null,
+                            arrivalTrack: t.arrivalTrack || null,
+                            zugbindung: t.zugbindung || null,
+                            status: t.status || null,
+                            relevanteAbweichung: !!t.relevanteAbweichung,
+                            alternativensuche: t.alternativensuche || null,
+                            zuege: t.zuege || '',
+                            seats: t.seats || '',
+                            notifications: normalizeNotificationEntries(t.notifications || []),
+                            cachedAt: t.cachedAt || null
+                        }
+                    };
+                    existingUuids.add(identity);
+                    result.push(cachedTrip);
                 }
             });
         }
@@ -1768,7 +1805,7 @@
         if (t.isVerbundticket) ids.push('tagRegionalTicket');
         if (t.zugbindung === 'AUFGEHOBEN') ids.push('tagZugbindung');
         if (t.status === 'NICHT_REKONSTRUIERBAR') ids.push('tagNotRecon');
-        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') ids.push('tagMustRebook');
+        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') ids.push('tagMustReroute');
         if (t.alternativensuche === 'ALTERNATIVEN_KANN') ids.push('tagAltPossible');
         if (t.relevanteAbweichung) ids.push('tagDisruption');
         if (t.letzterReiseplanBearbeiter === 'SYSTEM') ids.push('tagRerouted');
@@ -1798,7 +1835,7 @@
             tagRegionalTicket: T.tagRegionalTicket,
             tagZugbindung: T.tagZugbindung,
             tagNotRecon: T.tagNotRecon,
-            tagMustRebook: T.tagMustRebook,
+            tagMustReroute: T.tagMustReroute,
             tagAltPossible: T.tagAltPossible,
             tagDisruption: T.tagDisruption,
             tagRerouted: T.tagRerouted,
@@ -2366,6 +2403,27 @@
                         font-size: 11px;
                         line-height: 1.35;
                     }
+                    .dbmrpp-cache-inline {
+                        margin: 4px 0 2px 14px;
+                        color: var(--dbmrpp-text-muted);
+                        font-size: 11px;
+                        line-height: 1.35;
+                    }
+                    .dbmrpp-cached-trip {
+                        background: #f5f9ff;
+                        border-left: 4px solid #4a7cdc;
+                        padding-left: 8px;
+                        border-radius: 4px;
+                    }
+                    .dbmrpp-cache-badge {
+                        background: #e8f0ff;
+                        color: #1a3a8a;
+                        padding: 2px 6px;
+                        margin-right: 6px;
+                        border-radius: 4px;
+                        font-weight: 700;
+                        font-size: 12px;
+                    }
                     .dbmrpp-cache-label {
                         font-weight: 600;
                         color: #222;
@@ -2659,6 +2717,7 @@
         const usePastCacheCb = root.querySelector('#dbmrpp-setting-use-past-cache');
         if (usePastCacheCb) usePastCacheCb.addEventListener('change', e => {
             uiSettings.usePastCache = !!e.target.checked;
+            pastTrips = null;
             rememberUiState();
             reRender();
         });
@@ -3038,15 +3097,18 @@
     function buildDetailUrl(t) {
         const params = new URLSearchParams();
         if (t.auftragsnummer) params.set('auftragsnummer', t.auftragsnummer);
-        if (t.uuid)           params.set('reisekettenuuid', t.uuid);
+        const rkUuid = (t && t.ids && t.ids.reisekettenUuid) || t.uuid;
+        if (rkUuid)           params.set('reisekettenuuid', rkUuid);
         const locale = location.pathname.match(/^(\/[a-z]{2})\//)?.[1] || '';
         return `${location.origin}${locale}/buchung/reise?${params.toString()}`;
     }
 
     function renderRouteLink(t) {
-        const hasRoute = !!(t && (t.from || t.to));
+        const fromLabel = t && (t.from || t.fromExtId) ? (t.from || t.fromExtId) : null;
+        const toLabel = t && (t.to || t.toExtId) ? (t.to || t.toExtId) : null;
+        const hasRoute = !!(fromLabel || toLabel);
         const label = hasRoute
-            ? `${t.from || '?'} → ${t.to || '?'}`
+            ? `${fromLabel || '?'} → ${toLabel || '?'}`
             : (t.leistungsname || t.name || '?');
         return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
     }
@@ -3488,13 +3550,13 @@
         if (t.isVerbundticket)    tags.push(tag('dbmrpp-tag-ok',   `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}`));
         if (t.zugbindung === 'AUFGEHOBEN')               tags.push(tag('dbmrpp-tag-warn', T.tagZugbindung));
         if (t.status === 'NICHT_REKONSTRUIERBAR')        tags.push(tag('dbmrpp-tag-bad',  T.tagNotRecon));
-        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') tags.push(tag('dbmrpp-tag-bad',  T.tagMustRebook));
+        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') tags.push(tag('dbmrpp-tag-bad',  T.tagMustReroute));
         if (t.alternativensuche === 'ALTERNATIVEN_KANN') tags.push(tag('dbmrpp-tag-info', T.tagAltPossible));
         if (t.relevanteAbweichung)                       tags.push(tag('dbmrpp-tag-warn', T.tagDisruption));
         if (t.letzterReiseplanBearbeiter === 'SYSTEM')   tags.push(tag('dbmrpp-tag-info', T.tagRerouted));
         if (t.umreserviert)                              tags.push(tag('dbmrpp-tag-warn', T.tagReassigned));
         if (t.ueberwacht === false)                      tags.push(tag('dbmrpp-tag-warn', T.tagMuted));
-        if (t.typ === 'FREI')                            tags.push(tag('dbmrpp-tag-ok',   T.tagSaved));
+        if (t.typ === 'FREI' || t.isFromHistoryCache)    tags.push(tag('dbmrpp-tag-ok',   T.tagSaved));
         if (t.typ === 'WIEDERHOLEND')                    tags.push(tag('dbmrpp-tag-ok',   T.tagWiederholend));
         if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT')
             tags.push(tag('dbmrpp-tag-bad',  esc(formatStorno(t.storniertStatus))));
@@ -3512,15 +3574,21 @@
             t.departure.slice(0, 10) === t.arrival.slice(0, 10);
         const a    = t.arrival ? (sameDay ? formatTime(t.arrival) : formatDateTime(t.arrival)) : '?';
         const showLeistungsnameMeta = !!t.leistungsname && !!(t.from || t.to);
-        const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasReisekettenCache);
-        const showPrimaryTrainInfo = !(t.isPastTrip && t.hasReisekettenCache);
+        // Only suppress primary platform / train info when the trip is an
+        // enriched past-trip that was merged from history — but keep original
+        // behaviour for normal tickets. Use hasReisekettenCache to decide that.
+        const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasReisekettenCache && !t.isFromHistoryCache);
+        const showPrimaryTrainInfo = !(t.isPastTrip && t.hasReisekettenCache && !t.isFromHistoryCache);
+        // For reconstructed saved trips, avoid duplicate transport lines:
+        // show them in cache details only when missing from the primary line.
+        const showTransportInCacheBlock = !t.isFromHistoryCache || (!t.zuege && !t.seats);
         const tags = buildTripTags(t);
         const showCacheTagsInline = t.isPastTrip && t.hasReisekettenCache && tags.length > 0;
         const cacheTags = showCacheTagsInline ? `<div class="dbmrpp-cache-tags">${tags.join('')}</div>` : '';
         const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
-        <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}" data-uuid="${esc(t.uuid)}">
-                    <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
+        <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}${(t.isPastTrip && t.isFromHistoryCache) ? ' dbmrpp-cached-trip' : ''}" data-uuid="${esc(t.uuid)}">
+            <div class="dbmrpp-route">${t.isFromHistoryCache ? `<span class="dbmrpp-cache-badge">${esc(T.cacheLabel)}</span> ` : ''}${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
           <div class="dbmrpp-meta">
             ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
                         ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
@@ -3535,16 +3603,18 @@
             ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
             ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
           </div>
-                    ${renderCacheInfo(t, cacheTags)}
+                    ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
                     ${!showCacheTagsInline && tags.length ? `<div>${tags.join('')}</div>` : ''}
         </div>`;
     }
 
-        function renderCacheInfo(t, tagsHtml) {
+        function renderCacheInfo(t, tagsHtml, opts = {}) {
         if (!t) return '';
         if (!uiSettings.usePastCache) return '';
+        const showTransportLines = opts.showTransportLines !== false;
         if (!t.hasReisekettenCache || !t.cacheInfo) {
             if (!t.isPastTrip) return '';
+                if (t.isFromHistoryCache) return '';
             return `<div class="dbmrpp-cache-block dbmrpp-cache-missing"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${esc(T.cacheMissing)}</div>`;
         }
         const c = t.cacheInfo;
@@ -3567,8 +3637,8 @@
 
         const lines = [];
         if (facts.length) lines.push(facts.join(' · '));
-        if (c.zuege) lines.push(`🚅 ${renderTrainList(c, t)}`);
-        if (c.seats) lines.push(`💺 ${esc(c.seats)}`);
+        if (showTransportLines && c.zuege) lines.push(`🚅 ${renderTrainList(c, t)}`);
+        if (showTransportLines && c.seats) lines.push(`💺 ${esc(c.seats)}`);
 
         const notifEntries = normalizeNotificationEntries(c.notifications || []);
         const notifBlock = notifEntries.length
@@ -3576,6 +3646,9 @@
             : '';
 
         if (!lines.length && !notifBlock && !tagsHtml) return '';
+        if (t.isFromHistoryCache) {
+            return `<div class="dbmrpp-cache-inline">${lines.join('<br>')}${notifBlock}${tagsHtml || ''}</div>`;
+        }
         return `<div class="dbmrpp-cache-block"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${lines.join('<br>')}${notifBlock}${tagsHtml || ''}</div>`;
     }
 

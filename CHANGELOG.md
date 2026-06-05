@@ -6,6 +6,16 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.1] - 2026-06-05
+
+### Fixed
+
+- **Terminology: `tagMustReroute` instead of `tagMustRebook`** - rebooking/Umbuchung is not what is meant with this: a new connection has to be chosen, because it is not available anymore, also fixed tag label
+- **Cached info time stamp in past view** - now shows the time when info was first committed into the cache (not when last refreshed in the past view)
+- **Show saved trips in past view** - now, saved trips (not part of the auftrag-api) are reconstructed from cache as intended. 
+
+---
+
 ## [0.4.0] - 2026-06-02 "Warten auf Anschlussreisende"
 
 ### Added
@@ -21,7 +31,6 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **Snapshot import/export (experimental)** - Added snapshot+settings bundle export and replace-mode import in Settings.
 - **Optional past-view cache enhancement** - Added a optional setting to enrich the past view from locally cached reiseketten data
 
-
 ### Changed
 - **Reset snapshot relocated** - Moved the reset action from header actions into the settings area.
 - **View switch behavior with remembered filters** - Switching between Upcoming and Past no longer clears filters when "Remember filters" is enabled; legacy reset behavior remains when disabled.
@@ -31,6 +40,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Android Edge/Tampermonkey panel tap causing page reload** - The floating `DB Meine Reisen++` launch button (`#dbmrpp-fab`) now uses `type="button"` and prevents default/propagation on click, avoiding accidental host-page submit/navigation behavior on mobile.
 - **Abweichung detail text cleanup** - The `ℹ️` disruption detail view now renders normalized, deduplicated message text and no longer falls back to raw JSON object dumps, reducing malformed and redundant output.
+
+---
 
 ## [0.3.0] - 2026-05-22 "Verspaetung eines vorausfahrenden Zuges"
 
@@ -53,12 +64,16 @@ This project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Abweichung info details from `verbindungsAbschnitte`** – the `ℹ️` disruption details button now also reads `himMeldungen`, `priorisierteMeldungen`, and `risNotizen` from `trip.verbindungsAbschnitte[]` in reiseketten detail responses, so alerts are shown for payloads where messages are section-scoped.
 
+---
+
 ## [0.2.1] - 2026-05-18
 
 ### Fixed
 - **Share button on Past tab** – clicking ⤴️ on past trips now resolves the trip object across all visible datasets (upcoming, past, orphaned) instead of only checking upcoming trips.
 - **Share link robustness for future trips** – `ctxRecon` resolution now handles multiple detail response shapes and falls back to order detail (`auftrag`) when reiseketten detail does not provide it.
 - **Raw JSON export completeness** – `reiseketteDetail` is now fetched for all `fromReiseketten` trips with a `uuid`, even when base `reisekette` data is already present.
+
+---
 
 ## [0.2.0] – 2026-05-13 "Keine Verspätungsbegründung"
 
