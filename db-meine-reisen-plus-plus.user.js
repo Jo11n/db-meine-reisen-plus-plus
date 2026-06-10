@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.4.1
+// @version      0.5.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -31,7 +31,7 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.4.1';
+    const SCRIPT_VERSION  = '0.5.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -100,6 +100,7 @@
             tagAuftragStatusLabel: 'Order',
             tagZugbindung:     'Train binding lifted',
             tagNotRecon:       'Not reconstructable',
+            tagBeingReplanned: 'Connection is being replanned',
             tagMustReroute:     'Connection not available',
             tagAltPossible:    'Alternatives available',
             tagDisruption:     'Disruption',
@@ -131,6 +132,7 @@
             shareTooltip:      'Share connection',
             routeTooltip:      'Open route externally',
             rawJsonTooltip:    'Download raw API JSON',
+            deleteCachedTripTooltip: 'Delete cached trip (local only)',
             shareCopied:       '✓ Copied!',
             shareError:        'Share failed — see console.',
             routeError:        'External route link failed — see console.',
@@ -178,6 +180,7 @@
             alertPdfError:       'PDF download failed — see console.',
             alertNoTripsExport:  'No trips to export.',
             alertResetConfirm:   'Delete snapshot? All trips will appear as new on next load.',
+            alertDeleteCachedTripConfirm: 'Delete cached details for this trip? Only affects local script cache, not the website data. Cannot be undone.',
             alertImportMergeConfirm: 'Import snapshot and merge with local snapshot/settings (newest wins)?',
             alertImportInvalid:  'Invalid import file. Expected snapshot + settings export JSON.',
             alertImportError:    'Snapshot import failed — see console.',
@@ -249,6 +252,7 @@
             tagAuftragStatusLabel: 'Auftrag',
             tagZugbindung:     'Zugbindung aufgehoben',
             tagNotRecon:       'Nicht rekonstruierbar',
+            tagBeingReplanned: 'Verbindung wird umgeplant',
             tagMustReroute:     'Verbindung nicht möglich',
             tagAltPossible:    'Alternative möglich',
             tagDisruption:     'Abweichung',
@@ -280,6 +284,7 @@
             shareTooltip:      'Verbindung teilen',
             routeTooltip:      'Route extern öffnen',
             rawJsonTooltip:    'Raw-API-JSON herunterladen',
+            deleteCachedTripTooltip:     'Reise aus Cache löschen (nur lokal)',
             shareCopied:       '✓ Link kopiert!',
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
             routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
@@ -327,6 +332,7 @@
             alertPdfError:       'PDF-Download fehlgeschlagen – siehe Konsole.',
             alertNoTripsExport:  'Keine Reisen zum Exportieren.',
             alertResetConfirm:   'Snapshot löschen? Beim nächsten Laden gelten alle Reisen als neu.',
+            alertDeleteCachedTripConfirm: 'Zwischengespeicherte Details für diese Reise löschen? Betrifft nur den lokalen Skript-Cache, nicht die Daten der Webseite. Kann nicht rückgängig gemacht werden.',
             alertImportMergeConfirm: 'Snapshot importieren und mit lokalem Snapshot/Einstellungen zusammenfuehren (neuester Stand gewinnt)?',
             alertImportInvalid:  'Ungültige Import-Datei. Erwartet wird ein Snapshot+Settings-Export-JSON.',
             alertImportError:    'Snapshot-Import fehlgeschlagen — siehe Konsole.',
@@ -1105,6 +1111,27 @@
         return null;
     }
 
+
+    function deleteCachedTrip(trip) {
+        if (!trip) return;
+
+        const entry = findReisekettenHistoryForTrip(trip);
+        if (!entry) return;
+
+        const key = historyEntryPrimaryKey(entry);
+        if (!key) return;
+
+        delete reisekettenHistory.entries[key];
+        saveReisekettenHistory();
+        if (activeView === 'past' && auftraegeCache) {
+            pastTrips = buildPastTrips(auftraegeCache);
+        } else {
+            pastTrips = null;
+        }
+        reRender();
+    }
+
+
     function pruneReisekettenHistory() {
         const entries = Object.entries(reisekettenHistory.entries || {});
         if (entries.length <= REISEKETTEN_HISTORY_MAX_ENTRIES) return;
@@ -1805,6 +1832,7 @@
         if (t.isVerbundticket) ids.push('tagRegionalTicket');
         if (t.zugbindung === 'AUFGEHOBEN') ids.push('tagZugbindung');
         if (t.status === 'NICHT_REKONSTRUIERBAR') ids.push('tagNotRecon');
+        if (t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR') ids.push('tagBeingReplanned');
         if (t.alternativensuche === 'ALTERNATIVEN_MUSS') ids.push('tagMustReroute');
         if (t.alternativensuche === 'ALTERNATIVEN_KANN') ids.push('tagAltPossible');
         if (t.relevanteAbweichung) ids.push('tagDisruption');
@@ -1835,6 +1863,7 @@
             tagRegionalTicket: T.tagRegionalTicket,
             tagZugbindung: T.tagZugbindung,
             tagNotRecon: T.tagNotRecon,
+            tagBeingReplanned: T.tagBeingReplanned,
             tagMustReroute: T.tagMustReroute,
             tagAltPossible: T.tagAltPossible,
             tagDisruption: T.tagDisruption,
@@ -2801,6 +2830,17 @@
                 if (trip) downloadRawJson(trip);
                 return;
             }
+            const deleteBtn = ev.target.closest('.dbmrpp-delete-cache-btn');
+            if (deleteBtn) {
+                ev.preventDefault();
+                const trip = findTrip(deleteBtn.getAttribute('data-uuid'));
+                if (!trip) return;
+
+                if (confirm(T.alertDeleteCachedTripConfirm)) {
+                    deleteCachedTrip(trip);
+                }
+                return;
+            }
             const routeBtn = ev.target.closest('.dbmrpp-route-ext-btn');
             if (routeBtn) {
                 ev.preventDefault();
@@ -3112,6 +3152,15 @@
             : (t.leistungsname || t.name || '?');
         return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
     }
+
+    
+    function renderDeleteCacheBtn(t) {
+        if (!t.isFromHistoryCache) return '';
+        return ` <button class="dbmrpp-delete-cache-btn dbmrpp-action-icon"
+                        data-uuid="${esc(t.uuid)}"
+                        title="${T.deleteCachedTripTooltip}">🗑️</button>`;
+    }
+
 
     function renderShareLink(t) {
         if (t.fromReiseketten ? t.isOrphaned : (!t.auftragsnummer || !t.kundenwunschId)) return '';
@@ -3550,6 +3599,7 @@
         if (t.isVerbundticket)    tags.push(tag('dbmrpp-tag-ok',   `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}`));
         if (t.zugbindung === 'AUFGEHOBEN')               tags.push(tag('dbmrpp-tag-warn', T.tagZugbindung));
         if (t.status === 'NICHT_REKONSTRUIERBAR')        tags.push(tag('dbmrpp-tag-bad',  T.tagNotRecon));
+        if (t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR') tags.push(tag('dbmrpp-tag-warn', T.tagBeingReplanned));
         if (t.alternativensuche === 'ALTERNATIVEN_MUSS') tags.push(tag('dbmrpp-tag-bad',  T.tagMustReroute));
         if (t.alternativensuche === 'ALTERNATIVEN_KANN') tags.push(tag('dbmrpp-tag-info', T.tagAltPossible));
         if (t.relevanteAbweichung)                       tags.push(tag('dbmrpp-tag-warn', T.tagDisruption));
@@ -3588,8 +3638,19 @@
         const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
         <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}${(t.isPastTrip && t.isFromHistoryCache) ? ' dbmrpp-cached-trip' : ''}" data-uuid="${esc(t.uuid)}">
-            <div class="dbmrpp-route">${t.isFromHistoryCache ? `<span class="dbmrpp-cache-badge">${esc(T.cacheLabel)}</span> ` : ''}${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderShareLink(t)}${renderAbweichungBtn(t)}${renderIcsLink(t)}${renderPdfLink(t)}${renderRawJsonLink(t)}${renderFahrgastrechteBtn(t)}</div>
-          <div class="dbmrpp-meta">
+            <div class="dbmrpp-route">
+                ${t.isFromHistoryCache ? `<span class="dbmrpp-cache-badge">${esc(T.cacheLabel)}</span> ` : ''}
+                ${renderRouteLink(t)} 
+                ${renderExternalRouteLink(t)}
+                ${renderShareLink(t)}
+                ${renderAbweichungBtn(t)}
+                ${renderIcsLink(t)}
+                ${renderPdfLink(t)}
+                ${renderRawJsonLink(t)}
+                ${renderFahrgastrechteBtn(t)}
+                ${renderDeleteCacheBtn(t)}
+            </div>
+           <div class="dbmrpp-meta">
             ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
                         ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
                         ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
@@ -3608,7 +3669,7 @@
         </div>`;
     }
 
-        function renderCacheInfo(t, tagsHtml, opts = {}) {
+    function renderCacheInfo(t, tagsHtml, opts = {}) {
         if (!t) return '';
         if (!uiSettings.usePastCache) return '';
         const showTransportLines = opts.showTransportLines !== false;

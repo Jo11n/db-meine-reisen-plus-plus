@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.5.0] - 2026-06-10 "Längere Haltezeit am Bahnhof"
+
+### Changed
+
+- **Being replanned tag** - `VORLAEUFIG_NICHT_REKONSTRUIERBAR` new status tag added
+- **Delete cache button for saved trips in past view** - allows to delete saved trips that have been reconstructed from cache in the past view mimicking the option of bahn.de to delete saved trips, only affects cache
+
+---
 
 ## [0.4.1] - 2026-06-05
 
