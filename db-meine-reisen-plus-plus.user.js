@@ -3010,11 +3010,11 @@
                         <button class="dbmrpp-close" title="${T.ttClose}">×</button>
                     </span>
                     <span class="dbmrpp-header-actions">
-            <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
-            <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
-            <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
-            <button class="dbmrpp-settings-btn" title="${T.ttSettings}">⚙️</button>
-          </span>
+                        <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
+                        <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
+                        <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
+                        <button class="dbmrpp-settings-btn" title="${T.ttSettings}">⚙️</button>
+                    </span>
         </h2>
         <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
             <div class="dbmrpp-settings-title">${T.settingsTitle}</div>
@@ -3085,7 +3085,7 @@
                             <option value="">${T.tagsLabel}</option>
                             ${availableTags.map(tagId => `<option value="${esc(tagId)}">${esc(getTagLabel(tagId))}</option>`).join('')}
                         </select>
-          </div>
+                    </div>
                     <div class="dbmrpp-filter-row dbmrpp-filter-row-bottom">
                         <div class="dbmrpp-day-btns">
                             ${[0, 7, 30, 90].map(d =>
@@ -3105,10 +3105,10 @@
         }
         return `
         <div class="dbmrpp-section dbmrpp-changes">
-          <h3>${T.changesSince(esc(lastVisitTxt))}</h3>
-          ${changes.geaendert.map(renderChangedTrip).join('')}
-          ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(renderTripLine).join('')}` : ''}
-          ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(renderTripLine).join('')}` : ''}
+            <h3>${T.changesSince(esc(lastVisitTxt))}</h3>
+            ${changes.geaendert.map(renderChangedTrip).join('')}
+            ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(renderTripLine).join('')}` : ''}
+            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(renderTripLine).join('')}` : ''}
         </div>`;
     }
 
@@ -3117,17 +3117,17 @@
         const empty = filtered.length !== sourcePool.length ? T.noTripsFilter : T.noTrips;
         return `
         <div class="dbmrpp-section">
-          <div class="dbmrpp-view-tabs">
-            <button class="dbmrpp-view-tab${!isPast ? ' active' : ''}" data-view="current">${T.tabUpcoming}</button>
-            <button class="dbmrpp-view-tab${isPast  ? ' active' : ''}" data-view="past">${T.tabPast}</button>
-            <span class="dbmrpp-view-count">${count}</span>
-          </div>
-          ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
+            <div class="dbmrpp-view-tabs">
+                <button class="dbmrpp-view-tab${!isPast ? ' active' : ''}" data-view="current">${T.tabUpcoming}</button>
+                <button class="dbmrpp-view-tab${isPast  ? ' active' : ''}" data-view="past">${T.tabPast}</button>
+                <span class="dbmrpp-view-count">${count}</span>
+            </div>
+            ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
         </div>
         ${orphans.length ? `
         <details class="dbmrpp-section dbmrpp-orphans">
-          <summary>${T.orphansSection(orphans.length)}</summary>
-          ${orphans.map(renderTripLine).join('')}
+            <summary>${T.orphansSection(orphans.length)}</summary>
+            ${orphans.map(renderTripLine).join('')}
         </details>` : ''}`;
     }
 
@@ -3650,22 +3650,22 @@
                 ${renderFahrgastrechteBtn(t)}
                 ${renderDeleteCacheBtn(t)}
             </div>
-           <div class="dbmrpp-meta">
-            ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
-                        ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
-                        ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
-            ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
-            ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-            ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${renderTrainList(t)}` : ''}
-            ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
-            ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
-            ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
-                        ${t.ueberwachungName ? `<br>${esc(T.metaRecurringName(t.ueberwachungName))}` : ''}
-            ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
-            ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
-          </div>
-                    ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
-                    ${!showCacheTagsInline && tags.length ? `<div>${tags.join('')}</div>` : ''}
+            <div class="dbmrpp-meta">
+                ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
+                ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
+                ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
+                ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
+                ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
+                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${renderTrainList(t)}` : ''}
+                ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
+                ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
+                ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
+                ${t.ueberwachungName ? `<br>${esc(T.metaRecurringName(t.ueberwachungName))}` : ''}
+                ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
+                ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
+            </div>
+            ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
+            ${!showCacheTagsInline && tags.length ? `<div>${tags.join('')}</div>` : ''}
         </div>`;
     }
 
@@ -3717,15 +3717,15 @@
         const t = c.trip;
         return `
         <div class="dbmrpp-trip">
-                                        <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
-            <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
-          </div>
-          ${c.changes.map(d => `
-          <div class="dbmrpp-diff">
-            <strong>${esc(T.fieldLabels[d.field] || d.field)}:</strong>
-            <span class="dbmrpp-diff-old">${esc(formatVal(d.field, d.old))}</span>
-            → <span class="dbmrpp-diff-new">${esc(formatVal(d.field, d.new))}</span>
-          </div>`).join('')}
+            <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
+                <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
+            </div>
+            ${c.changes.map(d => `
+            <div class="dbmrpp-diff">
+                <strong>${esc(T.fieldLabels[d.field] || d.field)}:</strong>
+                <span class="dbmrpp-diff-old">${esc(formatVal(d.field, d.old))}</span>
+                → <span class="dbmrpp-diff-new">${esc(formatVal(d.field, d.new))}</span>
+            </div>`).join('')}
         </div>`;
     }
 
