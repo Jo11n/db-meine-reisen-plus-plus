@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.5.0
+// @version      0.6.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -31,7 +31,7 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.5.0';
+    const SCRIPT_VERSION  = '0.6.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -67,6 +67,10 @@
             settingsOpenOnLoad: 'Open panel on page load',
             settingsUsePastCache: 'Enhance past view from cache (experimental). Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was opened at least once before the trip.',
             settingsShowJsonButton: 'Show JSON download button',
+            settingsShowGeoButton:  'Show geo export button',
+            settingsGeoFormat:      'Export format',
+            settingsGeoFormatGpx:   'GPX',
+            settingsGeoFormatGeojson: 'GeoJSON',
             settingsExportSnapshot: 'Export snapshot (experimental)',
             settingsImportSnapshot: 'Import snapshot (experimental)',
             settingsTrainLinksEnabled: 'Link train numbers externally (experimental)',
@@ -131,12 +135,16 @@
             pdfTooltip:        'Download ticket PDF',
             shareTooltip:      'Share connection',
             routeTooltip:      'Open route externally',
-            rawJsonTooltip:    'Download raw API JSON',
+            rawJsonTooltip:    'Download complete raw API JSON',
+            gpxTooltip:        'Download GPX track',
+            geojsonTooltip:    'Download GeoJSON track',
             deleteCachedTripTooltip: 'Delete cached trip (local only)',
             shareCopied:       '✓ Copied!',
             shareError:        'Share failed — see console.',
             routeError:        'External route link failed — see console.',
             rawJsonError:      'Raw JSON download failed — see console.',
+            geoError:          'Geo data download failed — see console.',
+            geoNoData:         'No route geometry available for geo data export.',
             abweichungTooltip: 'Show disruption details',
             abweichungLoading: 'Loading…',
             abweichungNone:    'No current alerts.',
@@ -219,6 +227,10 @@
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
             settingsUsePastCache: 'Vergangenheitsansicht mit Cache anreichern (experimentell). Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
             settingsShowJsonButton: 'JSON-Download-Button anzeigen',
+            settingsShowGeoButton:  'Geo-Export-Button anzeigen',
+            settingsGeoFormat:      'Exportformat',
+            settingsGeoFormatGpx:   'GPX',
+            settingsGeoFormatGeojson: 'GeoJSON',
             settingsExportSnapshot: 'Snapshot exportieren (experimentell)',
             settingsImportSnapshot: 'Snapshot importieren (experimentell)',
             settingsTrainLinksEnabled: 'Zugnummern extern verlinken (experimentell)',
@@ -283,12 +295,16 @@
             pdfTooltip:        'Ticket-PDF herunterladen',
             shareTooltip:      'Verbindung teilen',
             routeTooltip:      'Route extern öffnen',
-            rawJsonTooltip:    'Raw-API-JSON herunterladen',
+            rawJsonTooltip:    'Vollständiges Raw-API-JSON herunterladen',
+            gpxTooltip:        'GPX-Track herunterladen',
+            geojsonTooltip:    'GeoJSON-Track herunterladen',
             deleteCachedTripTooltip:     'Reise aus Cache löschen (nur lokal)',
             shareCopied:       '✓ Link kopiert!',
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
             routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
             rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
+            geoError:          'Geo-Daten-Download fehlgeschlagen — siehe Konsole.',
+            geoNoData:         'Keine Streckengeometrie für Geo-Daten-Export verfügbar.',
             abweichungTooltip: 'Abweichungsdetails anzeigen',
             abweichungLoading: 'Lade…',
             abweichungNone:    'Keine aktuellen Meldungen.',
@@ -392,7 +408,9 @@
             trainLinksEnabled: false,
             'traininfo-provider': 'bahn.expert',
             showRoutingButton: false,
-            'routing-provider': 'bahn.expert'
+            'routing-provider': 'bahn.expert',
+            showGeoButton: false,
+            'geo-format': 'gpx'
         };
         try {
             const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -412,7 +430,9 @@
                 showRoutingButton: parsed.showRoutingButton !== undefined
                     ? !!parsed.showRoutingButton
                     : !!parsed.routingLinksEnabled,
-                'routing-provider': routingProvider
+                'routing-provider': routingProvider,
+                showGeoButton: parsed.showGeoButton !== false,
+                'geo-format': parsed['geo-format'] === 'geojson' ? 'geojson' : 'gpx'
             };
         } catch (_) {
             return defaults;
@@ -1644,6 +1664,177 @@
     }
 
     // =========================================================
+    // 7a) Geo export (GPX + GeoJSON)
+    // =========================================================
+    function coordFromHaltId(id) {
+        const s = String(id || '');
+        const xm = /@X=(-?\d+(?:\.\d+)?)/.exec(s);
+        const ym = /@Y=(-?\d+(?:\.\d+)?)/.exec(s);
+        if (!xm || !ym) return null;
+        const rawLon = Number(xm[1]);
+        const rawLat = Number(ym[1]);
+        if (!Number.isFinite(rawLon) || !Number.isFinite(rawLat)) return null;
+        return {
+            lon: Math.abs(rawLon) > 180 ? rawLon / 1e6 : rawLon,
+            lat: Math.abs(rawLat) > 90  ? rawLat / 1e6 : rawLat
+        };
+    }
+
+    function tripToGpx(data, t) {
+        const trip = getDetailTrip(data);
+        const abschnitte = trip.verbindungsAbschnitte || [];
+        const xmlEsc = s => String(s || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const from = t.from || '';
+        const to   = t.to   || '';
+        const title = xmlEsc(`${from} → ${to}`);
+
+        let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+        gpx += `<gpx version="1.1" creator="DB Meine Reisen++" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+        gpx += `  <metadata><name>${title}</name><time>${xmlEsc(new Date().toISOString())}</time></metadata>\n`;
+
+        // Waypoints — one per unique stop across all segments
+        const seenStop = new Set();
+        for (const abschnitt of abschnitte) {
+            for (const halt of abschnitt.halte || []) {
+                const key = halt.extId || halt.id;
+                if (!key || seenStop.has(key)) continue;
+                seenStop.add(key);
+                const coord = coordFromHaltId(halt.id);
+                if (!coord) continue;
+                const time = halt.abfahrt?.sollzeit || halt.ankunft?.sollzeit || '';
+                gpx += `  <wpt lat="${coord.lat}" lon="${coord.lon}">`;
+                gpx += `<name>${xmlEsc(halt.name || '')}</name>`;
+                if (time) gpx += `<time>${xmlEsc(time)}</time>`;
+                gpx += `</wpt>\n`;
+            }
+        }
+
+        // Track — one trk per Abschnitt, named with train and route
+        for (const abschnitt of abschnitte) {
+            const coords = (abschnitt.polylineGroup?.polylineDescriptions || [])
+                .flatMap(d => d.coordinates || []);
+            if (!coords.length) continue;
+
+            const vm = abschnitt.verkehrsmittel || {};
+            const trainName = vm.langText || vm.mittelText || vm.name || '';
+            const origin = abschnitt.startHalt?.name || '';
+            const dest   = abschnitt.zielHalt?.name  || '';
+            const trkName = xmlEsc(`${trainName} ${origin} → ${dest}`);
+
+            // Build ordered halt anchor list for timestamp matching
+            const haltAnchors = [];
+            for (const halt of abschnitt.halte || []) {
+                const coord = coordFromHaltId(halt.id);
+                const time  = halt.abfahrt?.sollzeit || halt.ankunft?.sollzeit;
+                if (coord && time) haltAnchors.push({ lat: coord.lat, lon: coord.lon, time, used: false });
+            }
+
+            gpx += `  <trk><name>${trkName}</name>\n    <trkseg>\n`;
+            for (const p of coords) {
+                if (p == null || p.lat == null || p.lng == null) continue;
+                // Stamp only the first trkpt within ~200 m of each halt (no interpolation)
+                let matchTime = null;
+                for (const h of haltAnchors) {
+                    if (!h.used && Math.abs(p.lat - h.lat) < 0.002 && Math.abs(p.lng - h.lon) < 0.002) {
+                        matchTime = h.time;
+                        h.used = true;
+                        break;
+                    }
+                }
+                gpx += `      <trkpt lat="${p.lat}" lon="${p.lng}">`;
+                if (matchTime) gpx += `<time>${xmlEsc(matchTime)}</time>`;
+                gpx += `</trkpt>\n`;
+            }
+            gpx += `    </trkseg>\n  </trk>\n`;
+        }
+
+        gpx += `</gpx>`;
+        return gpx;
+    }
+
+    function tripToGeoJson(data, t) {
+        const trip = getDetailTrip(data);
+        const abschnitte = trip.verbindungsAbschnitte || [];
+        const from = t.from || '';
+        const to   = t.to   || '';
+        const features = [];
+        const seenStop = new Set();
+
+        for (const abschnitt of abschnitte) {
+            // LineString per segment
+            const coords = (abschnitt.polylineGroup?.polylineDescriptions || [])
+                .flatMap(d => d.coordinates || [])
+                .filter(p => p && p.lat != null && p.lng != null)
+                .map(p => [p.lng, p.lat]);
+            if (coords.length) {
+                const vm = abschnitt.verkehrsmittel || {};
+                features.push({
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: coords },
+                    properties: {
+                        train:     vm.langText || vm.mittelText || vm.name || '',
+                        trainType: vm.produktGattung || '',
+                        operator:  (vm.zugattribute || []).find(a => a.key === 'BEF')?.value || '',
+                        from:      abschnitt.startHalt?.name || '',
+                        to:        abschnitt.zielHalt?.name  || '',
+                        departure: abschnitt.startHalt?.abfahrt?.sollzeit || '',
+                        arrival:   abschnitt.zielHalt?.ankunft?.sollzeit  || ''
+                    }
+                });
+            }
+
+            // Point per unique stop
+            for (const halt of abschnitt.halte || []) {
+                const key = halt.extId || halt.id;
+                if (!key || seenStop.has(key)) continue;
+                seenStop.add(key);
+                const coord = coordFromHaltId(halt.id);
+                if (!coord) continue;
+                features.push({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [coord.lon, coord.lat] },
+                    properties: {
+                        name:     halt.name || '',
+                        time:     halt.abfahrt?.sollzeit || halt.ankunft?.sollzeit || '',
+                        platform: halt.gleis || ''
+                    }
+                });
+            }
+        }
+
+        return JSON.stringify({
+            type: 'FeatureCollection',
+            name: `${from} → ${to}`,
+            features
+        }, null, 2);
+    }
+
+    async function downloadGeo(t) {
+        const isGeoJson = uiSettings['geo-format'] === 'geojson';
+        try {
+            const data = await fetchDetail(t.uuid);
+            const trip = getDetailTrip(data);
+            const hasGeometry = (trip.verbindungsAbschnitte || []).some(a =>
+                (a.polylineGroup?.polylineDescriptions || []).some(d => d.coordinates?.length)
+            );
+            if (!hasGeometry) {
+                alert(isGeoJson ? T.geoNoData : T.geoNoData);
+                return;
+            }
+            const content  = isGeoJson ? tripToGeoJson(data, t) : tripToGpx(data, t);
+            const mimeType = isGeoJson ? 'application/geo+json;charset=utf-8' : 'application/gpx+xml;charset=utf-8';
+            const ext      = isGeoJson ? 'geojson' : 'gpx';
+            const filename = `DB_${t.departure ? t.departure.slice(0, 10) : 'trip'}_${routeSlug(t)}.${ext}`;
+            triggerDownload(new Blob([content], { type: mimeType }), filename);
+        } catch (err) {
+            console.error('[DBMRPP] Geo-Export-Fehler', err);
+            alert(isGeoJson ? T.geoError : T.geoError);
+        }
+    }
+
+    // =========================================================
     // 7) Share link via /web/api/angebote/verbindung/teilen
     //    Uses fetchDetail cache — no duplicate round-trip if
     //    disruption details were already expanded for the same trip.
@@ -2471,6 +2662,7 @@
                     }
                     .dbmrpp-train-link { color: #1a3a8a; text-decoration: none; }
                     .dbmrpp-train-link:hover { text-decoration: underline; }
+                    button.dbmrpp-train-link { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 
                     .dbmrpp-tag {
                         display: inline-block;
@@ -2758,6 +2950,22 @@
             reRender();
         });
 
+        const showGeoButtonCb = root.querySelector('#dbmrpp-setting-show-geo-button');
+        if (showGeoButtonCb) showGeoButtonCb.addEventListener('change', e => {
+            uiSettings.showGeoButton = !!e.target.checked;
+            const formatSel = root.querySelector('#dbmrpp-setting-geo-format');
+            if (formatSel) formatSel.disabled = !uiSettings.showGeoButton;
+            rememberUiState();
+            reRender();
+        });
+
+        const geoFormatSel = root.querySelector('#dbmrpp-setting-geo-format');
+        if (geoFormatSel) geoFormatSel.addEventListener('change', e => {
+            uiSettings['geo-format'] = e.target.value === 'geojson' ? 'geojson' : 'gpx';
+            rememberUiState();
+            reRender();
+        });
+
         const trainLinksCb = root.querySelector('#dbmrpp-setting-train-links');
         if (trainLinksCb) trainLinksCb.addEventListener('change', e => {
             uiSettings.trainLinksEnabled = !!e.target.checked;
@@ -2828,6 +3036,13 @@
                 ev.preventDefault();
                 const trip = findTrip(rawJsonLink.getAttribute('data-uuid'));
                 if (trip) downloadRawJson(trip);
+                return;
+            }
+            const gpxLink = ev.target.closest('.dbmrpp-geo-link');
+            if (gpxLink) {
+                ev.preventDefault();
+                const trip = findTrip(gpxLink.getAttribute('data-uuid'));
+                if (trip) downloadGeo(trip);
                 return;
             }
             const deleteBtn = ev.target.closest('.dbmrpp-delete-cache-btn');
@@ -2912,6 +3127,37 @@
                 } catch (err) {
                     console.error('[DBMRPP] FGR-Fehler', err);
                     detailDiv.textContent = T.fgrError;
+                }
+                return;
+            }
+            const trainNumLink = ev.target.closest('.dbmrpp-train-num-link');
+            if (trainNumLink) {
+                ev.preventDefault();
+                const uuid = trainNumLink.getAttribute('data-uuid');
+                const trainNum = trainNumLink.getAttribute('data-train-num');
+                const departure = trainNumLink.getAttribute('data-departure');
+                if (!uuid || !trainNum) return;
+                const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+                const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+                try {
+                    const detail = await fetchDetail(uuid);
+                    const letters = findLettersFromDetail(detail, trainNum);
+                    if (!letters) throw new Error(`No train type found for run number ${trainNum}`);
+                    let url;
+                    if (provider === 'zugfinder') {
+                        url = `https://www.zugfinder.net/de/zug-${encodeURIComponent(letters)}_${encodeURIComponent(trainNum)}`;
+                    } else {
+                        const dep = departure ? new Date(departure) : null;
+                        const iso = dep && !isNaN(dep.getTime()) ? dep.toISOString() : null;
+                        const trainId = encodeURIComponent(`${letters} ${trainNum}`);
+                        url = iso
+                            ? `https://bahn.expert/details/${trainId}/${encodeURIComponent(iso)}`
+                            : `https://bahn.expert/details/${trainId}/`;
+                    }
+                    openExternalUrlInNewTab(url, popup);
+                } catch (err) {
+                    console.error('[DBMRPP] Train-Name-Lookup-Fehler', err);
+                    if (popup && !popup.closed) popup.close();
                 }
                 return;
             }
@@ -3036,12 +3282,23 @@
                     <span>${T.settingsShowJsonButton}</span>
                 </label>
                 <label class="dbmrpp-settings-toggle">
+                    <input type="checkbox" id="dbmrpp-setting-show-geo-button"${uiSettings.showGeoButton !== false ? ' checked' : ''}>
+                    <span>${T.settingsShowGeoButton}</span>
+                </label>
+                <label class="dbmrpp-settings-provider">
+                    <span>${T.settingsGeoFormat}</span>
+                    <select id="dbmrpp-setting-geo-format"${uiSettings.showGeoButton !== false ? '' : ' disabled'}>
+                        <option value="gpx"${uiSettings['geo-format'] === 'gpx' ? ' selected' : ''}>${T.settingsGeoFormatGpx}</option>
+                        <option value="geojson"${uiSettings['geo-format'] === 'geojson' ? ' selected' : ''}>${T.settingsGeoFormatGeojson}</option>
+                    </select>
+                </label>
+                <label class="dbmrpp-settings-toggle">
                     <input type="checkbox" id="dbmrpp-setting-show-routing-button"${uiSettings.showRoutingButton ? ' checked' : ''}>
                     <span>${T.settingsShowRoutingButton}</span>
                 </label>
                 <label class="dbmrpp-settings-provider">
                     <span>${T.settingsRoutingLinkProvider}</span>
-                    <select id="dbmrpp-setting-routing-provider">
+                    <select id="dbmrpp-setting-routing-provider"${uiSettings.showRoutingButton ? '' : ' disabled'}>
                         <option value="bahn.expert"${uiSettings['routing-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsRoutingProviderBahnExpert}</option>
                         <option value="chuuchuu"${uiSettings['routing-provider'] === 'chuuchuu' ? ' selected' : ''}>${T.settingsRoutingProviderChuuchuu}</option>
                         <option value="transitous.org"${uiSettings['routing-provider'] === 'transitous.org' ? ' selected' : ''}>${T.settingsRoutingProviderTransitous}</option>
@@ -3211,6 +3468,13 @@
         if (uiSettings.showJsonButton === false) return '';
         if (!t.uuid) return '';
         return ` <button type="button" class="dbmrpp-json-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{…}</button>`;
+    }
+
+    function renderGeoLink(t) {
+        if (!uiSettings.showGeoButton) return '';
+        if (!t?.fromReiseketten || !t.uuid || t.isPastTrip) return '';
+        const tooltip = uiSettings['geo-format'] === 'geojson' ? T.geojsonTooltip : T.gpxTooltip;
+        return ` <button type="button" class="dbmrpp-geo-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${tooltip}">🛤️</button>`;
     }
 
     function renderFahrgastrechteBtn(t) {
@@ -3550,6 +3814,29 @@
         return /^\d+$/.test(String(name).replace(/\s+/g, ''));
     }
 
+    // Extract the letter prefix for a given numeric run number from a verkehrsmittel langText.
+    // "RE4 (82034)" with num="82034" → "RE"
+    function parseLangTextForNumber(langText, num) {
+        const s = String(langText);
+        const m1 = s.match(/^([A-Za-z]+)\d*\s+\((\d+)\)/);
+        if (m1 && m1[2] === num) return m1[1];
+        const m2 = s.match(/^([A-Za-z]+)\s+(\d+)$/);
+        if (m2 && m2[2] === num) return m2[1];
+        return null;
+    }
+
+    function findLettersFromDetail(detail, trainNum) {
+        for (const trip of ((detail && detail.trips) || [])) {
+            for (const ab of (trip.verbindungsAbschnitte || [])) {
+                const lt = ab.verkehrsmittel && ab.verkehrsmittel.langText;
+                if (!lt) continue;
+                const letters = parseLangTextForNumber(lt, trainNum);
+                if (letters) return letters;
+            }
+        }
+        return null;
+    }
+
     function getTrainExternalUrl(trainName, t) {
         if (!uiSettings.trainLinksEnabled) return null;
         const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
@@ -3571,6 +3858,12 @@
         const names = parseTrainNames(t && t.zuege);
         if (!names.length) return '';
         return names.map(name => {
+            if (uiSettings.trainLinksEnabled && isNumericOnlyTrainName(name)) {
+                const ctx = linkContext || t;
+                if (ctx && ctx.uuid && ctx.fromReiseketten) {
+                    return `<button type="button" class="dbmrpp-train-link dbmrpp-train-num-link" data-uuid="${esc(ctx.uuid)}" data-train-num="${esc(name)}" data-departure="${esc(ctx.departure || '')}">${esc(name)}</button>`;
+                }
+            }
             const url = getTrainExternalUrl(name, linkContext || t);
             if (!url) return esc(name);
             return `<a class="dbmrpp-train-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a>`;
@@ -3646,6 +3939,7 @@
                 ${renderAbweichungBtn(t)}
                 ${renderIcsLink(t)}
                 ${renderPdfLink(t)}
+                ${renderGeoLink(t)}
                 ${renderRawJsonLink(t)}
                 ${renderFahrgastrechteBtn(t)}
                 ${renderDeleteCacheBtn(t)}

@@ -25,6 +25,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Export trips to ICS format (with stable UIDs for deduplication)
 - Maximalist bulk CSV export for spreadsheet analysis
 - Download individual PDF tickets with one click
+- Export routes as GPX or geoJSON-files
 - Download raw API response JSON for individual trips (complete information at trip level)
 - Import/export snapshot + settings bundle *(merge mode, newest wins, experimental)*
 

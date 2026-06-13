@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.6.0] - 2026-06-10 "defekte Tür"
+
+### Added
+- **GPX/GeoJSON download** - added option to download the route of the connection as segmented GPX/geoJSON file
+
+### Changed
+- **dropdown options greyed out if feature not activated** - deactivates dropdown options in the settings if the respective feature is deactivated (train links, routing, geo data) 
+- **resolve train detail for regional train numbers** - get `reiseketten`detail if user clicks train link for number only trains to improve train link creation for bahn.expert and zugfinder.net
+
+---
 ## [0.5.0] - 2026-06-10 "Längere Haltezeit am Bahnhof"
 
 ### Added
