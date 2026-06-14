@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.6.0
+// @version      0.7.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -28,10 +28,12 @@
     const REISEKETTEN_HISTORY_SCHEMA_VERSION = 2;
     const LAST_VISIT_KEY   = 'dbmrpp.lastVisit';
     const KUNDENPROFIL_KEY = 'dbmrpp.kundenprofilId';
+    const CUSTOM_TAG_DEFS_KEY        = 'dbmrpp.customTagDefs.v1';
+    const CUSTOM_TAG_ASSIGNMENTS_KEY = 'dbmrpp.customTagAssignments.v1';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.6.0';
+    const SCRIPT_VERSION  = '0.7.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -45,7 +47,7 @@
                               'leistungsname','storniertStatus','auftragStatus',
                               'sitzplatzStorniert','stellplatzStorniert'];
     
-    // Language: English on int.bahn.de, German otherwise 
+    // Language: English on int.bahn.de, German otherwise
     const IS_INT      = location.hostname.startsWith('int.');
     const DATE_LOCALE = IS_INT ? 'en-GB' : 'de-DE';
 
@@ -65,23 +67,33 @@
             settingsTitle:     'Settings',
             settingsRememberFilter: 'Remember filters',
             settingsOpenOnLoad: 'Open panel on page load',
-            settingsUsePastCache: 'Enhance past view from cache (experimental). Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was opened at least once before the trip.',
             settingsShowJsonButton: 'Show JSON download button',
+            settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file. Useful for debugging or custom analysis.',
             settingsShowGeoButton:  'Show geo export button',
+            settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file, for use in mapping or tracking applications. The Bahn API only provides this for future trips.',
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
             settingsExportSnapshot: 'Export snapshot (experimental)',
             settingsImportSnapshot: 'Import snapshot (experimental)',
-            settingsTrainLinksEnabled: 'Link train numbers externally (experimental)',
+            settingsTrainLinksEnabled: 'Link train numbers externally',
+            settingsTrainLinksDesc: 'Makes train numbers in the trip view clickable links to an external service showing real-time status for that train. Zugfinder.net has data on delays. Bahn.expert has more real-time data and also shows historical delay data for specific past trips.',
             settingsTrainLinkProvider: 'Train link provider',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
             settingsShowRoutingButton: 'Show external routing button (experimental)',
+            settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service. The routing links are generated based on the available trip data, which can vary between API responses, so some providers might not work for all trips or the generated connections might differ from the actual trip.',
             settingsRoutingLinkProvider: 'Route link provider',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
+            settingsGroupGeneral:       'General',
+            settingsGroupPast:          'Past view',
+            settingsGroupTripExports:        'Trip exports',
+            settingsGroupExternalLinks: 'External data links',
+            settingsGroupData:          'Snapshot Data',
+            settingsUsePastCacheLabel:  'Enhance past view from cache (experimental)',
+            settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
             fromAll:           'From (all)',
             toAll:             'To (all)',
             dayAll:            'All',
@@ -118,6 +130,16 @@
             tagReassigned:     'Seat reassigned',
             tagMuted:          '🔕 No alerts',
             tagAuftragStatus:  s => `Order: ${s}`,
+            settingsCustomTags:       'Custom tags setup',
+            customTagNamePlaceholder: 'Tag label',
+            customTagAdd:             'Add',
+            customTagColorInfo:       'Blue',
+            customTagColorOk:         'Green',
+            customTagColorWarn:       'Yellow',
+            customTagColorBad:        'Red',
+            customTagDeleteTt:        'Delete tag',
+            customTagEditTt:          'Edit tag',
+            customTagAssignTt:        'Assign custom tags',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Notifications',
             cacheDelayDeparture: 'Departure delay',
@@ -149,7 +171,7 @@
             abweichungLoading: 'Loading…',
             abweichungNone:    'No current alerts.',
             abweichungError:   'Failed to load — see console.',
-            fgrBtnTooltip:     'Check passenger rights claim (§)',
+            fgrBtnTooltip:     'Passenger rights claim filed? (§)',
             fgrLoading:        'Loading passenger rights…',
             fgrNone:           'No passenger rights claim filed.',
             fgrError:          'Failed to load — see console.',
@@ -225,23 +247,33 @@
             settingsTitle:     'Einstellungen',
             settingsRememberFilter: 'Filter merken',
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
-            settingsUsePastCache: 'Vergangenheitsansicht mit Cache anreichern (experimentell). Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
             settingsShowJsonButton: 'JSON-Download-Button anzeigen',
+            settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständige API-Rohantworten als kombinierteJSON-Datei heruntergeladen werden kann. Gedacht für Debugging und eigene Auswertungen.',
             settingsShowGeoButton:  'Geo-Export-Button anzeigen',
+            settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei, z. B. für Karten- oder Tracking-Anwendungen. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
             settingsExportSnapshot: 'Snapshot exportieren (experimentell)',
             settingsImportSnapshot: 'Snapshot importieren (experimentell)',
             settingsTrainLinksEnabled: 'Zugnummern extern verlinken (experimentell)',
+            settingsTrainLinksDesc: 'Macht Zugnummern in der Reiseansicht zu anklickbaren Links zu einem externen Dienst. Zugfinder.net hat Daten zu Verspätungen. Bahn.expert hat mehr Echtzeitdaten und zeigt auch historische Verspätungsdaten für spezifische vergangene Fahrten an.',
             settingsTrainLinkProvider: 'Anbieter für Zuglinks',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
             settingsShowRoutingButton: 'Externen Routing-Button anzeigen (experimentell)',
+            settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst öffnet. Die Routing-Links werden mit den verfügbaren Reisedaten generiert, die je nach API-Antwort variieren können. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
             settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
+            settingsGroupGeneral:       'Allgemein',
+            settingsGroupPast:          'Vergangenheitsansicht',
+            settingsGroupTripExports:        'Reisen-Exporte',
+            settingsGroupExternalLinks: 'Externe Datenlinks',
+            settingsGroupData:          'Snapshot-Daten',
+            settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern',
+            settingsUsePastCacheDesc:   'Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
             dayAll:            'Alle',
@@ -278,6 +310,16 @@
             tagReassigned:     'Umplatziert',
             tagMuted:          '🔕 Keine Benachrichtigungen',
             tagAuftragStatus:  s => `Auftrag: ${s}`,
+            settingsCustomTags:       'Eigene Tags definieren',
+            customTagNamePlaceholder: 'Tag-Label',
+            customTagAdd:             'Hinzufügen',
+            customTagColorInfo:       'Blau',
+            customTagColorOk:         'Grün',
+            customTagColorWarn:       'Gelb',
+            customTagColorBad:        'Rot',
+            customTagDeleteTt:        'Tag löschen',
+            customTagEditTt:          'Tag bearbeiten',
+            customTagAssignTt:        'Eigene Tags zuweisen',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Benachrichtigungen',
             cacheDelayDeparture: 'Verspaetung Abfahrt',
@@ -309,7 +351,7 @@
             abweichungLoading: 'Lade…',
             abweichungNone:    'Keine aktuellen Meldungen.',
             abweichungError:   'Laden fehlgeschlagen — siehe Konsole.',
-            fgrBtnTooltip:     'Fahrgastrechte-Antrag prüfen (§)',
+            fgrBtnTooltip:     'Fahrgastrechte-Antrag gestellt? (§)',
             fgrLoading:        'Fahrgastrechte werden geladen…',
             fgrNone:           'Kein Fahrgastrechte-Antrag gestellt.',
             fgrError:          'Laden fehlgeschlagen — siehe Konsole.',
@@ -393,6 +435,8 @@
     let pastTrips       = null;
     let auftraegeCache  = null;
     let reisekettenHistory = loadReisekettenHistory();
+    let customTagDefs        = loadCustomTagDefs();
+    let customTagAssignments = loadCustomTagAssignments();
     let panelVisible    = !!uiSettings.openOnLoad;
     let rawReisekettenMap = new Map();
     let tokenSyncTimer  = null;
@@ -480,6 +524,19 @@
     function rememberUiState() {
         saveUiSettings();
         saveFilterState();
+    }
+
+    function loadCustomTagDefs() {
+        try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_DEFS_KEY) || '[]'); } catch (_) { return []; }
+    }
+    function saveCustomTagDefs() {
+        try { localStorage.setItem(CUSTOM_TAG_DEFS_KEY, JSON.stringify(customTagDefs)); } catch (_) {}
+    }
+    function loadCustomTagAssignments() {
+        try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_ASSIGNMENTS_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveCustomTagAssignments() {
+        try { localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments)); } catch (_) {}
     }
 
     loadFilterStateIfEnabled();
@@ -2037,6 +2094,8 @@
         if (t.sitzplatzStorniert) ids.push('tagSeatCancelled');
         if (t.stellplatzStorniert) ids.push('tagBikeCancelled');
         if (t.teilpreis) ids.push('tagPartFare');
+        const customIds = customTagAssignments[t.uuid] || [];
+        customIds.forEach(id => { if (customTagDefs.some(d => d.id === id)) ids.push(id); });
         return ids;
     }
 
@@ -2069,6 +2128,8 @@
             tagBikeCancelled: T.tagBikeCancelled,
             tagPartFare: T.tagPartFare
         };
+        const customDef = customTagDefs.find(d => d.id === tagId);
+        if (customDef) return customDef.label;
         return labels[tagId] || tagId;
     }
 
@@ -2266,7 +2327,9 @@
                 settings: isPlainObject(settings) ? settings : {},
                 reisekettenHistory: isPlainObject(history) && isPlainObject(history.entries)
                     ? { entries: history.entries }
-                    : { entries: {} }
+                    : { entries: {} },
+                customTagDefs: customTagDefs.slice(),
+                customTagAssignments: { ...customTagAssignments }
             };
             triggerDownload(
                 new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }),
@@ -2368,6 +2431,27 @@
             });
             localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(mergedHistory));
             reisekettenHistory = mergedHistory;
+
+            if (Array.isArray(data.customTagDefs)) {
+                const mergedDefs = preferImported
+                    ? [...customTagDefs]
+                    : [...customTagDefs];
+                const localIds = new Map(mergedDefs.map((d, i) => [d.id, i]));
+                data.customTagDefs.forEach(def => {
+                    if (!def || !def.id || !def.label) return;
+                    const idx = localIds.get(def.id);
+                    if (idx === undefined) { mergedDefs.push(def); localIds.set(def.id, mergedDefs.length - 1); }
+                    else if (preferImported) mergedDefs[idx] = def;
+                });
+                customTagDefs = mergedDefs;
+                saveCustomTagDefs();
+            }
+            if (isPlainObject(data.customTagAssignments)) {
+                customTagAssignments = preferImported
+                    ? { ...customTagAssignments, ...data.customTagAssignments }
+                    : { ...data.customTagAssignments, ...customTagAssignments };
+                saveCustomTagAssignments();
+            }
 
             uiSettings = loadUiSettings();
             filterState = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
@@ -2713,10 +2797,36 @@
                         color: #27408a;
                     }
 
-                    .dbmrpp-settings-row {
+                    .dbmrpp-settings-group {
+                        border-top: 1px solid var(--dbmrpp-border);
+                        margin: 0;
+                        padding: 0;
+                    }
+                    .dbmrpp-settings-group > summary {
+                        font-size: 11px;
+                        font-weight: 700;
+                        color: #27408a;
+                        letter-spacing: .04em;
+                        cursor: pointer;
+                        padding: 5px 2px;
+                        user-select: none;
+                        list-style: none;
+                    }
+                    .dbmrpp-settings-group > summary::-webkit-details-marker { display: none; }
+                    .dbmrpp-settings-group > summary::before { content: '▸ '; }
+                    .dbmrpp-settings-group[open] > summary::before { content: '▾ '; }
+                    .dbmrpp-settings-group-body {
                         display: grid;
                         gap: 6px;
+                        padding: 2px 0 8px 0;
                         justify-items: start;
+                    }
+                    .dbmrpp-settings-sub { padding-left: 18px; }
+                    .dbmrpp-settings-info-text {
+                        font-size: 11px;
+                        color: #666;
+                        padding-left: 18px;
+                        line-height: 1.4;
                     }
 
                     .dbmrpp-settings-toggle {
@@ -2860,6 +2970,67 @@
                         .dbmrpp-select { min-width: 100px; }
                         .dbmrpp-filter-row-top .dbmrpp-select { min-width: 90px; }
                     }
+
+                    .dbmrpp-custom-tag-details {
+                        position: relative;
+                        display: inline-block;
+                    }
+                    .dbmrpp-custom-tag-details > summary {
+                        list-style: none;
+                        cursor: pointer;
+                    }
+                    .dbmrpp-custom-tag-details > summary::-webkit-details-marker { display: none; }
+                    .dbmrpp-custom-tag-assigned { color: #6600cc !important; opacity: 1 !important; }
+                    .dbmrpp-custom-tag-picker {
+                        position: absolute;
+                        top: calc(100% + 2px);
+                        left: 0;
+                        z-index: 200;
+                        background: #fff;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 4px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,.18);
+                        padding: 4px;
+                        min-width: 130px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 2px;
+                        white-space: nowrap;
+                    }
+                    .dbmrpp-custom-tag-toggle {
+                        border: 1px solid transparent;
+                        background: none;
+                        cursor: pointer;
+                        padding: 2px 6px;
+                        text-align: left;
+                        border-radius: 3px;
+                        display: flex;
+                        align-items: center;
+                    }
+                    .dbmrpp-custom-tag-toggle:hover { background: #f0f0f0; border-color: var(--dbmrpp-border); }
+                    .dbmrpp-custom-tag-toggle.active { outline: 2px solid var(--dbmrpp-accent); outline-offset: -2px; }
+                    .dbmrpp-custom-tag-def-row { display: flex; align-items: center; gap: 6px; }
+                    .dbmrpp-custom-tag-create {
+                        display: flex;
+                        gap: 4px;
+                        align-items: center;
+                        flex-wrap: wrap;
+                        margin-top: 6px;
+                    }
+                    .dbmrpp-custom-tag-create input {
+                        padding: 2px 6px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        font-size: 12px;
+                        min-width: 100px;
+                        max-width: 160px;
+                    }
+                    .dbmrpp-custom-tag-create select {
+                        padding: 2px 4px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        font-size: 12px;
+                    }
                 `;
         document.head.appendChild(s);
     }
@@ -2877,11 +3048,20 @@
         lastRenderArgs = { trips, orphans, changes, lastVisit };
 
         const old = document.getElementById('dbmrpp-root');
-        if (old) old.remove();
+        let settingsGroupStates = null;
+        if (old) {
+            settingsGroupStates = Array.from(old.querySelectorAll('.dbmrpp-settings-group')).map(el => el.open);
+            old.remove();
+        }
 
         const root = document.createElement('div');
         root.id = 'dbmrpp-root';
         root.innerHTML = buildHTML(trips, orphans, changes, lastVisit);
+        if (settingsGroupStates) {
+            root.querySelectorAll('.dbmrpp-settings-group').forEach((el, i) => {
+                if (i < settingsGroupStates.length) el.open = settingsGroupStates[i];
+            });
+        }
         // Panel starts hidden; showPanel() / togglePanel() reveals it
         root.style.display = panelVisible ? '' : 'none';
         document.body.appendChild(root);
@@ -2917,6 +3097,81 @@
                 localStorage.removeItem(LAST_VISIT_KEY);
                 hidePanel();
                 run(); // re-fetch with clean snapshot so diff starts fresh
+            }
+        });
+
+        const customTagAddBtn = root.querySelector('#dbmrpp-custom-tag-add');
+        if (customTagAddBtn) customTagAddBtn.addEventListener('click', () => {
+            const nameInput = root.querySelector('#dbmrpp-custom-tag-name');
+            const colorSel  = root.querySelector('#dbmrpp-custom-tag-color');
+            const label = nameInput ? nameInput.value.trim() : '';
+            if (!label) return;
+            const color = (colorSel && ['info','ok','warn','bad'].includes(colorSel.value)) ? colorSel.value : 'info';
+            customTagDefs.push({ id: 'custom-' + Date.now(), label, color });
+            saveCustomTagDefs();
+            reRender();
+        });
+
+        root.querySelectorAll('.dbmrpp-custom-tag-edit').forEach(btn =>
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                const def = customTagDefs.find(d => d.id === id);
+                if (!def) return;
+                const newLabel = prompt(T.customTagEditTt, def.label);
+                if (newLabel === null) return;
+                const trimmed = newLabel.trim();
+                if (!trimmed) return;
+                def.label = trimmed;
+                saveCustomTagDefs();
+                reRender();
+            })
+        );
+
+        root.querySelectorAll('.dbmrpp-custom-tag-delete').forEach(btn =>
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                customTagDefs = customTagDefs.filter(d => d.id !== id);
+                Object.keys(customTagAssignments).forEach(uuid => {
+                    customTagAssignments[uuid] = (customTagAssignments[uuid] || []).filter(tid => tid !== id);
+                    if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
+                });
+                saveCustomTagDefs();
+                saveCustomTagAssignments();
+                reRender();
+            })
+        );
+
+        root.addEventListener('click', ev => {
+            const btn = ev.target.closest('.dbmrpp-custom-tag-toggle');
+            if (!btn) return;
+            const uuid  = btn.getAttribute('data-uuid');
+            const tagId = btn.getAttribute('data-tagid');
+            if (!uuid || !tagId) return;
+            const assigned = customTagAssignments[uuid] || [];
+            const isNowAssigned = !assigned.includes(tagId);
+            customTagAssignments[uuid] = isNowAssigned
+                ? [...assigned, tagId]
+                : assigned.filter(id => id !== tagId);
+            if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
+            saveCustomTagAssignments();
+            btn.classList.toggle('active', isNowAssigned);
+            const tripDiv = btn.closest('.dbmrpp-trip');
+            if (tripDiv) {
+                const trip = trips.find(x => x.uuid === uuid) ||
+                             (pastTrips || []).find(x => x.uuid === uuid) ||
+                             orphans.find(x => x.uuid === uuid);
+                if (trip) {
+                    const newTagsHtml = buildTripTags(trip).join('');
+                    const tagsDiv = tripDiv.querySelector('.dbmrpp-trip-tags');
+                    if (tagsDiv) tagsDiv.innerHTML = newTagsHtml;
+                    const cacheTagsDiv = tripDiv.querySelector('.dbmrpp-cache-tags');
+                    if (cacheTagsDiv) cacheTagsDiv.innerHTML = newTagsHtml;
+                    const summary = btn.closest('details') && btn.closest('details').querySelector('summary');
+                    if (summary) {
+                        const hasAny = (customTagAssignments[uuid] || []).some(id => customTagDefs.some(d => d.id === id));
+                        summary.classList.toggle('dbmrpp-custom-tag-assigned', hasAny);
+                    }
+                }
             }
         });
 
@@ -3264,61 +3519,109 @@
         </h2>
         <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
             <div class="dbmrpp-settings-title">${T.settingsTitle}</div>
-            <div class="dbmrpp-settings-row">
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-remember-filter"${uiSettings.rememberFilter ? ' checked' : ''}>
-                    <span>${T.settingsRememberFilter}</span>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-open-on-load"${uiSettings.openOnLoad ? ' checked' : ''}>
-                    <span>${T.settingsOpenOnLoad}</span>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-use-past-cache"${uiSettings.usePastCache ? ' checked' : ''}>
-                    <span>${T.settingsUsePastCache}</span>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-show-json-button"${uiSettings.showJsonButton !== false ? ' checked' : ''}>
-                    <span>${T.settingsShowJsonButton}</span>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-show-geo-button"${uiSettings.showGeoButton !== false ? ' checked' : ''}>
-                    <span>${T.settingsShowGeoButton}</span>
-                </label>
-                <label class="dbmrpp-settings-provider">
-                    <span>${T.settingsGeoFormat}</span>
-                    <select id="dbmrpp-setting-geo-format"${uiSettings.showGeoButton !== false ? '' : ' disabled'}>
-                        <option value="gpx"${uiSettings['geo-format'] === 'gpx' ? ' selected' : ''}>${T.settingsGeoFormatGpx}</option>
-                        <option value="geojson"${uiSettings['geo-format'] === 'geojson' ? ' selected' : ''}>${T.settingsGeoFormatGeojson}</option>
-                    </select>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-show-routing-button"${uiSettings.showRoutingButton ? ' checked' : ''}>
-                    <span>${T.settingsShowRoutingButton}</span>
-                </label>
-                <label class="dbmrpp-settings-provider">
-                    <span>${T.settingsRoutingLinkProvider}</span>
-                    <select id="dbmrpp-setting-routing-provider"${uiSettings.showRoutingButton ? '' : ' disabled'}>
-                        <option value="bahn.expert"${uiSettings['routing-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsRoutingProviderBahnExpert}</option>
-                        <option value="chuuchuu"${uiSettings['routing-provider'] === 'chuuchuu' ? ' selected' : ''}>${T.settingsRoutingProviderChuuchuu}</option>
-                        <option value="transitous.org"${uiSettings['routing-provider'] === 'transitous.org' ? ' selected' : ''}>${T.settingsRoutingProviderTransitous}</option>
-                    </select>
-                </label>
-                <label class="dbmrpp-settings-toggle">
-                    <input type="checkbox" id="dbmrpp-setting-train-links"${uiSettings.trainLinksEnabled ? ' checked' : ''}>
-                    <span>${T.settingsTrainLinksEnabled}</span>
-                </label>
-                <label class="dbmrpp-settings-provider">
-                    <span>${T.settingsTrainLinkProvider}</span>
-                    <select id="dbmrpp-setting-traininfo-provider"${uiSettings.trainLinksEnabled ? '' : ' disabled'}>
-                        <option value="zugfinder"${uiSettings['traininfo-provider'] === 'zugfinder' ? ' selected' : ''}>${T.settingsTrainProviderZugfinder}</option>
-                        <option value="bahn.expert"${uiSettings['traininfo-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsTrainProviderBahnExpert}</option>
-                    </select>
-                </label>
-                <button class="dbmrpp-settings-export-snapshot dbmrpp-settings-reset">${T.settingsExportSnapshot}</button>
-                <button class="dbmrpp-settings-import-snapshot dbmrpp-settings-reset">${T.settingsImportSnapshot}</button>
-                <button class="dbmrpp-settings-reset dbmrpp-settings-reset-snapshot" title="${T.ttReset}">Reset Trips Snapshot</button>
-            </div>
+            <details class="dbmrpp-settings-group" open>
+                <summary>${T.settingsGroupGeneral}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-remember-filter"${uiSettings.rememberFilter ? ' checked' : ''}>
+                        <span>${T.settingsRememberFilter}</span>
+                    </label>
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-open-on-load"${uiSettings.openOnLoad ? ' checked' : ''}>
+                        <span>${T.settingsOpenOnLoad}</span>
+                    </label>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group">
+                <summary>${T.settingsGroupPast}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-use-past-cache"${uiSettings.usePastCache ? ' checked' : ''}>
+                        <span>${T.settingsUsePastCacheLabel}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${T.settingsUsePastCacheDesc}</div>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group" open>
+                <summary>${T.settingsGroupTripExports}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-show-json-button"${uiSettings.showJsonButton !== false ? ' checked' : ''}>
+                        <span>${T.settingsShowJsonButton}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${T.settingsShowJsonButtonDesc}</div>
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-show-geo-button"${uiSettings.showGeoButton !== false ? ' checked' : ''}>
+                        <span>${T.settingsShowGeoButton}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${T.settingsShowGeoButtonDesc}</div>
+                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
+                        <span>${T.settingsGeoFormat}</span>
+                        <select id="dbmrpp-setting-geo-format"${uiSettings.showGeoButton !== false ? '' : ' disabled'}>
+                            <option value="gpx"${uiSettings['geo-format'] === 'gpx' ? ' selected' : ''}>${T.settingsGeoFormatGpx}</option>
+                            <option value="geojson"${uiSettings['geo-format'] === 'geojson' ? ' selected' : ''}>${T.settingsGeoFormatGeojson}</option>
+                        </select>
+                    </label>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group">
+                <summary>${T.settingsGroupExternalLinks}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-show-routing-button"${uiSettings.showRoutingButton ? ' checked' : ''}>
+                        <span>${T.settingsShowRoutingButton}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${T.settingsShowRoutingButtonDesc}</div>
+                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
+                        <span>${T.settingsRoutingLinkProvider}</span>
+                        <select id="dbmrpp-setting-routing-provider"${uiSettings.showRoutingButton ? '' : ' disabled'}>
+                            <option value="bahn.expert"${uiSettings['routing-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsRoutingProviderBahnExpert}</option>
+                            <option value="chuuchuu"${uiSettings['routing-provider'] === 'chuuchuu' ? ' selected' : ''}>${T.settingsRoutingProviderChuuchuu}</option>
+                            <option value="transitous.org"${uiSettings['routing-provider'] === 'transitous.org' ? ' selected' : ''}>${T.settingsRoutingProviderTransitous}</option>
+                        </select>
+                    </label>
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-setting-train-links"${uiSettings.trainLinksEnabled ? ' checked' : ''}>
+                        <span>${T.settingsTrainLinksEnabled}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${T.settingsTrainLinksDesc}</div>
+                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
+                        <span>${T.settingsTrainLinkProvider}</span>
+                        <select id="dbmrpp-setting-traininfo-provider"${uiSettings.trainLinksEnabled ? '' : ' disabled'}>
+                            <option value="zugfinder"${uiSettings['traininfo-provider'] === 'zugfinder' ? ' selected' : ''}>${T.settingsTrainProviderZugfinder}</option>
+                            <option value="bahn.expert"${uiSettings['traininfo-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsTrainProviderBahnExpert}</option>
+                        </select>
+                    </label>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group">
+                <summary>${T.settingsGroupData}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <button class="dbmrpp-settings-export-snapshot dbmrpp-settings-reset">${T.settingsExportSnapshot}</button>
+                    <button class="dbmrpp-settings-import-snapshot dbmrpp-settings-reset">${T.settingsImportSnapshot}</button>
+                    <button class="dbmrpp-settings-reset dbmrpp-settings-reset-snapshot" title="${T.ttReset}">Reset Trips Snapshot</button>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group">
+                <summary>${esc(T.settingsCustomTags)}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    ${customTagDefs.map(def => `<div class="dbmrpp-custom-tag-def-row">
+                        <span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span>
+                        <button class="dbmrpp-custom-tag-edit dbmrpp-settings-reset" data-id="${esc(def.id)}" title="${esc(T.customTagEditTt)}">✎</button>
+                        <button class="dbmrpp-custom-tag-delete dbmrpp-settings-reset" data-id="${esc(def.id)}" title="${esc(T.customTagDeleteTt)}">×</button>
+                    </div>`).join('')}
+                    <div class="dbmrpp-custom-tag-create">
+                        <input type="text" id="dbmrpp-custom-tag-name" placeholder="${esc(T.customTagNamePlaceholder)}">
+                        <select id="dbmrpp-custom-tag-color">
+                            <option value="info">${esc(T.customTagColorInfo)}</option>
+                            <option value="ok">${esc(T.customTagColorOk)}</option>
+                            <option value="warn">${esc(T.customTagColorWarn)}</option>
+                            <option value="bad">${esc(T.customTagColorBad)}</option>
+                        </select>
+                        <button id="dbmrpp-custom-tag-add" class="dbmrpp-settings-reset">${esc(T.customTagAdd)}</button>
+                    </div>
+                </div>
+            </details>
         </div>
         ${buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
         ${buildChangeBlock(changes, lastVisitTxt)}
@@ -3908,7 +4211,22 @@
         if (t.sitzplatzStorniert)  tags.push(tag('dbmrpp-tag-warn', T.tagSeatCancelled));
         if (t.stellplatzStorniert) tags.push(tag('dbmrpp-tag-warn', T.tagBikeCancelled));
         if (t.teilpreis)           tags.push(tag('dbmrpp-tag-info', T.tagPartFare));
+        (customTagAssignments[t.uuid] || []).forEach(cid => {
+            const def = customTagDefs.find(d => d.id === cid);
+            if (def) tags.push(tag(`dbmrpp-tag-${def.color}`, esc(def.label)));
+        });
         return tags;
+    }
+
+    function renderCustomTagBtn(t) {
+        if (customTagDefs.length === 0) return '';
+        const assigned = customTagAssignments[t.uuid] || [];
+        const hasAssigned = assigned.some(id => customTagDefs.some(d => d.id === id));
+        const items = customTagDefs.map(def => {
+            const isActive = assigned.includes(def.id);
+            return `<button class="dbmrpp-custom-tag-toggle${isActive ? ' active' : ''}" data-uuid="${esc(t.uuid)}" data-tagid="${esc(def.id)}"><span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span></button>`;
+        }).join('');
+        return `<details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon${hasAssigned ? ' dbmrpp-custom-tag-assigned' : ''}" title="${esc(T.customTagAssignTt)}">🔖</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
     }
 
     function renderTripLine(t) {
@@ -3943,6 +4261,7 @@
                 ${renderRawJsonLink(t)}
                 ${renderFahrgastrechteBtn(t)}
                 ${renderDeleteCacheBtn(t)}
+                ${renderCustomTagBtn(t)}
             </div>
             <div class="dbmrpp-meta">
                 ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
@@ -3959,7 +4278,7 @@
                 ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
             </div>
             ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
-            ${!showCacheTagsInline && tags.length ? `<div>${tags.join('')}</div>` : ''}
+            ${!showCacheTagsInline ? `<div class="dbmrpp-trip-tags">${tags.join('')}</div>` : ''}
         </div>`;
     }
 

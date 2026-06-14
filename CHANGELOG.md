@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.7.0] - unreleased
+
+## Added
+- **custom tags** - you can now define, assign and filter by custom tags in the settings and assign them to individual trips
+
+## Changed
+- **restructered and enhanced settings** - introduced collapsible settings sections and introduced setting descriptions
+
+---
 ## [0.6.0] - 2026-06-10 "defekte Tür"
 
 ### Added

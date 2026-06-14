@@ -33,10 +33,10 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Filter by station (origin/destination)
 - Filter by date range (all/7/30/90)
 - Show only trips with issues
-- Filter by labels & indicators
+- Filter by tags & indicators
 - Separate tabs for future and past trips
 
-**Labels & Indicators**
+**Tags & Indicators**
 - First class markers
 - Rerouting required warnings
 - Zugbindung: Train binding status
@@ -44,6 +44,7 @@ A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
 - Seat/bike cancellation notices
 - Disruption information
 - Whether trip alerts are muted
+- Custom tags
 
 **Bilingual Support**
 - German on bahn.de
