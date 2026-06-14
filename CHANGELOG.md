@@ -17,6 +17,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **refactored history entry shape** - deduplicated code
 - **refactored renderUI code** - introduced 4 helper functions to decompose the overly large function
 - **refactored external routing code** - decomposed routing code such that providers get named sync functions, simplified endpoint extraction a bit
+- **Unified trip tag definitions** - into a single TRIP_TAG_DEFS table, eliminating the parallel condition lists in getTripTagIds and buildTripTags; also fixes tagSaved not matching history-cache trips in the filter path.
 
 ---
 ## [0.6.0] - 2026-06-10 "defekte Tür"

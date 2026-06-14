@@ -2050,28 +2050,50 @@
     // =========================================================
     // 10) Filter & export helpers
     // =========================================================
+    const TRIP_TAG_DEFS = [
+        { id: 'tagClass1',         cls: 'info', cond: t => t.klasse === 1,
+          label: ()  => T.tagClass1 },
+        { id: 'tagRegionalTicket', cls: 'ok',   cond: t => t.isVerbundticket,
+          label: t  => `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}` },
+        { id: 'tagZugbindung',     cls: 'warn', cond: t => t.zugbindung === 'AUFGEHOBEN',
+          label: ()  => T.tagZugbindung },
+        { id: 'tagNotRecon',       cls: 'bad',  cond: t => t.status === 'NICHT_REKONSTRUIERBAR',
+          label: ()  => T.tagNotRecon },
+        { id: 'tagBeingReplanned', cls: 'warn', cond: t => t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR',
+          label: ()  => T.tagBeingReplanned },
+        { id: 'tagMustReroute',    cls: 'bad',  cond: t => t.alternativensuche === 'ALTERNATIVEN_MUSS',
+          label: ()  => T.tagMustReroute },
+        { id: 'tagAltPossible',    cls: 'info', cond: t => t.alternativensuche === 'ALTERNATIVEN_KANN',
+          label: ()  => T.tagAltPossible },
+        { id: 'tagDisruption',     cls: 'warn', cond: t => t.relevanteAbweichung,
+          label: ()  => T.tagDisruption },
+        { id: 'tagRerouted',       cls: 'info', cond: t => t.letzterReiseplanBearbeiter === 'SYSTEM',
+          label: ()  => T.tagRerouted },
+        { id: 'tagReassigned',     cls: 'warn', cond: t => t.umreserviert,
+          label: ()  => T.tagReassigned },
+        { id: 'tagMuted',          cls: 'warn', cond: t => t.ueberwacht === false,
+          label: ()  => T.tagMuted },
+        { id: 'tagSaved',          cls: 'ok',   cond: t => t.typ === 'FREI' || t.isFromHistoryCache,
+          label: ()  => T.tagSaved },
+        { id: 'tagWiederholend',   cls: 'ok',   cond: t => t.typ === 'WIEDERHOLEND',
+          label: ()  => T.tagWiederholend },
+        { id: 'tagStorniert',      cls: 'bad',  cond: t => t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT',
+          label: t  => esc(formatStorno(t.storniertStatus)) },
+        { id: 'tagAuftragStatus',  cls: 'warn', cond: t => t.auftragStatus && t.auftragStatus !== 'ABGESCHLOSSEN' && t.typ === 'AUFTRAG',
+          label: t  => esc(T.tagAuftragStatus(t.auftragStatus)) },
+        { id: 'tagSeatCancelled',  cls: 'warn', cond: t => t.sitzplatzStorniert,
+          label: ()  => T.tagSeatCancelled },
+        { id: 'tagBikeCancelled',  cls: 'warn', cond: t => t.stellplatzStorniert,
+          label: ()  => T.tagBikeCancelled },
+        { id: 'tagPartFare',       cls: 'info', cond: t => t.teilpreis,
+          label: ()  => T.tagPartFare },
+    ];
+
     function getTripTagIds(t) {
-        const ids = [];
-        if (t.klasse === 1) ids.push('tagClass1');
-        if (t.isVerbundticket) ids.push('tagRegionalTicket');
-        if (t.zugbindung === 'AUFGEHOBEN') ids.push('tagZugbindung');
-        if (t.status === 'NICHT_REKONSTRUIERBAR') ids.push('tagNotRecon');
-        if (t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR') ids.push('tagBeingReplanned');
-        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') ids.push('tagMustReroute');
-        if (t.alternativensuche === 'ALTERNATIVEN_KANN') ids.push('tagAltPossible');
-        if (t.relevanteAbweichung) ids.push('tagDisruption');
-        if (t.letzterReiseplanBearbeiter === 'SYSTEM') ids.push('tagRerouted');
-        if (t.umreserviert) ids.push('tagReassigned');
-        if (t.ueberwacht === false) ids.push('tagMuted');
-        if (t.typ === 'FREI') ids.push('tagSaved');
-        if (t.typ === 'WIEDERHOLEND') ids.push('tagWiederholend');
-        if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') ids.push('tagStorniert');
-        if (t.auftragStatus && t.auftragStatus !== 'ABGESCHLOSSEN' && t.typ === 'AUFTRAG') ids.push('tagAuftragStatus');
-        if (t.sitzplatzStorniert) ids.push('tagSeatCancelled');
-        if (t.stellplatzStorniert) ids.push('tagBikeCancelled');
-        if (t.teilpreis) ids.push('tagPartFare');
-        const customIds = customTagAssignments[t.uuid] || [];
-        customIds.forEach(id => { if (customTagDefs.some(d => d.id === id)) ids.push(id); });
+        const ids = TRIP_TAG_DEFS.filter(d => d.cond(t)).map(d => d.id);
+        (customTagAssignments[t.uuid] || []).forEach(id => {
+            if (customTagDefs.some(d => d.id === id)) ids.push(id);
+        });
         return ids;
     }
 
@@ -4151,27 +4173,9 @@
 
     function buildTripTags(t) {
         const tag = (cls, text) => `<span class="dbmrpp-tag ${cls}">${text}</span>`;
-        const tags = [];
-        if (t.klasse === 1)       tags.push(tag('dbmrpp-tag-info', T.tagClass1));
-        if (t.isVerbundticket)    tags.push(tag('dbmrpp-tag-ok',   `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}`));
-        if (t.zugbindung === 'AUFGEHOBEN')               tags.push(tag('dbmrpp-tag-warn', T.tagZugbindung));
-        if (t.status === 'NICHT_REKONSTRUIERBAR')        tags.push(tag('dbmrpp-tag-bad',  T.tagNotRecon));
-        if (t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR') tags.push(tag('dbmrpp-tag-warn', T.tagBeingReplanned));
-        if (t.alternativensuche === 'ALTERNATIVEN_MUSS') tags.push(tag('dbmrpp-tag-bad',  T.tagMustReroute));
-        if (t.alternativensuche === 'ALTERNATIVEN_KANN') tags.push(tag('dbmrpp-tag-info', T.tagAltPossible));
-        if (t.relevanteAbweichung)                       tags.push(tag('dbmrpp-tag-warn', T.tagDisruption));
-        if (t.letzterReiseplanBearbeiter === 'SYSTEM')   tags.push(tag('dbmrpp-tag-info', T.tagRerouted));
-        if (t.umreserviert)                              tags.push(tag('dbmrpp-tag-warn', T.tagReassigned));
-        if (t.ueberwacht === false)                      tags.push(tag('dbmrpp-tag-warn', T.tagMuted));
-        if (t.typ === 'FREI' || t.isFromHistoryCache)    tags.push(tag('dbmrpp-tag-ok',   T.tagSaved));
-        if (t.typ === 'WIEDERHOLEND')                    tags.push(tag('dbmrpp-tag-ok',   T.tagWiederholend));
-        if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT')
-            tags.push(tag('dbmrpp-tag-bad',  esc(formatStorno(t.storniertStatus))));
-        if (t.auftragStatus && t.auftragStatus !== 'ABGESCHLOSSEN' && t.typ === 'AUFTRAG')
-            tags.push(tag('dbmrpp-tag-warn', esc(T.tagAuftragStatus(t.auftragStatus))));
-        if (t.sitzplatzStorniert)  tags.push(tag('dbmrpp-tag-warn', T.tagSeatCancelled));
-        if (t.stellplatzStorniert) tags.push(tag('dbmrpp-tag-warn', T.tagBikeCancelled));
-        if (t.teilpreis)           tags.push(tag('dbmrpp-tag-info', T.tagPartFare));
+        const tags = TRIP_TAG_DEFS
+            .filter(d => d.cond(t))
+            .map(d => tag(`dbmrpp-tag-${d.cls}`, d.label(t)));
         (customTagAssignments[t.uuid] || []).forEach(cid => {
             const def = customTagDefs.find(d => d.id === cid);
             if (def) tags.push(tag(`dbmrpp-tag-${def.color}`, esc(def.label)));
