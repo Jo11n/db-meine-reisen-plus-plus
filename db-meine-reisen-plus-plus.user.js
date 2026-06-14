@@ -2533,6 +2533,9 @@
                         --dbmrpp-text: #222;
                         --dbmrpp-text-muted: #666;
                         --dbmrpp-border: #ccc;
+                        --dbmrpp-navy: #1a3a8a;
+                        --dbmrpp-blue: #4a7cdc;
+                        --dbmrpp-divider: #eee;
                     }
 
                     #dbmrpp-fab {
@@ -2637,7 +2640,7 @@
                     #dbmrpp-root h3 { margin: 0 0 8px; font-size: 13px; color: var(--dbmrpp-accent); }
                     #dbmrpp-root h4 { margin: 10px 0 4px; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: .04em; }
 
-                    .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid #eee; }
+                    .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); }
                     .dbmrpp-changes { background: #fff5f5; }
                     .dbmrpp-changes-none { color: var(--dbmrpp-text-muted); font-style: italic; }
                     .dbmrpp-trip { padding: 6px 0; border-bottom: 1px dotted #e0e0e0; }
@@ -2651,8 +2654,10 @@
                         gap: 2px;
                     }
 
-                    .dbmrpp-route-link { color: #1a3a8a; text-decoration: none; word-break: break-word; overflow-wrap: break-word; }
-                    .dbmrpp-route-link:hover { text-decoration: underline; }
+                    .dbmrpp-route-link, .dbmrpp-train-link { color: var(--dbmrpp-navy); text-decoration: none; }
+                    .dbmrpp-route-link:hover, .dbmrpp-train-link:hover { text-decoration: underline; }
+                    .dbmrpp-route-link { word-break: break-word; overflow-wrap: break-word; }
+                    button.dbmrpp-train-link { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 
                     .dbmrpp-action-icon {
                         display: inline-flex;
@@ -2680,31 +2685,21 @@
                         color: #555;
                     }
 
-                    .dbmrpp-abweichung-msg { margin: 2px 0; line-height: 1.4; }
+                    .dbmrpp-abweichung-msg, .dbmrpp-fgr-claim { margin: 2px 0; line-height: 1.4; }
 
-                    .dbmrpp-fgr-detail {
+                    .dbmrpp-fgr-detail, .dbmrpp-cache-block {
                         margin: 4px 0 2px 14px;
                         padding: 5px 10px;
                         background: #f0f4ff;
-                        border-left: 3px solid #4a7cdc;
+                        border-left: 3px solid var(--dbmrpp-blue);
                         border-radius: 2px;
-                        font-size: 11.5px;
                         color: #555;
                     }
+                    .dbmrpp-fgr-detail { font-size: 11.5px; }
+                    .dbmrpp-cache-block { font-size: 11px; line-height: 1.35; }
 
-                    .dbmrpp-fgr-claim { margin: 2px 0; line-height: 1.4; }
                     .dbmrpp-meta { color: var(--dbmrpp-text-muted); font-size: 11.5px; line-height: 1.4; }
                     .dbmrpp-meta-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #999; }
-                    .dbmrpp-cache-block {
-                        margin: 4px 0 2px 14px;
-                        padding: 5px 10px;
-                        background: #f0f4ff;
-                        border-left: 3px solid #4a7cdc;
-                        border-radius: 2px;
-                        color: #555;
-                        font-size: 11px;
-                        line-height: 1.35;
-                    }
                     .dbmrpp-cache-inline {
                         margin: 4px 0 2px 14px;
                         color: var(--dbmrpp-text-muted);
@@ -2713,38 +2708,23 @@
                     }
                     .dbmrpp-cached-trip {
                         background: #f5f9ff;
-                        border-left: 4px solid #4a7cdc;
+                        border-left: 4px solid var(--dbmrpp-blue);
                         padding-left: 8px;
                         border-radius: 4px;
                     }
                     .dbmrpp-cache-badge {
                         background: #e8f0ff;
-                        color: #1a3a8a;
+                        color: var(--dbmrpp-navy);
                         padding: 2px 6px;
                         margin-right: 6px;
                         border-radius: 4px;
                         font-weight: 700;
                         font-size: 12px;
                     }
-                    .dbmrpp-cache-label {
-                        font-weight: 600;
-                        color: #222;
-                    }
-                    .dbmrpp-cache-msg {
-                        margin-top: 3px;
-                        padding-left: 2px;
-                    }
-                    .dbmrpp-cache-missing {
-                        background: #f7f7f7;
-                        border-left-color: #9ca3af;
-                        color: #666;
-                    }
-                    .dbmrpp-cache-tags {
-                        margin-top: 4px;
-                    }
-                    .dbmrpp-train-link { color: #1a3a8a; text-decoration: none; }
-                    .dbmrpp-train-link:hover { text-decoration: underline; }
-                    button.dbmrpp-train-link { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
+                    .dbmrpp-cache-label { font-weight: 600; color: #222; }
+                    .dbmrpp-cache-msg { margin-top: 3px; padding-left: 2px; }
+                    .dbmrpp-cache-missing { background: #f7f7f7; border-left-color: #9ca3af; color: #666; }
+                    .dbmrpp-cache-tags { margin-top: 4px; }
 
                     .dbmrpp-tag {
                         display: inline-block;
@@ -2758,19 +2738,18 @@
                     .dbmrpp-tag-warn { background: #ffe9b3; color: #8a5a00; }
                     .dbmrpp-tag-bad  { background: #ffd0d0; color: #8a0000; }
                     .dbmrpp-tag-ok   { background: #d6f3d6; color: #265c26; }
-                    .dbmrpp-tag-info { background: #dde8ff; color: #1a3a8a; }
+                    .dbmrpp-tag-info { background: #dde8ff; color: var(--dbmrpp-navy); }
 
                     .dbmrpp-diff { margin: 2px 0 2px 12px; font-size: 11.5px; color: #333; }
                     .dbmrpp-diff-old { color: #888; text-decoration: line-through; }
-                    .dbmrpp-diff-new { color: var(--dbmrpp-accent); font-weight: 600; }
-                    .dbmrpp-delay { color: var(--dbmrpp-accent); font-weight: 600; }
+                    .dbmrpp-diff-new, .dbmrpp-delay { color: var(--dbmrpp-accent); font-weight: 600; }
                     .dbmrpp-early { color: #265c26; font-weight: 600; }
 
                     .dbmrpp-filter-bar {
                         display: grid;
                         gap: 6px;
                         padding: 6px 14px;
-                        border-bottom: 1px solid #eee;
+                        border-bottom: 1px solid var(--dbmrpp-divider);
                         background: #fafafa;
                     }
 
@@ -2785,7 +2764,7 @@
                         display: grid;
                         gap: 8px;
                         padding: 8px 14px;
-                        border-bottom: 1px solid #eee;
+                        border-bottom: 1px solid var(--dbmrpp-divider);
                         background: #f7f9ff;
                     }
 
@@ -2827,25 +2806,15 @@
                         line-height: 1.4;
                     }
 
-                    .dbmrpp-settings-toggle {
+                    .dbmrpp-settings-toggle, .dbmrpp-settings-provider {
                         display: inline-flex;
                         align-items: center;
                         gap: 6px;
                         font-size: 12px;
                         color: #333;
-                        cursor: pointer;
-                        user-select: none;
                     }
-
+                    .dbmrpp-settings-toggle { cursor: pointer; user-select: none; }
                     .dbmrpp-settings-toggle input { margin: 0; }
-
-                    .dbmrpp-settings-provider {
-                        display: inline-flex;
-                        align-items: center;
-                        gap: 6px;
-                        font-size: 12px;
-                        color: #333;
-                    }
 
                     .dbmrpp-settings-provider select {
                         min-width: 140px;
@@ -2861,14 +2830,16 @@
                         color: #888;
                     }
 
-                    .dbmrpp-settings-reset {
-                        padding: 2px 8px;
+                    .dbmrpp-day-btn, .dbmrpp-changes-toggle, .dbmrpp-settings-reset {
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
                         cursor: pointer;
                         font-size: 11px;
                         background: #fff;
                     }
+                    .dbmrpp-day-btn { padding: 2px 7px; }
+                    .dbmrpp-changes-toggle, .dbmrpp-settings-reset { padding: 2px 8px; }
+                    .dbmrpp-changes-toggle { white-space: nowrap; }
 
                     .dbmrpp-settings-hidden { display: none; }
 
@@ -2877,9 +2848,7 @@
                         min-width: 80px;
                     }
 
-                    .dbmrpp-filter-row-bottom {
-                        justify-content: flex-start;
-                    }
+                    .dbmrpp-filter-row-bottom { justify-content: flex-start; }
 
                     .dbmrpp-select {
                         min-width: 90px;
@@ -2892,38 +2861,17 @@
                     }
 
                     .dbmrpp-day-btns { display: flex; gap: 3px; }
-
-                    .dbmrpp-day-btn {
-                        padding: 2px 7px;
-                        border: 1px solid var(--dbmrpp-border);
-                        border-radius: 3px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        background: #fff;
-                    }
-
                     .dbmrpp-day-btn.active { background: var(--dbmrpp-accent); color: #fff; border-color: var(--dbmrpp-accent); }
-
-                    .dbmrpp-changes-toggle {
-                        padding: 2px 8px;
-                        border: 1px solid var(--dbmrpp-border);
-                        border-radius: 3px;
-                        cursor: pointer;
-                        font-size: 11px;
-                        background: #fff;
-                        white-space: nowrap;
-                    }
-
                     .dbmrpp-changes-toggle.active { background: #ffe9b3; border-color: #8a5a00; color: #8a5a00; }
 
                     .dbmrpp-selected-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
-                    .dbmrpp-tag-filter { display: inline-flex; align-items: center; gap: 4px; background: #dde8ff; color: #1a3a8a; padding: 2px 6px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
+                    .dbmrpp-tag-filter { display: inline-flex; align-items: center; gap: 4px; background: #dde8ff; color: var(--dbmrpp-navy); padding: 2px 6px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
 
                     .dbmrpp-tag-remove { border: none; background: none; color: inherit; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; }
                     .dbmrpp-tag-remove:hover { opacity: 0.7; }
 
-                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin-bottom: 8px; border-bottom: 2px solid #eee; }
+                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin-bottom: 8px; border-bottom: 2px solid var(--dbmrpp-divider); }
 
                     .dbmrpp-view-tab {
                         background: transparent;
@@ -3015,20 +2963,14 @@
                         flex-wrap: wrap;
                         margin-top: 6px;
                     }
-                    .dbmrpp-custom-tag-create input {
-                        padding: 2px 6px;
-                        border: 1px solid var(--dbmrpp-border);
-                        border-radius: 3px;
-                        font-size: 12px;
-                        min-width: 100px;
-                        max-width: 160px;
-                    }
+                    .dbmrpp-custom-tag-create input,
                     .dbmrpp-custom-tag-create select {
-                        padding: 2px 4px;
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
                         font-size: 12px;
                     }
+                    .dbmrpp-custom-tag-create input { padding: 2px 6px; min-width: 100px; max-width: 160px; }
+                    .dbmrpp-custom-tag-create select { padding: 2px 4px; }
                 `;
         document.head.appendChild(s);
     }
