@@ -1,104 +1,91 @@
+[Deutsch](README.de.md)
+
 # DB Meine Reisen++
 
-A userscript that enhances Deutsche Bahn's "Meine Reisen" ("My Trips") page.
+A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with a better overview, change tracking, and data export.
 
 ![Screenshot](screenshot.png)
 
-## Features
+## What it does
 
 **Full Trip Overview**
-- Display complete journey list (future/past) without pagination
-- View platform assignments, ticket category, and seat reservations without going to the detail page (if info available from bulk api call)
-- Optional external train info links for train numbers (e.g. zugfinder.net, bahn.expert) *(experimental)*
-- Optional external routing links for upcoming trips (e.g. bahn.expert, chuuchuu, transitous.org) *(experimental)*
+- Shows all your trips (upcoming and past) in one list, no pagination
+- Displays platform, ticket type, and seat reservations directly in the list — reduces need to open each trip individually
+- Optional links to external train info and routing sites (e.g. zugfinder.net, bahn.expert)
 
-**Change Tracking (alpha)**
-- Automatic snapshot comparison across visits (delays, cancellations, reroutings, platform changes)
-- Visual highlighting of what's changed
+**Change Tracking**
+- Compares your trips across visits and highlights what has changed: delays, cancellations, reroutings, platform changes
 
-**Past Trip Cache (reiseketten history)**
-- Optional: past trips can be enriched from locally cached reiseketten data captured on earlier visits.
-- Cached enrichment currently includes key operational fields such as train binding, status/disruption indicators, train list, seats, RT times/delay summary, tracks, cached notifications and saved trips (when available)
-- Cache data is browser-local (`localStorage`), capped and pruned over time, and only exists after prior successful captures.
+**Past Trip Details**
+- Optionally enriches past trips with additional information captured during earlier visits (lifted train binding, delays, seat info, and more)
+- This data is stored in your browser only; it builds up over time as you use the script
 
 **Data Export**
-- Export trips to ICS format (with stable UIDs for deduplication)
-- Maximalist bulk CSV export for spreadsheet analysis
-- Download individual PDF tickets with one click
-- Export routes as GPX or geoJSON-files
-- Download raw API response JSON for individual trips (complete information at trip level)
-- Import/export snapshot + settings bundle *(merge mode, newest wins, experimental)*
+- Export trips to a calendar (ICS)
+- Export all trips as a CSV spreadsheet
+- Download PDF tickets directly
+- Export routes as GPX or GeoJSON
+- Download the raw trip data as JSON
+- Import/export your settings and change history as a bundle
 
 **Filtering**
-- Filter by station (origin/destination)
-- Filter by date range (all/7/30/90)
+- Filter by origin or destination station
+- Filter by date range (past 7 / 30 / 90 days, or all)
 - Show only trips with issues
-- Filter by tags & indicators
-- Separate tabs for future and past trips
+- Filter by tags and indicators
+- Separate tabs for upcoming and past trips
 
 **Tags & Indicators**
-- First class markers
-- Rerouting required warnings
-- Zugbindung: Train binding status
-- Subscription indicators
-- Seat/bike cancellation notices
-- Disruption information
-- Whether trip alerts are muted
+- First class
+- Rerouting required
+- Train binding (Zugbindung)
+- Subscription trips
+- Cancelled seats or bike reservations
+- Disruptions
+- Muted alerts
 - Custom tags
 
-**Bilingual Support**
-- German on bahn.de
-- English on int.bahn.de
+**German & English**
+- German on bahn.de, English on int.bahn.de
+
+---
 
 ## Installation
 
-1. **Install a userscript manager, such as:**
-   - [Tampermonkey](https://tampermonkey.net/)
-   - [Violentmonkey](https://violentmonkey.github.io/)
-   - [Greasemonkey](https://www.greasespot.net/)
+1. **Install a userscript manager** such as [Tampermonkey](https://tampermonkey.net/), [Violentmonkey](https://violentmonkey.github.io/), or [Greasemonkey](https://www.greasespot.net/)
 
-2. **Install the script:**
-   - Click here: [Install DB Meine Reisen++](https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js)
-   - Your userscript manager will prompt to confirm installation
+2. **Install the script:** [Install DB Meine Reisen++](https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js) — your userscript manager will ask you to confirm
 
-3. **Visit your trips:**
-   - Go to [https://www.bahn.de/meine-reisen](https://www.bahn.de/meine-reisen)
-   - Open the script by clicking the floating button 🚆++ (lower right corner of the screen)
+3. **Open it:** go to [bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) and click the floating 🚆++ button in the lower right corner
 
-## Trust & Security
+---
 
-**Unofficial, use at your own risk.**
+## Privacy & Security
 
-**Data Privacy**
-- Runs entirely in your browser
-- Uses only Deutsche Bahn APIs (the same ones the website uses)
-- No data collection or tracking
-- No third-party servers involved (Links to external pages do not rely on external API calls)
-- All snapshots stored locally in your browser storage
+**Unofficial — use at your own risk.**
 
-**No Permissions Needed**
-- Script runs with `@grant none` and requires no special browser permissions
-- Only interacts with bahn.de
+- Runs entirely in your browser; no data leaves your device
+- Only calls Deutsche Bahn's own APIs (the same ones the website uses)
+- No tracking, no third-party servers
+- All snapshots and settings are stored locally in your browser
 
-**Minimal API footprint**
-- Uses the same API calls as the website itself
-- Per-trip API calls are made only on user demand
+---
 
 ## Limitations
 
-- **Intentional: Does not modify bookings** - Only reads and displays data
-- **Not guaranteed to catch all changes** - Only detects changes visible in the API (sometimes it wasn't entirely clear what caused the API to flag a trip with "relevant change", for example)
-- **Dependent on DB API stability** - If Deutsche Bahn changes their backend APIs, the script may require updates
-- **Browser/device bound** - Snapshots are stored locally per browser profile; changing browsers won't sync history
-- **Subdomain-separated storage** - `localStorage` is origin-scoped, so `www.bahn.de` and `int.bahn.de` do not share snapshot/settings/history automatically; use snapshot export/import to transfer data.
-- **Past cache is optional and opportunistic** - Enrichment for past trips is disabled by default and depends on previously captured reiseketten data; if no prior capture exists, only order-derived fields can be shown.
-- **Script likely does not know all ticket/flag variants** - Since the API is undocumented, reverse engineering is based on a limited set of observed trips.
-- **External link-building is somewhat unreliable** - There are many edge cases.
-- **Not optimized for mobile yet** - The panel may look rough on smaller screens.
+- **Read-only** — the script never makes bookings or changes anything on your account
+- **Change tracking is best-effort** — it only catches what DB's API exposes; some changes may go undetected
+- **Tied to your browser** — saved data stays in the browser you use it in; switching browsers starts fresh. bahn.de and int.bahn.de do not share data automatically (use the export/import bundle to transfer)
+- **Past trip enrichment builds up over time** — it's off by default and only shows data from visits you've already made
+- **Some ticket types or flags may not be recognized** — the API is undocumented, so unusual cases may be missed
+- **External links have edge cases** — train number and routing links don't always work perfectly
+- **Not optimized for mobile** — the panel may look rough on small screens
 
-## Support & Feedback
+---
 
-- [Report issues or propose features/enhancements](https://github.com/Jo11n/db-meine-reisen-plus-plus/issues)
+## Feedback & Issues
+
+[Report a bug or suggest a feature](https://github.com/Jo11n/db-meine-reisen-plus-plus/issues)
 
 ## License
 
