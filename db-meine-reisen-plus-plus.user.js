@@ -20,7 +20,9 @@
 (function () {
     'use strict';
 
-    // ----- Configuration -----
+    // =========================================================
+    // 1) Configuration
+    // =========================================================
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -52,7 +54,7 @@
     const DATE_LOCALE = IS_INT ? 'en-GB' : 'de-DE';
 
     // =========================================================
-    // Translations 
+    // 2) Translations
     // =========================================================
     const T = (() => {
         const en = {
@@ -420,7 +422,7 @@
     })();
 
     // =========================================================
-    // Module-level state
+    // 3) Module-level state
     // =========================================================
     let bearerToken    = null;
     let kundenprofilId = localStorage.getItem(KUNDENPROFIL_KEY) || null;
@@ -548,7 +550,7 @@
     const auftragDetailCache = new Map(); // auftragsnummer -> Promise<data>
 
     // =========================================================
-    // 1) Token-Capture
+    // 4) Token-Capture
     // =========================================================
     const origFetch = window.fetch.bind(window);
     window.fetch = function (input, init) {
@@ -720,7 +722,7 @@
     handleNavigation();
 
     // =========================================================
-    // 2) Authenticated fetch wrapper
+    // 5) Authenticated fetch wrapper
     // =========================================================
     function dbFetch(url, init = {}) {
         const headers = Object.assign(
@@ -849,7 +851,7 @@
     }
 
     // =========================================================
-    // 3) Data fetching
+    // 6) Data fetching
     // =========================================================
     async function run() {
         if (!isTargetPath()) return;
@@ -978,7 +980,7 @@
     }
 
     // =========================================================
-    // 4) Auftrag (order) data helpers
+    // 7) Auftrag (order) data helpers
     // =========================================================
 
     // Extract all trip-like items from an auftrag entry.
@@ -1531,7 +1533,7 @@
     }
 
     // =========================================================
-    // 5) ICS download via /web/api/buchung/kalender
+    // 8) ICS download via /web/api/buchung/kalender
     // =========================================================
     async function downloadIcs(t) {
         try {
@@ -1627,7 +1629,7 @@
     }
 
     // =========================================================
-    // 6) PDF download via /web/api/buchung/ticket
+    // 9) PDF download via /web/api/buchung/ticket
     // =========================================================
     async function downloadPdf(t) {
         if (!t.leistungsbuendelId) { alert(T.alertPdfNoId); return; }
@@ -1697,7 +1699,7 @@
     }
 
     // =========================================================
-    // 7a) Geo export (GPX + GeoJSON)
+    // 10) Geo export (GPX + GeoJSON)
     // =========================================================
     function coordFromHaltId(id) {
         const s = String(id || '');
@@ -1868,9 +1870,7 @@
     }
 
     // =========================================================
-    // 7) Share link via /web/api/angebote/verbindung/teilen
-    //    Uses fetchDetail cache — no duplicate round-trip if
-    //    disruption details were already expanded for the same trip.
+    // 11) Share link generation
     // =========================================================
     async function getShareLink(t) {
         let ctxRecon = null;
@@ -1929,7 +1929,7 @@
     }
 
     // =========================================================
-    // 8) Disruption detail — uses fetchDetail cache
+    // 12) Disruption detail — uses fetchDetail cache
     // =========================================================
     async function loadAbweichungMessages(t) {
         const data = await fetchDetail(t.uuid);
@@ -1954,7 +1954,7 @@
     }
 
     // =========================================================
-    // 9) Reiseketten (journey-chain) simplify / merge
+    // 13) Reiseketten (journey-chain) simplify / merge
     // =========================================================
     function mergeAuftrag(t, info) {
         if (!info) return;
@@ -2048,7 +2048,7 @@
     }
 
     // =========================================================
-    // 10) Filter & export helpers
+    // 14) Filter & export helpers
     // =========================================================
     const TRIP_TAG_DEFS = [
         { id: 'tagClass1',         cls: 'info', cond: t => t.klasse === 1,
@@ -2241,7 +2241,7 @@
     }
 
     // =========================================================
-    // 11) Bulk ICS (client-side, no API calls)
+    // 15) Bulk ICS (client-side, no API calls)
     // =========================================================
     function formatIcsDt(iso) { return iso.replace(/[-:]/g, '').slice(0, 15); }
 
@@ -2295,7 +2295,7 @@
     }
 
     // =========================================================
-    // 12) Shared download helper
+    // 16) Shared download helper
     // =========================================================
     function triggerDownload(blob, filename) {
         const url = URL.createObjectURL(blob);
@@ -2470,7 +2470,7 @@
     }
 
     // =========================================================
-    // 13) UI — FAB toggle + styles (injected once)
+    // 17) UI — FAB toggle + styles
     // =========================================================
     function showPanel() {
         panelVisible = true;
@@ -3501,7 +3501,7 @@
     }
 
     // =========================================================
-    // 14) HTML builders
+    // 18) HTML builders
     // =========================================================
     function buildHTML(trips, orphans, changes, lastVisit) {
         const isPast = activeView === 'past';
@@ -3705,7 +3705,7 @@
     }
 
     // =========================================================
-    // 15) Trip rendering
+    // 19) Trip rendering
     // =========================================================
     function buildDetailUrl(t) {
         const params = new URLSearchParams();
