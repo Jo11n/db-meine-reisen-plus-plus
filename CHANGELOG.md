@@ -13,6 +13,11 @@ This project uses [Semantic Versioning](https://semver.org/).
 ## Changed
 - **restructered and enhanced settings** - introduced collapsible settings sections and introduced setting descriptions
 
+## Fixed
+- **refactored history entry shape** - deduplicated code
+- **refactored renderUI code** - introduced 4 helper functions to decompose the overly large function
+- **refactored external routing code** - decomposed routing code such that providers get named sync functions, simplified endpoint extraction a bit
+
 ---
 ## [0.6.0] - 2026-06-10 "defekte Tür"
 

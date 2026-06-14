@@ -70,19 +70,19 @@
             settingsShowJsonButton: 'Show JSON download button',
             settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file. Useful for debugging or custom analysis.',
             settingsShowGeoButton:  'Show geo export button',
-            settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file, for use in mapping or tracking applications. The Bahn API only provides this for future trips.',
+            settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file. The Bahn API only provides this for future trips.',
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
             settingsExportSnapshot: 'Export snapshot (experimental)',
             settingsImportSnapshot: 'Import snapshot (experimental)',
             settingsTrainLinksEnabled: 'Link train numbers externally',
-            settingsTrainLinksDesc: 'Makes train numbers in the trip view clickable links to an external service showing real-time status for that train. Zugfinder.net has data on delays. Bahn.expert has more real-time data and also shows historical delay data for specific past trips.',
+            settingsTrainLinksDesc: 'Makes train numbers in the trip view clickable links to an external service. Zugfinder.net has data on delays. Bahn.expert has more real-time data and shows the historical delay data for specific past trips.',
             settingsTrainLinkProvider: 'Train link provider',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
             settingsShowRoutingButton: 'Show external routing button (experimental)',
-            settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service. The routing links are generated based on the available trip data, which can vary between API responses, so some providers might not work for all trips or the generated connections might differ from the actual trip.',
+            settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service, offering different features. The routing links are generated based heuristically on the available trip data, some providers might not work for all trips or the generated connections might differ from the actual trip.',
             settingsRoutingLinkProvider: 'Route link provider',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
@@ -92,7 +92,7 @@
             settingsGroupTripExports:        'Trip exports',
             settingsGroupExternalLinks: 'External data links',
             settingsGroupData:          'Snapshot Data',
-            settingsUsePastCacheLabel:  'Enhance past view from cache (experimental)',
+            settingsUsePastCacheLabel:  'Enhance past view from cache',
             settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
             fromAll:           'From (all)',
             toAll:             'To (all)',
@@ -250,7 +250,7 @@
             settingsShowJsonButton: 'JSON-Download-Button anzeigen',
             settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständige API-Rohantworten als kombinierteJSON-Datei heruntergeladen werden kann. Gedacht für Debugging und eigene Auswertungen.',
             settingsShowGeoButton:  'Geo-Export-Button anzeigen',
-            settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei, z. B. für Karten- oder Tracking-Anwendungen. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
+            settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
@@ -262,7 +262,7 @@
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
             settingsShowRoutingButton: 'Externen Routing-Button anzeigen (experimentell)',
-            settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst öffnet. Die Routing-Links werden mit den verfügbaren Reisedaten generiert, die je nach API-Antwort variieren können. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
+            settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst mit variierenden Funktionen öffnet. Die Routing-Links werden heuristisch mit den verfügbaren Reisedaten generiert. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
             settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
@@ -1053,38 +1053,42 @@
         return { entries: {} };
     }
 
+    function makeHistoryEntryShape(src, ids, cachedAt) {
+        return {
+            uuid: src.uuid || ids.reisekettenUuid || null,
+            typ: src.typ || null,
+            from: src.from || null,
+            to: src.to || null,
+            ids,
+            fromExtId: src.fromExtId || null,
+            toExtId: src.toExtId || null,
+            departure: src.departure || null,
+            arrival: src.arrival || null,
+            departureTrack: src.departureTrack || null,
+            arrivalTrack: src.arrivalTrack || null,
+            departureRt: src.departureRt || null,
+            arrivalRt: src.arrivalRt || null,
+            zuege: src.zuege || '',
+            seats: src.seats || '',
+            zugbindung: src.zugbindung || null,
+            status: src.status || null,
+            relevanteAbweichung: !!src.relevanteAbweichung,
+            alternativensuche: src.alternativensuche || null,
+            ueberwacht: src.ueberwacht === undefined ? null : src.ueberwacht,
+            ueberwachungName: src.ueberwachungName || null,
+            wiederholung: src.wiederholung || null,
+            umreserviert: !!src.umreserviert,
+            letzterReiseplanBearbeiter: src.letzterReiseplanBearbeiter || null,
+            notifications: normalizeNotificationEntries(src.notifications || []),
+            cachedAt
+        };
+    }
+
     function normalizeHistoryEntry(entry) {
         if (!entry || typeof entry !== 'object') return null;
         const ids = getTripIds(entry);
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
-        return {
-            uuid: entry.uuid || ids.reisekettenUuid || null,
-            typ: entry.typ || null,
-            from: entry.from || null,
-            to: entry.to || null,
-            ids,
-            fromExtId: entry.fromExtId || null,
-            toExtId: entry.toExtId || null,
-            departure: entry.departure || null,
-            arrival: entry.arrival || null,
-            departureTrack: entry.departureTrack || null,
-            arrivalTrack: entry.arrivalTrack || null,
-            departureRt: entry.departureRt || null,
-            arrivalRt: entry.arrivalRt || null,
-            zuege: entry.zuege || '',
-            seats: entry.seats || '',
-            zugbindung: entry.zugbindung || null,
-            status: entry.status || null,
-            relevanteAbweichung: !!entry.relevanteAbweichung,
-            alternativensuche: entry.alternativensuche || null,
-            ueberwacht: entry.ueberwacht === undefined ? null : entry.ueberwacht,
-            ueberwachungName: entry.ueberwachungName || null,
-            wiederholung: entry.wiederholung || null,
-            umreserviert: !!entry.umreserviert,
-            letzterReiseplanBearbeiter: entry.letzterReiseplanBearbeiter || null,
-            notifications: normalizeNotificationEntries(entry.notifications || []),
-            cachedAt: entry.cachedAt || null
-        };
+        return makeHistoryEntryShape(entry, ids, entry.cachedAt || null);
     }
 
     function normalizeReisekettenHistory(raw) {
@@ -1149,35 +1153,7 @@
     function buildReisekettenHistoryEntry(t, cachedAtOverride) {
         const ids = getTripIds(t);
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
-        const notifications = normalizeNotificationEntries(t.notifications || []);
-        return {
-            uuid: t.uuid || ids.reisekettenUuid || null,
-            typ: t.typ || null,
-            from: t.from || null,
-            to: t.to || null,
-            ids,
-            fromExtId: t.fromExtId || null,
-            toExtId: t.toExtId || null,
-            departure: t.departure || null,
-            arrival: t.arrival || null,
-            departureTrack: t.departureTrack || null,
-            arrivalTrack: t.arrivalTrack || null,
-            departureRt: t.departureRt || null,
-            arrivalRt: t.arrivalRt || null,
-            zuege: t.zuege || '',
-            seats: t.seats || '',
-            zugbindung: t.zugbindung || null,
-            status: t.status || null,
-            relevanteAbweichung: !!t.relevanteAbweichung,
-            alternativensuche: t.alternativensuche || null,
-            ueberwacht: t.ueberwacht === undefined ? null : t.ueberwacht,
-            ueberwachungName: t.ueberwachungName || null,
-            wiederholung: t.wiederholung || null,
-            umreserviert: !!t.umreserviert,
-            letzterReiseplanBearbeiter: t.letzterReiseplanBearbeiter || null,
-            notifications,
-            cachedAt: cachedAtOverride || new Date().toISOString()
-        };
+        return makeHistoryEntryShape(t, ids, cachedAtOverride || new Date().toISOString());
     }
 
     function historyEntryPrimaryKey(entry) {
@@ -3043,6 +3019,13 @@
             });
         }
 
+        const root = initPanelDOM(trips, orphans, changes, lastVisit);
+        bindSettingsHandlers(root, trips, orphans);
+        bindTripActionHandlers(root, trips, orphans);
+        bindFilterHandlers(root);
+    }
+
+    function initPanelDOM(trips, orphans, changes, lastVisit) {
         injectStyles();
         injectFab();
         lastRenderArgs = { trips, orphans, changes, lastVisit };
@@ -3069,6 +3052,10 @@
         const fab = document.getElementById('dbmrpp-fab');
         if (fab) fab.classList.toggle('active', panelVisible);
 
+        return root;
+    }
+
+    function bindSettingsHandlers(root, trips, orphans) {
         root.querySelector('.dbmrpp-close').addEventListener('click', hidePanel);
         const settingsBtn = root.querySelector('.dbmrpp-settings-btn');
         if (settingsBtn) settingsBtn.addEventListener('click', () => {
@@ -3249,7 +3236,9 @@
             rememberUiState();
             reRender();
         });
+    }
 
+    function bindTripActionHandlers(root, trips, orphans) {
         const getFilteredPool = () => {
             const pool = activeView === 'past' ? (pastTrips || []) : filterUpcomingTrips(trips);
             return filterTrips(pool, filterState, activeView === 'past');
@@ -3444,7 +3433,9 @@
                 return;
             }
         });
+    }
 
+    function bindFilterHandlers(root) {
         const fromSel = root.querySelector('#dbmrpp-from-sel');
         if (fromSel) fromSel.addEventListener('change', e => { filterState.from = e.target.value; rememberUiState(); reRender(); });
         const toSel = root.querySelector('#dbmrpp-to-sel');
@@ -3853,22 +3844,6 @@
         return stops;
     }
 
-    function extractRoutingEndpoints(data, t) {
-        const ctxRecon = extractCtxReconFromDetail(data);
-        const stops = parseCtxReconStops(ctxRecon);
-        if (stops.length) {
-            const first = stops[0];
-            const last = stops[stops.length - 1];
-            return {
-                fromId: first.id,
-                toId: last.id,
-                fromName: t && t.from ? t.from : first.name,
-                toName: t && t.to ? t.to : last.name
-            };
-        }
-        return { fromId: '', toId: '', fromName: t && t.from ? t.from : '', toName: t && t.to ? t.to : '' };
-    }
-
     function parseCtxReconCoordinates(ctxRecon) {
         const points = parseCtxReconStops(ctxRecon).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
         if (!points.length) return null;
@@ -3946,22 +3921,75 @@
         return new Date(utc2).toISOString().replace('.000Z', 'Z');
     }
 
-    function getRouteScheduledDeparture(data, t) {
-        const trip = getDetailTrip(data);
-        const abschnitte = Array.isArray(trip.verbindungsAbschnitte) ? trip.verbindungsAbschnitte.filter(Boolean) : [];
-        const first = abschnitte[0] || null;
-        return (
-            (first && first.abfahrt && first.abfahrt.sollzeit) ||
-            (first && first.startHalt && first.startHalt.abfahrt && first.startHalt.abfahrt.sollzeit) ||
-            t.departure ||
-            ''
-        );
-    }
-
     function logRoutingUrlUnavailable(reason, details = {}) {
         try {
             console.warn('[DBMRPP] routing unavailable:', reason, details);
         } catch (_) {}
+    }
+
+    function buildBahnExpertUrl(endpoints, t) {
+        const utcIso = berlinLocalIsoToUtcIso(t.departure || '');
+        if (!utcIso) {
+            logRoutingUrlUnavailable('invalid-departure-time-bahn-expert', {
+                uuid: t.uuid,
+                typ: t.typ,
+                status: t.status,
+                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                departure: t.departure
+            });
+            return null;
+        }
+        return `https://bahn.expert/routing/${encodeURIComponent(endpoints.fromId)}/${encodeURIComponent(endpoints.toId)}/${encodeURIComponent(utcIso)}/`;
+    }
+
+    function buildTransitousUrl(endpoints, routingCtxRecon, t) {
+        const coords = parseCtxReconCoordinates(routingCtxRecon);
+        if (!coords || !coords.from || !coords.to) {
+            logRoutingUrlUnavailable('missing-coordinates-transitous', {
+                uuid: t.uuid,
+                typ: t.typ,
+                status: t.status,
+                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                hasCtxRecon: !!routingCtxRecon,
+                parsedStops: parseCtxReconStops(routingCtxRecon || '').length
+            });
+            return null;
+        }
+
+        const utcIso = berlinLocalIsoToUtcIso(t.departure || '');
+        if (!utcIso) {
+            logRoutingUrlUnavailable('invalid-departure-time-transitous', {
+                uuid: t.uuid,
+                typ: t.typ,
+                status: t.status,
+                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                departure: t.departure
+            });
+            return null;
+        }
+        // We look for the connection based on the geographical coordinates, which will add some walking at the start. To compensate for that, we set the departure time a few minutes earlier than the actual train departure, so that the correct connection is more likely to be found.
+        const departureTime = new Date(utcIso);
+        departureTime.setMinutes(departureTime.getMinutes() - 5);
+        const adjustedTime = departureTime.toISOString().replace('.000Z', 'Z');
+
+        const params = new URLSearchParams();
+        params.set('time', adjustedTime);
+        params.set('fromPlace', `${coords.from.lat},${coords.from.lon}`);
+        params.set('toPlace', `${coords.to.lat},${coords.to.lon}`);
+        params.set('fromName', endpoints.fromName || '');
+        params.set('toName', endpoints.toName || '');
+        return `https://api.transitous.org/?${params.toString()}`;
+    }
+
+    function buildChuuchuuUrl(endpoints, t) {
+        const localDateTime = String(t.departure).slice(0, 16);
+        const params = new URLSearchParams();
+        params.set('from', endpoints.fromId);
+        params.set('to', endpoints.toId);
+        params.set('fromName', encodeURIComponent(endpoints.fromName || ''));
+        params.set('toName', encodeURIComponent(endpoints.toName || ''));
+        params.set('date', localDateTime);
+        return `https://chuuchuu.com/journeys?${params.toString()}`;
     }
 
     async function getExternalRoutingUrl(t) {
@@ -3993,10 +4021,7 @@
             }
         }
 
-        let endpoints = extractRoutingEndpoints(detail, t);
-        if ((!endpoints.fromId || !endpoints.toId) && routingCtxRecon) {
-            endpoints = extractRoutingEndpointsFromCtxRecon(routingCtxRecon, t) || endpoints;
-        }
+        const endpoints = extractRoutingEndpointsFromCtxRecon(routingCtxRecon, t) || { fromId: '', toId: '', fromName: t.from || '', toName: t.to || '' };
         if (!endpoints.fromId || !endpoints.toId) {
             logRoutingUrlUnavailable('missing-routing-endpoints', {
                 uuid: t.uuid,
@@ -4015,73 +4040,9 @@
         const provider = (uiSettings['routing-provider'] === 'chuuchuu' || uiSettings['routing-provider'] === 'transitous.org')
             ? uiSettings['routing-provider']
             : 'bahn.expert';
-        if (provider === 'bahn.expert') {
-            const localDeparture = getRouteScheduledDeparture(detail, t);
-            const utcIso = berlinLocalIsoToUtcIso(localDeparture);
-            if (!utcIso) {
-                logRoutingUrlUnavailable('invalid-departure-time-bahn-expert', {
-                    uuid: t.uuid,
-                    typ: t.typ,
-                    status: t.status,
-                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
-                    localDeparture,
-                    departure: t.departure
-                });
-                return null;
-            }
-            return `https://bahn.expert/routing/${encodeURIComponent(endpoints.fromId)}/${encodeURIComponent(endpoints.toId)}/${encodeURIComponent(utcIso)}/`;
-        }
-
-        if (provider === 'transitous.org') {
-            const coords = parseCtxReconCoordinates(routingCtxRecon);
-            if (!coords || !coords.from || !coords.to) {
-                logRoutingUrlUnavailable('missing-coordinates-transitous', {
-                    uuid: t.uuid,
-                    typ: t.typ,
-                    status: t.status,
-                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
-                    hasCtxReconDetail: !!detailCtxRecon,
-                    hasCtxReconAuftragFallback: !!routingCtxRecon && !detailCtxRecon,
-                    parsedStops: parseCtxReconStops(routingCtxRecon || '').length
-                });
-                return null;
-            }
-
-            const localDeparture = getRouteScheduledDeparture(detail, t);
-            const utcIso = berlinLocalIsoToUtcIso(localDeparture);
-            if (!utcIso) {
-                logRoutingUrlUnavailable('invalid-departure-time-transitous', {
-                    uuid: t.uuid,
-                    typ: t.typ,
-                    status: t.status,
-                    isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
-                    localDeparture,
-                    departure: t.departure
-                });
-                return null;
-            }
-            // We look for the connection based on the geographical coordinates, which will add some walking at the start. To compensate for that, we set the departure time a few minutes earlier than the actual train departure, so that the correct connection is more likely to be found.
-            const departureTime = new Date(utcIso);
-            departureTime.setMinutes(departureTime.getMinutes() - 5);
-            const adjustedTime = departureTime.toISOString().replace('.000Z', 'Z');
-
-            const params = new URLSearchParams();
-            params.set('time', adjustedTime);
-            params.set('fromPlace', `${coords.from.lat},${coords.from.lon}`);
-            params.set('toPlace', `${coords.to.lat},${coords.to.lon}`);
-            params.set('fromName', endpoints.fromName || '');
-            params.set('toName', endpoints.toName || '');
-            return `https://api.transitous.org/?${params.toString()}`;
-        }
-
-        const localDateTime = String(t.departure).slice(0, 16);
-        const params = new URLSearchParams();
-        params.set('from', endpoints.fromId);
-        params.set('to', endpoints.toId);
-        params.set('fromName', encodeURIComponent(endpoints.fromName || ''));
-        params.set('toName', encodeURIComponent(endpoints.toName || ''));
-        params.set('date', localDateTime);
-        return `https://chuuchuu.com/journeys?${params.toString()}`;
+        if (provider === 'bahn.expert') return buildBahnExpertUrl(endpoints, t);
+        if (provider === 'transitous.org') return buildTransitousUrl(endpoints, routingCtxRecon, t);
+        return buildChuuchuuUrl(endpoints, t);
     }
 
     function openExternalUrlInNewTab(url, popupRef) {
