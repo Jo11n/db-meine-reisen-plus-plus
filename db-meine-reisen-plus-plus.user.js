@@ -39,10 +39,10 @@
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
-    const REISEKETTEN_HISTORY_MAX_ENTRIES = 500;
+    const REISEKETTEN_HISTORY_MAX_ENTRIES = 500; 
     const CACHE_NOTIFICATIONS_MAX_ITEMS = 8;
     const CACHE_NOTIFICATION_TEXT_MAX_CHARS = 400;
-    const RUN_DELAY_MS     = 800;
+    const RUN_DELAY_MS     = 800; 
     const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
                               'departure','arrival','departureRt','arrivalRt',
                               'departureTrack','arrivalTrack','zuege','seats',
@@ -76,14 +76,14 @@
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
-            settingsExportSnapshot: 'Export snapshot (experimental)',
-            settingsImportSnapshot: 'Import snapshot (experimental)',
+            settingsExportSnapshot: 'Export snapshot',
+            settingsImportSnapshot: 'Import snapshot',
             settingsTrainLinksEnabled: 'Link train numbers externally',
             settingsTrainLinksDesc: 'Makes train numbers in the trip view clickable links to an external service. Zugfinder.net has data on delays. Bahn.expert has more real-time data and shows the historical delay data for specific past trips.',
             settingsTrainLinkProvider: 'Train link provider',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Show external routing button (experimental)',
+            settingsShowRoutingButton: 'Show external routing button',
             settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service, offering different features. The routing links are generated based heuristically on the available trip data, some providers might not work for all trips or the generated connections might differ from the actual trip.',
             settingsRoutingLinkProvider: 'Route link provider',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
@@ -250,20 +250,20 @@
             settingsRememberFilter: 'Filter merken',
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
             settingsShowJsonButton: 'JSON-Download-Button anzeigen',
-            settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständige API-Rohantworten als kombinierteJSON-Datei heruntergeladen werden kann. Gedacht für Debugging und eigene Auswertungen.',
+            settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständige API-Rohantworten als kombinierte JSON-Datei heruntergeladen werden kann. Gedacht für Debugging und eigene Auswertungen.',
             settingsShowGeoButton:  'Geo-Export-Button anzeigen',
             settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
-            settingsExportSnapshot: 'Snapshot exportieren (experimentell)',
-            settingsImportSnapshot: 'Snapshot importieren (experimentell)',
-            settingsTrainLinksEnabled: 'Zugnummern extern verlinken (experimentell)',
+            settingsExportSnapshot: 'Snapshot exportieren',
+            settingsImportSnapshot: 'Snapshot importieren',
+            settingsTrainLinksEnabled: 'Zugnummern extern verlinken',
             settingsTrainLinksDesc: 'Macht Zugnummern in der Reiseansicht zu anklickbaren Links zu einem externen Dienst. Zugfinder.net hat Daten zu Verspätungen. Bahn.expert hat mehr Echtzeitdaten und zeigt auch historische Verspätungsdaten für spezifische vergangene Fahrten an.',
             settingsTrainLinkProvider: 'Anbieter für Zuglinks',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Externen Routing-Button anzeigen (experimentell)',
+            settingsShowRoutingButton: 'Externen Routing-Button anzeigen',
             settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst mit variierenden Funktionen öffnet. Die Routing-Links werden heuristisch mit den verfügbaren Reisedaten generiert. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
             settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
@@ -444,7 +444,7 @@
     let tokenSyncTimer  = null;
     let is401Recovering = false;
 
-    function loadUiSettings() {
+    function loadUiSettings() { 
         const defaults = {
             rememberFilter: false,
             openOnLoad: false,
