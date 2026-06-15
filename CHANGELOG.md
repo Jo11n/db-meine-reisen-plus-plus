@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.7.0] - unreleased
+## [0.7.0] - 2026-06-15 "Betriebsstabilisierung"
 
 ## Added
 - **custom tags** - you can now define, assign and filter by custom tags in the settings and assign them to individual trips
