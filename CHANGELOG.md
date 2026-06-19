@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.7.1] - unreleased
+## [0.7.1]
 
 ### Fixed
 - **onlyProblems Filter** - more suitable var name and added status 'VORLAEUFIG_NICHT_REKONSTRUIERBAR' to filter reason
