@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.7.0
+// @version      0.7.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -35,17 +35,18 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.7.0';
+    const SCRIPT_VERSION  = '0.7.1';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
     const REISEKETTEN_HISTORY_MAX_ENTRIES = 500; 
     const CACHE_NOTIFICATIONS_MAX_ITEMS = 8;
     const CACHE_NOTIFICATION_TEXT_MAX_CHARS = 400;
-    const RUN_DELAY_MS     = 800; 
+    const RUN_DELAY_MS     = 800;
+    const SNAPSHOT_COOLDOWN_MS = 30 * 60 * 1000; // freeze baseline for 30 min against quick reloads
     const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
                               'departure','arrival','departureRt','arrivalRt',
-                              'departureTrack','arrivalTrack','zuege','seats',
+                              'departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','zuege','seats',
                               'leistungsname','storniertStatus','auftragStatus',
                               'sitzplatzStorniert','stellplatzStorniert'];
     
@@ -69,9 +70,9 @@
             settingsTitle:     'Settings',
             settingsRememberFilter: 'Remember filters',
             settingsOpenOnLoad: 'Open panel on page load',
-            settingsShowJsonButton: 'Show JSON download button',
+            settingsShowJsonButton: 'Show JSON download button {…}',
             settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file. Useful for debugging or custom analysis.',
-            settingsShowGeoButton:  'Show geo export button',
+            settingsShowGeoButton:  'Show geo export button 🛤️',
             settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file. The Bahn API only provides this for future trips.',
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
@@ -83,7 +84,7 @@
             settingsTrainLinkProvider: 'Train link provider',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Show external routing button',
+            settingsShowRoutingButton: 'Show external routing button 🧭',
             settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service, offering different features. The routing links are generated based heuristically on the available trip data, some providers might not work for all trips or the generated connections might differ from the actual trip.',
             settingsRoutingLinkProvider: 'Route link provider',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
@@ -94,7 +95,7 @@
             settingsGroupTripExports:        'Trip exports',
             settingsGroupExternalLinks: 'External data links',
             settingsGroupData:          'Snapshot Data',
-            settingsUsePastCacheLabel:  'Enhance past view from cache',
+            settingsUsePastCacheLabel:  'Enhance past view from cache 🗄️',
             settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
             fromAll:           'From (all)',
             toAll:             'To (all)',
@@ -188,7 +189,9 @@
                 departureRt:         'Departure (actual)',
                 arrivalRt:           'Arrival (actual)',
                 departureTrack:      'Departure platform',
+                departureTrackRt:    'Departure platform (actual)',
                 arrivalTrack:        'Arrival platform',
+                arrivalTrackRt:      'Arrival platform (actual)',
                 zuege:               'Trains',
                 seats:               'Reservations',
                 leistungsname:       'Fare',
@@ -249,9 +252,9 @@
             settingsTitle:     'Einstellungen',
             settingsRememberFilter: 'Filter merken',
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
-            settingsShowJsonButton: 'JSON-Download-Button anzeigen',
+            settingsShowJsonButton: 'JSON-Download-Button anzeigen {…}',
             settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständige API-Rohantworten als kombinierte JSON-Datei heruntergeladen werden kann. Gedacht für Debugging und eigene Auswertungen.',
-            settingsShowGeoButton:  'Geo-Export-Button anzeigen',
+            settingsShowGeoButton:  'Geo-Export-Button anzeigen 🛤️',
             settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
@@ -263,7 +266,7 @@
             settingsTrainLinkProvider: 'Anbieter für Zuglinks',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Externen Routing-Button anzeigen',
+            settingsShowRoutingButton: 'Externen Routing-Button anzeigen 🧭',
             settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst mit variierenden Funktionen öffnet. Die Routing-Links werden heuristisch mit den verfügbaren Reisedaten generiert. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
             settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
@@ -274,7 +277,7 @@
             settingsGroupTripExports:        'Reisen-Exporte',
             settingsGroupExternalLinks: 'Externe Datenlinks',
             settingsGroupData:          'Snapshot-Daten',
-            settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern',
+            settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern 🗄️',
             settingsUsePastCacheDesc:   'Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
@@ -368,7 +371,9 @@
                 departureRt:         'Abfahrt (aktuell)',
                 arrivalRt:           'Ankunft (aktuell)',
                 departureTrack:      'Gleis Abfahrt',
+                departureTrackRt:    'Gleis Abfahrt (aktuell)',
                 arrivalTrack:        'Gleis Ankunft',
+                arrivalTrackRt:      'Gleis Ankunft (aktuell)',
                 zuege:               'Züge',
                 seats:               'Reservierungen',
                 leistungsname:       'Tarif',
@@ -430,7 +435,7 @@
     let runInProgress   = false;
     let runTimerId      = null;
     let lastRenderArgs  = null;
-    let filterState     = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
+    let filterState     = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
     let uiSettings      = loadUiSettings();
     let settingsOpen    = false;
     let activeView      = 'current';
@@ -499,7 +504,7 @@
                 from: filterState.from || '',
                 to: filterState.to || '',
                 days: Number(filterState.days) || 0,
-                onlyChanges: !!filterState.onlyChanges,
+                onlyProblems: !!filterState.onlyProblems,
                 tags: Array.isArray(filterState.tags) ? filterState.tags.slice() : [],
                 activeView
             }));
@@ -514,7 +519,7 @@
                 from: parsed.from || '',
                 to: parsed.to || '',
                 days: Number(parsed.days) || 0,
-                onlyChanges: !!parsed.onlyChanges,
+                onlyProblems: !!parsed.onlyProblems,
                 tags: Array.isArray(parsed.tags) ? parsed.tags.slice() : []
             };
             if (parsed.activeView === 'past' || parsed.activeView === 'current') {
@@ -688,7 +693,7 @@
         rawReisekettenMap = new Map();
         detailCache.clear();
         auftragDetailCache.clear();
-        filterState     = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
+        filterState     = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
         activeView      = 'current';
         const root = document.getElementById('dbmrpp-root');
         if (root) root.remove();
@@ -726,7 +731,7 @@
     // =========================================================
     function dbFetch(url, init = {}) {
         const headers = Object.assign(
-            { 'Authorization': bearerToken, 'Accept': 'application/json' },
+            { 'Authorization': bearerToken, 'Accept': 'application/json', ...(!IS_INT && { 'Accept-Language': 'de' }) },
             init.headers || {}
         );
         return origFetch(url, { ...init, headers, credentials: 'include' }).then(async res => {
@@ -891,6 +896,8 @@
             const orphans = buildOrphans(auftraege, matchedKeys);
 
             const lastVisit = localStorage.getItem(LAST_VISIT_KEY);
+            const lastVisitMs = lastVisit ? Date.parse(lastVisit) : 0;
+            const shouldUpdateBaseline = !lastVisit || (Date.now() - lastVisitMs > SNAPSHOT_COOLDOWN_MS);
 
             const current = {};
             trips.forEach(t => current[t.uuid] = t);
@@ -900,8 +907,10 @@
 
             await renderUI(trips, orphans, changes, lastVisit);
 
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-            localStorage.setItem(LAST_VISIT_KEY, new Date().toISOString());
+            if (shouldUpdateBaseline) {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+                localStorage.setItem(LAST_VISIT_KEY, new Date().toISOString());
+            }
         } catch (err) {
             console.error('[DBMRPP]', err);
         } finally {
@@ -1067,7 +1076,9 @@
             departure: src.departure || null,
             arrival: src.arrival || null,
             departureTrack: src.departureTrack || null,
+            departureTrackRt: src.departureTrackRt || null,
             arrivalTrack: src.arrivalTrack || null,
+            arrivalTrackRt: src.arrivalTrackRt || null,
             departureRt: src.departureRt || null,
             arrivalRt: src.arrivalRt || null,
             zuege: src.zuege || '',
@@ -1280,7 +1291,7 @@
 
     function mergeReisekettenHistoryIntoPastTrip(trip, entry) {
         if (!trip || !entry) return trip;
-        const fillIfMissing = ['fromExtId','toExtId','departureTrack','arrivalTrack','departureRt','arrivalRt','status',
+        const fillIfMissing = ['fromExtId','toExtId','departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','departureRt','arrivalRt','status',
             'alternativensuche','ueberwacht','ueberwachungName','wiederholung','letzterReiseplanBearbeiter','zugbindung'];
         fillIfMissing.forEach(f => {
             if (trip[f] === null || trip[f] === undefined || trip[f] === '') trip[f] = entry[f];
@@ -1301,7 +1312,9 @@
             departureRt: entry.departureRt || null,
             arrivalRt: entry.arrivalRt || null,
             departureTrack: entry.departureTrack || null,
+            departureTrackRt: entry.departureTrackRt || null,
             arrivalTrack: entry.arrivalTrack || null,
+            arrivalTrackRt: entry.arrivalTrackRt || null,
             zugbindung: entry.zugbindung || null,
             status: entry.status || null,
             relevanteAbweichung: !!entry.relevanteAbweichung,
@@ -1357,7 +1370,7 @@
             // Fields only present in reiseketten responses: safe defaults for display + diff.
             zuege: '', seats: '', zugbindung: null, status: null,
             relevanteAbweichung: false, alternativensuche: null,
-            departureRt: null, arrivalRt: null, departureTrack: null, arrivalTrack: null,
+            departureRt: null, arrivalRt: null, departureTrack: null, departureTrackRt: null, arrivalTrack: null, arrivalTrackRt: null,
             notifications: [],
             ueberwacht: null, umreserviert: false, letzterReiseplanBearbeiter: null,
             ...overrides
@@ -1512,7 +1525,9 @@
                             departureRt: t.departureRt || null,
                             arrivalRt: t.arrivalRt || null,
                             departureTrack: t.departureTrack || null,
+                            departureTrackRt: t.departureTrackRt || null,
                             arrivalTrack: t.arrivalTrack || null,
+                            arrivalTrackRt: t.arrivalTrackRt || null,
                             zugbindung: t.zugbindung || null,
                             status: t.status || null,
                             relevanteAbweichung: !!t.relevanteAbweichung,
@@ -1935,17 +1950,27 @@
         const data = await fetchDetail(t.uuid);
         const trip0 = getDetailTrip(data);
         const abschnitte = Array.isArray(trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
-        const messages = [
+        const topMsgs = [
             ...(trip0.himMeldungen         || []),
             ...(trip0.priorisierteMeldungen || []),
             ...(trip0.risNotizen           || []),
-            ...abschnitte.flatMap(a => [
-                ...((a && a.himMeldungen) || []),
-                ...((a && a.priorisierteMeldungen) || []),
-                ...((a && a.risNotizen) || [])
-            ])
         ];
-        const normalized = normalizeNotificationEntries(messages);
+        const segMsgs = abschnitte.flatMap(a => {
+            if (!a) return [];
+            const vm = a.verkehrsmittel || {};
+            const label = vm.langText || vm.mittelText || vm.name || '';
+            const raw = [
+                ...((a.himMeldungen) || []),
+                ...((a.priorisierteMeldungen) || []),
+                ...((a.risNotizen) || [])
+            ];
+            if (!label || !raw.length) return raw;
+            return raw.map(m => {
+                const text = toNotificationText(m);
+                return text ? { text: `${label}: ${text}` } : m;
+            });
+        });
+        const normalized = normalizeNotificationEntries([...topMsgs, ...segMsgs]);
         if (t && normalized.length) {
             t.notifications = normalized;
             if (t.fromReiseketten) upsertReisekettenHistoryFromTrips([t]);
@@ -1981,8 +2006,10 @@
             toExtId:                 r.destination && r.destination.extId,
             departure:               r.origin      && r.origin.dateTime      && r.origin.dateTime.local,
             arrival:                 r.destination && r.destination.dateTime && r.destination.dateTime.local,
-            departureTrack:          r.origin      && r.origin.track,
-            arrivalTrack:            r.destination && r.destination.track,
+            departureTrack:          r.origin      && r.origin.track      || null,
+            departureTrackRt:        r.origin      && r.origin.rtTrack && r.origin.rtTrack !== r.origin.track ? r.origin.rtTrack : null,
+            arrivalTrack:            r.destination && r.destination.track || null,
+            arrivalTrackRt:          r.destination && r.destination.rtTrack && r.destination.rtTrack !== r.destination.track ? r.destination.rtTrack : null,
             zugbindung:              r.auftrag && r.auftrag.zugbindung,
             auftragsnummer:          r.auftrag && r.auftrag.auftragsnummer,
             kundenwunschId:          r.auftrag && r.auftrag.kundenwunschId,
@@ -2032,7 +2059,7 @@
             } else {
                 const c = curr[uuid], p = prev[uuid];
                 const fld = DIFF_WATCHED
-                    .filter(f => JSON.stringify(c[f]) !== JSON.stringify(p[f]))
+                    .filter(f => JSON.stringify(c[f] ?? null) !== JSON.stringify(p[f] ?? null))
                     .map(f => ({ field: f, old: p[f], new: c[f] }));
                 if (fld.length) out.geaendert.push({ trip: c, changes: fld });
             }
@@ -2144,14 +2171,15 @@
                 result = result.filter(t => !t.departure || new Date(t.departure).getTime() <= cutoff);
             }
         }
-        if (fs.onlyChanges) {
+        if (fs.onlyProblems) {
             result = result.filter(t =>
                 t.relevanteAbweichung ||
                 t.zugbindung === 'AUFGEHOBEN' ||
                 t.alternativensuche === 'ALTERNATIVEN_MUSS' ||
                 (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') ||
                 t.status === 'NICHT_REKONSTRUIERBAR' ||
-                t.sitzplatzStorniert || t.stellplatzStorniert
+                t.sitzplatzStorniert || t.stellplatzStorniert ||
+                t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR'
             );
         }
         if (fs.tags && fs.tags.length > 0) {
@@ -2452,7 +2480,7 @@
             }
 
             uiSettings = loadUiSettings();
-            filterState = { from: '', to: '', days: 0, onlyChanges: false, tags: [] };
+            filterState = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
             activeView = 'current';
             loadFilterStateIfEnabled();
 
@@ -2517,6 +2545,9 @@
             ev.preventDefault();
             ev.stopPropagation();
             togglePanel();
+        });
+        ['touchstart', 'touchend', 'touchcancel', 'pointerdown', 'pointerup'].forEach(type => {
+            fab.addEventListener(type, ev => ev.stopPropagation(), { passive: true });
         });
         document.body.appendChild(fab);
     }
@@ -3427,14 +3458,14 @@
             })
         );
         const changesToggle = root.querySelector('.dbmrpp-changes-toggle');
-        if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyChanges = !filterState.onlyChanges; rememberUiState(); reRender(); });
+        if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyProblems = !filterState.onlyProblems; rememberUiState(); reRender(); });
         root.querySelectorAll('.dbmrpp-view-tab').forEach(tab =>
             tab.addEventListener('click', () => {
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
                 if (!uiSettings.rememberFilter) {
                     filterState.from = ''; filterState.to = ''; filterState.tags = [];
-                    if (activeView === 'past') filterState.onlyChanges = false;
+                    if (activeView === 'past') filterState.onlyProblems = false;
                 }
                 rememberUiState();
                 reRender();
@@ -3449,7 +3480,7 @@
         const isPast = activeView === 'past';
         const sourcePool = isPast ? (pastTrips || []) : filterUpcomingTrips(trips);
         const filtered    = filterTrips(sourcePool, filterState, isPast);
-        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyChanges: false, tags: [] }, isPast);
+        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyProblems: false, tags: [] }, isPast);
         const availableTags = collectAvailableTags(filtered);
         const fromOptions = [...new Set(
             dayFiltered.filter(t => !filterState.to   || t.to   === filterState.to).map(t => t.from).filter(Boolean)
@@ -3608,7 +3639,7 @@
                             ).join('')}
                         </div>
                         ${filterState.tags.length > 0 ? `<div class="dbmrpp-selected-tags">${filterState.tags.map(t => `<span class="dbmrpp-tag-filter">${esc(getTagLabel(t))} <button class="dbmrpp-tag-remove" data-tag="${esc(t)}" style="border:none;background:none;color:inherit;cursor:pointer;padding:0;margin-left:4px;">×</button></span>`).join('')}</div>` : ''}
-                        ${isPast ? '' : `<button class="dbmrpp-changes-toggle${filterState.onlyChanges ? ' active' : ''}">${T.onlyIssues}</button>`}
+                        ${isPast ? '' : `<button class="dbmrpp-changes-toggle${filterState.onlyProblems ? ' active' : ''}">${T.onlyIssues}</button>`}
                     </div>
         </div>`;
     }
@@ -3699,7 +3730,7 @@
 
     function renderAbweichungBtn(t) {
         if (!t.relevanteAbweichung || !t.fromReiseketten) return '';
-        return ` <button type="button" class="dbmrpp-abweichung-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.abweichungTooltip}">ℹ️</button>`;
+        return ` <button type="button" class="dbmrpp-abweichung-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.abweichungTooltip}">⚠️</button>`;
     }
 
     function renderIcsLink(t) {
@@ -4105,6 +4136,11 @@
         return min > 0 ? `<span class="dbmrpp-delay"> +${min}'</span>` : `<span class="dbmrpp-early"> ${min}'</span>`;
     }
 
+    function trackChangedTag(rt) {
+        if (!rt) return '';
+        return `<span class="dbmrpp-delay"> → ${esc(rt)}</span>`;
+    }
+
     function formatDelaySummary(label, soll, ist) {
         if (!soll || !ist || soll === ist) return '';
         const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
@@ -4172,11 +4208,10 @@
             </div>
             <div class="dbmrpp-meta">
                 ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
-                ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? ` · ⇢ ${esc(T.metaPlatform)} ${esc(t.departureTrack)}` : ''}
                 ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
                 ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
                 ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${renderTrainList(t)}` : ''}
+                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(t.departureTrack)}${trackChangedTag(t.departureTrackRt)} ` : ''}${renderTrainList(t)}${showPrimaryPlatformInfo && t.arrivalTrack && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(t.arrivalTrack)}${trackChangedTag(t.arrivalTrackRt)}` : ''}` : ''}
                 ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
                 ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
                 ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
@@ -4213,12 +4248,10 @@
         const arrDelay = formatDelaySummary(T.cacheDelayArrival, t.arrival, c.arrivalRt);
         if (depDelay) facts.push(esc(depDelay));
         if (arrDelay) facts.push(esc(arrDelay));
-        if (c.departureTrack) facts.push(`⇢ ${esc(T.metaPlatform)} ${esc(c.departureTrack)}`);
-        if (c.arrivalTrack) facts.push(`⇠ ${esc(T.metaPlatform)} ${esc(c.arrivalTrack)}`);
 
         const lines = [];
         if (facts.length) lines.push(facts.join(' · '));
-        if (showTransportLines && c.zuege) lines.push(`🚅 ${renderTrainList(c, t)}`);
+        if (showTransportLines && c.zuege) lines.push(`🚅 ${c.departureTrack && !t.isFromHistoryCache && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(c.departureTrack)}${trackChangedTag(c.departureTrackRt)} ` : ''}${renderTrainList(c, t)}${c.arrivalTrack && !t.isFromHistoryCache && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(c.arrivalTrack)}${trackChangedTag(c.arrivalTrackRt)}` : ''}`);
         if (showTransportLines && c.seats) lines.push(`💺 ${esc(c.seats)}`);
 
         const notifEntries = normalizeNotificationEntries(c.notifications || []);
@@ -4237,7 +4270,7 @@
         const t = c.trip;
         return `
         <div class="dbmrpp-trip">
-            <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}${renderIcsLink(t)}${renderRawJsonLink(t)}
+            <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}
                 <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
             </div>
             ${c.changes.map(d => `

@@ -10,14 +10,14 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 **Vollständige Reiseübersicht**
 - Zeigt alle Reisen (bevorstehende und vergangene) in einer Liste ohne Seitenumbrüche
-- Zeigt Gleis, Ticketkategorie und Sitzplatzreservierungen direkt in der Liste — ohne jede Fahrt einzeln öffnen zu müssen
-- Optionale Links zu externen Zuginfo- und Routingseiten (z. B. zugfinder.net, bahn.expert)
+- Zeigt Abfahrtsgleis, Ticketkategorie und Sitzplatzreservierungen direkt in der Liste — ohne jede Fahrt einzeln öffnen zu müssen
+- Optionale Links zu externen Zuginfo- und Routingseiten (zugfinder.net, bahn.expert, chuchuu.com, transitous.org)
 
 **Änderungsverfolgung**
-- Vergleicht Reisen zwischen Besuchen und hebt Änderungen hervor: Verspätungen, Ausfälle, Umleitungen, Gleisänderungen, Zugbindung
+- Vergleicht Reisen zwischen Besuchen und hebt Änderungen hervor: Verspätungen, Ausfälle, Fahrplanänderungen, Gleisänderungen, Zugbindung
 
 **Details vergangener Reisen**
-- Reichert vergangene Reisen optional mit Informationen aus früheren Besuchen an (Betriebsstatus, Verspätungen, Sitzplatzinfos u. a.)
+- Reichert vergangene Reisen optional mit Informationen aus früheren Besuchen an (Aufgehobene Zugbindugng, Verspätungen, Sitzplatzinfos u. a.)
 - Diese Daten werden nur im Browser gespeichert und bauen sich mit der Zeit auf
 
 **Datenexport**
@@ -37,7 +37,8 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 **Tags & Indikatoren**
 - Erste Klasse
-- Umstieg erforderlich
+- Verbindung nicht möglich
+- Verbindung wird umgeplant
 - Zugbindung
 - Abo-Fahrten
 - Stornierte Sitzplatz- oder Fahrradreservierungen
@@ -66,7 +67,7 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 - Läuft vollständig im Browser; keine Daten verlassen das Gerät
 - Nutzt ausschließlich die APIs der Deutschen Bahn (dieselben, die die Website selbst verwendet)
-- Kein Tracking, keine Drittanbieter-Server
+- Kein Tracking, keine Drittanbieter-Server (nach extern wird nur verlinkt)
 - Alle Snapshots und Einstellungen werden lokal im Browser gespeichert
 
 ---

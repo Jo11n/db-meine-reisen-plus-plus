@@ -10,8 +10,8 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 
 **Full Trip Overview**
 - Shows all your trips (upcoming and past) in one list, no pagination
-- Displays platform, ticket type, and seat reservations directly in the list — reduces need to open each trip individually
-- Optional links to external train info and routing sites (e.g. zugfinder.net, bahn.expert)
+- Displays departure platform, ticket type, and seat reservations directly in the list — reduces need to open each trip individually
+- Optional links to external train info and routing sites (zugfinder.net, bahn.expert, chuchuu.com, transitous.org)
 
 **Change Tracking**
 - Compares your trips across visits and highlights what has changed: delays, cancellations, reroutings, platform changes
@@ -38,6 +38,7 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 **Tags & Indicators**
 - First class
 - Rerouting required
+- Connection being replanned
 - Train binding (Zugbindung)
 - Subscription trips
 - Cancelled seats or bike reservations
@@ -66,7 +67,7 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 
 - Runs entirely in your browser; no data leaves your device
 - Only calls Deutsche Bahn's own APIs (the same ones the website uses)
-- No tracking, no third-party servers
+- No tracking, no third-party servers (external services only linked to)
 - All snapshots and settings are stored locally in your browser
 
 ---

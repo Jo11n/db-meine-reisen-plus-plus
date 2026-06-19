@@ -5,15 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.7.1] - unreleased
+
+### Fixed
+- **onlyProblems Filter** - more suitable var name and added status 'VORLAEUFIG_NICHT_REKONSTRUIERBAR' to filter reason
+- **query deviation info symbol** -  "⚠️" is more intuitive 
+- **track changes** - now picking up track changes at the bulk reiseketten level as intended (first departure)
+- **cleaned up the change view** - simplified by omitting redundant buttons
+- **cleaned up track info rendering** - now integrated with train info
+- **ris-info fetch in German if applicable** - RIS sends messages depending on browser locale, so we fix it to German if the user chose to use the German site for consistency
+- **disambiguate RIS notices** - add a train prefix to see which RIS info belongs to which train in the journey
+- **added button symbols to some settings** - to clarify what is what
+- **touch event caused reloads on mobile** - another attempt. last fix didn't solve this completely
+
+---
+
 ## [0.7.0] - 2026-06-15 "Betriebsstabilisierung"
 
-## Added
+### Added
 - **custom tags** - you can now define, assign and filter by custom tags in the settings and assign them to individual trips
 
-## Changed
+### Changed
 - **restructered and enhanced settings** - introduced collapsible settings sections and introduced setting descriptions
 
-## Fixed
+### Fixed
 - **refactored history entry shape** - deduplicated code
 - **refactored renderUI code** - introduced 4 helper functions to decompose the overly large function
 - **refactored external routing code** - decomposed routing code such that providers get named sync functions, simplified endpoint extraction a bit
