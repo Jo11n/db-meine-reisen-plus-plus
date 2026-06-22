@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.8.0] - "defekte Tür"
+
+### Added
+- **Added tagGebrochen** (cls: 'bad') for reisekette.status === 'GEBROCHEN' (connection operationally broken due to current events), with labels "Connection broken" / "Verbindung gebrochen" and onlyProblems filter
+- **Added tagReroutedByUser** (cls: 'info') for letzterReiseplanBearbeiter === 'NUTZER' (user manually chose an alternative connection), with labels "Alternative chosen" / "Alternative gewählt"
+- **Added tagTeilweiseStorniert** (yellow) for partially cancelled trips, distinct from full cancellation (red tagStorniert)
+- **Option to hide fully cancelled trips**
+- **Added dev options group in settings** - and moved some settings there
+- **Debug logging** — opt-in setting (Developer options) that records navigation, lifecycle, and API events to localStorage; survives page reloads; Copy and Clear buttons in the settings panel
+- **Added button to download bulk `reiseketten`and `auftrag/v2` json response data** - in dev options
+
+
+### Changed
+- **CSV export extended** — five new columns: origin/destination station IDs (`From (ID)` / `To (ID)`), alert subscription name, recurring weekdays, and recurring-until date. Note: `To (ID)` may reflect the train's ultimate terminus rather than the booked destination due to an API bug.
+- **Reservation-only trips** — trips where only a seat or bike reservation was booked without an accompanying ticket (e.g. BahnCard 100 holders) are now correctly identified. Tagged as "Reservation only" / "Nur Reservierung" and exported as a CSV column. Also fixes a gap where past and orphan trips always had blank seat/bike availability columns.
+- **extended lookback window** - the api seems to expose 14 months
+- **Show cancelled trips inline** - deleted the counterintuitive "orphans" section
+
+### Fixed
+- **Removed two unconfirmed storniertStatus values** from the label map — not part of the actual API enum
+- **fixed bug that hid past cancelled trips** - visible again
+- **Redundant API refetch on mobile** — bahn.de's auth token sync navigates the page away and back ~1.5 s after load, causing the script to re-initialise and refetch. The render result is now cached in sessionStorage (60 s TTL): on the second load the FAB and panel appear instantly from cache while a background fetch silently updates the data.
+
+---
 ## [0.7.1]
 
 ### Fixed
