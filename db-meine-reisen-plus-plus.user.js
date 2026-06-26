@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.8.0
+// @version      0.8.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -35,7 +35,7 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.8.0';
+    const SCRIPT_VERSION  = '0.8.1';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -255,7 +255,8 @@
                 'UUID', 'KundenwunschID', 'LeistungsbuendelID',
                 'Notifications', 'Seat reassigned', 'Itinerary changed',
                 'From (ID)', 'To (ID)',
-                'Alert name', 'Recurring (days)', 'Recurring (until)'
+                'Alert name', 'Recurring (days)', 'Recurring (until)',
+                'Tags'
             ]
         };
         const de = {
@@ -452,7 +453,8 @@
                 'UUID', 'KundenwunschID', 'LeistungsbuendelID',
                 'Benachrichtigungen', 'Umplatziert', 'Reiseplan geändert',
                 'Von (ID)', 'Nach (ID)',
-                'Abo-Name', 'Wiederholung (Tage)', 'Wiederholung (bis)'
+                'Abo-Name', 'Wiederholung (Tage)', 'Wiederholung (bis)',
+                'Tags'
             ]
         };
         return IS_INT ? en : de;
@@ -1157,7 +1159,6 @@
         if (ids.kundenwunschId) keys.push(`kw:${ids.kundenwunschId}`);
         if (ids.auftragsnummer) keys.push(`ao:${ids.auftragsnummer}`);
         if (ids.reisekettenUuid) keys.push(`rk:${ids.reisekettenUuid}`);
-        if (ids.syntheticId) keys.push(`sy:${ids.syntheticId}`);
         return keys;
     }
 
@@ -1784,29 +1785,55 @@
 
     async function downloadRawJson(t) {
         try {
+            const assignedTagIds = customTagAssignments[t.uuid] || [];
+            const resolvedCustomTags = customTagDefs.filter(d => assignedTagIds.includes(d.id));
+
+            const endpoints = {
+                reisekette: {
+                    url: ENDPOINT_PATH,
+                    data: null
+                },
+                reiseketteDetail: {
+                    url: t.uuid ? `${ENDPOINT_PATH}/${encodeURIComponent(t.uuid)}` : ENDPOINT_PATH,
+                    data: null
+                },
+                auftragListEntry: {
+                    url: AUFTRAG_PATH,
+                    data: null
+                },
+                auftrag: {
+                    url: t.auftragsnummer ? `${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(t.auftragsnummer)}` : AUFTRAG_DETAIL_PATH,
+                    data: null
+                }
+            };
+
             const out = {
                 exportedAt: new Date().toISOString(),
                 dbmrppTripSummary: t,
-                reisekette: null,
-                reiseketteDetail: null,
-                auftrag: null
+                dbmrppCachedLiveState: findReisekettenHistoryForTrip(t) || null,
+                customTags: resolvedCustomTags,
+                endpoints
             };
 
             if (t.uuid && rawReisekettenMap.has(t.uuid)) {
-                out.reisekette = rawReisekettenMap.get(t.uuid);
+                endpoints.reisekette.data = rawReisekettenMap.get(t.uuid);
             }
 
             if (t.fromReiseketten && t.uuid) {
                 try {
-                    out.reiseketteDetail = await fetchDetail(t.uuid);
+                    endpoints.reiseketteDetail.data = await fetchDetail(t.uuid);
                 } catch (err) {
                     console.warn('[DBMRPP] Raw JSON: reiseketten detail failed', err);
                 }
             }
 
+            if (t.auftragsnummer && auftraegeCache) {
+                endpoints.auftragListEntry.data = auftraegeCache.find(a => a.auftragsnummer === t.auftragsnummer) || null;
+            }
+
             if (t.auftragsnummer) {
                 try {
-                    out.auftrag = await fetchAuftragDetail(t.auftragsnummer);
+                    endpoints.auftrag.data = await fetchAuftragDetail(t.auftragsnummer);
                 } catch (err) {
                     console.warn('[DBMRPP] Raw JSON: auftrag detail failed', err);
                 }
@@ -2416,7 +2443,11 @@
             t.toExtId   || '', // bulk reiseketten API may return the train's terminus instead of the booked destination
             t.ueberwachungName || '',
             t.wiederholung ? (t.wiederholung.wochentage || []).join(', ') : '',
-            t.wiederholung && t.wiederholung.aktivBis ? formatDate(t.wiederholung.aktivBis) : ''
+            t.wiederholung && t.wiederholung.aktivBis ? formatDate(t.wiederholung.aktivBis) : '',
+            (customTagAssignments[t.uuid] || [])
+                .map(id => { const d = customTagDefs.find(x => x.id === id); return d ? d.label : null; })
+                .filter(Boolean)
+                .join(', ')
         ]);
         const q = v => '"' + String(v).replace(/"/g, '""') + '"';
         const csv = [T.csvHeaders.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\r\n');
@@ -3728,11 +3759,6 @@
                         <span>${T.settingsShowCancelledTrips}</span>
                     </label>
                     <div class="dbmrpp-settings-info-text">${T.settingsShowCancelledTripsDesc}</div>
-                </div>
-            </details>
-            <details class="dbmrpp-settings-group">
-                <summary>${T.settingsGroupPast}</summary>
-                <div class="dbmrpp-settings-group-body">
                     <label class="dbmrpp-settings-toggle">
                         <input type="checkbox" id="dbmrpp-setting-use-past-cache"${uiSettings.usePastCache ? ' checked' : ''}>
                         <span>${T.settingsUsePastCacheLabel}</span>
@@ -3972,7 +3998,7 @@
 
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
-        if (t.storniertStatus && t.storniertStatus !== 'NICHT_STORNIERT') return '';
+        if (t.storniertStatus === 'STORNIERT') return '';
         return ` <button type="button" class="dbmrpp-pdf-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.pdfTooltip}">🧾</button>`;
     }
 

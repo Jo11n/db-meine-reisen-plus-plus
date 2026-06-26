@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
 
+
+---
+## [0.8.1]
+
+### Fixed
+- **cleaned up settings section**  
+- **show ticket download option for partly cancelled tickets** - never seen `TEILWEISE_STORNIERT` in the wild but if it exists, the ticket should be shown
+- **minor cleanup in matchedKeys**
+- **improved intelligibility of trip json export** - by including the resolved endpoint urls
+- **added some overlooked info to trip json export** - bulk auftrag/v2 call, custom tags, and live state
+- **csv now includes the custom tags as intended**
+
+
 ---
 ## [0.8.0] - "defekte Tür"
 
