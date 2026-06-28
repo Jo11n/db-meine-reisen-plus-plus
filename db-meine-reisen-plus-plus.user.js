@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.8.1
+// @version      0.9.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,20 +26,22 @@
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
+    // Key kept as "reisekettenHistory" for backwards-compat; also stores auftrag history since 0.9.0.
     const REISEKETTEN_HISTORY_KEY = 'dbmrpp.reisekettenHistory.v1';
     const REISEKETTEN_HISTORY_SCHEMA_VERSION = 2;
     const LAST_VISIT_KEY   = 'dbmrpp.lastVisit';
     const KUNDENPROFIL_KEY = 'dbmrpp.kundenprofilId';
     const CUSTOM_TAG_DEFS_KEY        = 'dbmrpp.customTagDefs.v1';
     const CUSTOM_TAG_ASSIGNMENTS_KEY = 'dbmrpp.customTagAssignments.v1';
+    const NOTES_KEY                  = 'dbmrpp.tripNotes.v1';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.8.1';
+    const SCRIPT_VERSION  = '0.9.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
-    const REISEKETTEN_HISTORY_MAX_ENTRIES = 500; 
+    const REISEKETTEN_HISTORY_MAX_ENTRIES = 2000;
     const CACHE_NOTIFICATIONS_MAX_ITEMS = 8;
     const CACHE_NOTIFICATION_TEXT_MAX_CHARS = 400;
     const RUN_DELAY_MS     = 800;
@@ -160,12 +162,15 @@
             customTagDeleteTt:        'Delete tag',
             customTagEditTt:          'Edit tag',
             customTagAssignTt:        'Assign custom tags',
+            noteTt:                   'Edit note',
+            notePlaceholder:          'Add a note…',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Notifications',
             cacheDelayDeparture: 'Departure delay',
             cacheDelayArrival:   'Arrival delay',
             cacheCapturedAt:   d => `🕒 Captured on ${d}`,
             cacheMissing:      'ℹ️ No cached trip details available.',
+            planChangedFrom:   'was',
             metaValidLabel:    'Valid:',
             metaPlatform:      'Pl.',
             metaPersons:       n => `${n} persons`,
@@ -256,7 +261,7 @@
                 'Notifications', 'Seat reassigned', 'Itinerary changed',
                 'From (ID)', 'To (ID)',
                 'Alert name', 'Recurring (days)', 'Recurring (until)',
-                'Tags'
+                'Tags', 'Notes'
             ]
         };
         const de = {
@@ -357,12 +362,15 @@
             customTagDeleteTt:        'Tag löschen',
             customTagEditTt:          'Tag bearbeiten',
             customTagAssignTt:        'Eigene Tags zuweisen',
+            noteTt:                   'Notiz bearbeiten',
+            notePlaceholder:          'Notiz hinzufügen…',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Benachrichtigungen',
             cacheDelayDeparture: 'Verspaetung Abfahrt',
             cacheDelayArrival:   'Verspaetung Ankunft',
             cacheCapturedAt:   d => `Erfasst am ${d}`,
             cacheMissing:      'Keine zwischengespeicherten Reisedetails verfügbar.',
+            planChangedFrom:   'war',
             metaValidLabel:    'Gültig:',
             metaPlatform:      'Gl.',
             metaPersons:       n => `${n} Personen`,
@@ -454,7 +462,7 @@
                 'Benachrichtigungen', 'Umplatziert', 'Reiseplan geändert',
                 'Von (ID)', 'Nach (ID)',
                 'Abo-Name', 'Wiederholung (Tage)', 'Wiederholung (bis)',
-                'Tags'
+                'Tags', 'Notizen'
             ]
         };
         return IS_INT ? en : de;
@@ -475,9 +483,10 @@
     let activeView      = 'current';
     let pastTrips       = null;
     let auftraegeCache  = null;
-    let reisekettenHistory = loadReisekettenHistory();
+    let tripHistory = loadTripHistory();
     let customTagDefs        = loadCustomTagDefs();
     let customTagAssignments = loadCustomTagAssignments();
+    let tripNotes            = loadTripNotes();
     let panelVisible    = !!uiSettings.openOnLoad;
     let rawReisekettenMap = new Map();
     let tokenSyncTimer  = null;
@@ -584,9 +593,15 @@
     function saveCustomTagAssignments() {
         try { localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments)); } catch (_) {}
     }
+    function loadTripNotes() {
+        try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveTripNotes() {
+        try { localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes)); } catch (_) {}
+    }
 
     loadFilterStateIfEnabled();
-    seedReisekettenHistoryFromSnapshotStorage();
+    seedTripHistoryFromSnapshotStorage();
 
     // =========================================================
     // Debug logging (opt-in via settings)
@@ -990,7 +1005,8 @@
             const auftragMap = buildAuftragMap(auftraege);
             const trips = (reisekettenData.reiseketten || []).map(simplify);
             trips.forEach(t => mergeAuftrag(t, auftragMap[t.kundenwunschId]));
-            upsertReisekettenHistoryFromTrips(trips);
+            upsertTripHistoryFromReiseketten(trips);
+            upsertTripHistoryFromAuftraege(auftraege);
 
             auftraegeCache = auftraege;
             pastTrips = null;
@@ -1162,11 +1178,11 @@
         return keys;
     }
 
-    function loadReisekettenHistory() {
+    function loadTripHistory() {
         try {
             const parsed = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
             if (parsed && typeof parsed === 'object' && parsed.entries && typeof parsed.entries === 'object') {
-                return normalizeReisekettenHistory(parsed);
+                return normalizeTripHistory(parsed);
             }
         } catch (_) {}
         return { entries: {} };
@@ -1212,7 +1228,7 @@
         return makeHistoryEntryShape(entry, ids, entry.cachedAt || null);
     }
 
-    function normalizeReisekettenHistory(raw) {
+    function normalizeTripHistory(raw) {
         const entriesRaw = (raw && raw.entries && typeof raw.entries === 'object') ? raw.entries : {};
         const normalizedEntries = {};
         Object.entries(entriesRaw).forEach(([key, entry]) => {
@@ -1225,11 +1241,11 @@
         };
     }
 
-    function saveReisekettenHistory() {
+    function saveTripHistory() {
         try {
-            const normalized = normalizeReisekettenHistory(reisekettenHistory);
+            const normalized = normalizeTripHistory(tripHistory);
             localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(normalized));
-            reisekettenHistory = normalized;
+            tripHistory = normalized;
         } catch (_) {}
     }
 
@@ -1271,7 +1287,7 @@
         ]);
     }
 
-    function buildReisekettenHistoryEntry(t, cachedAtOverride) {
+    function buildTripHistoryEntry(t, cachedAtOverride) {
         const ids = getTripIds(t);
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
         return makeHistoryEntryShape(t, ids, cachedAtOverride || new Date().toISOString());
@@ -1289,14 +1305,14 @@
     function deleteCachedTrip(trip) {
         if (!trip) return;
 
-        const entry = findReisekettenHistoryForTrip(trip);
+        const entry = findTripHistoryEntry(trip);
         if (!entry) return;
 
         const key = historyEntryPrimaryKey(entry);
         if (!key) return;
 
-        delete reisekettenHistory.entries[key];
-        saveReisekettenHistory();
+        delete tripHistory.entries[key];
+        saveTripHistory();
         if (activeView === 'past' && auftraegeCache) {
             pastTrips = buildPastTrips(auftraegeCache);
         } else {
@@ -1306,38 +1322,76 @@
     }
 
 
-    function pruneReisekettenHistory() {
-        const entries = Object.entries(reisekettenHistory.entries || {});
+    function pruneTripHistory() {
+        const entries = Object.entries(tripHistory.entries || {});
         if (entries.length <= REISEKETTEN_HISTORY_MAX_ENTRIES) return;
         entries.sort((a, b) => {
             const ta = Date.parse((a[1] && a[1].cachedAt) || 0) || 0;
             const tb = Date.parse((b[1] && b[1].cachedAt) || 0) || 0;
             return tb - ta;
         });
-        reisekettenHistory.entries = Object.fromEntries(entries.slice(0, REISEKETTEN_HISTORY_MAX_ENTRIES));
+        tripHistory.entries = Object.fromEntries(entries.slice(0, REISEKETTEN_HISTORY_MAX_ENTRIES));
     }
 
-    function upsertReisekettenHistoryFromTrips(trips) {
-        if (!reisekettenHistory || !reisekettenHistory.entries) reisekettenHistory = { entries: {} };
+    function upsertTripHistoryFromReiseketten(trips) {
+        if (!tripHistory || !tripHistory.entries) tripHistory = { entries: {} };
         let changed = false;
         (trips || []).forEach(t => {
             if (!t || !t.fromReiseketten) return;
-            const probe = buildReisekettenHistoryEntry(t);
+            const probe = buildTripHistoryEntry(t);
             if (!probe) return;
             const key = historyEntryPrimaryKey(probe);
             if (!key) return;
-            const prev = reisekettenHistory.entries[key] || null;
-            const entry = buildReisekettenHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
+            const prev = tripHistory.entries[key] || null;
+            const entry = buildTripHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
             if (!entry) return;
-            reisekettenHistory.entries[key] = entry;
+            tripHistory.entries[key] = entry;
             changed = true;
         });
         if (!changed) return;
-        pruneReisekettenHistory();
-        saveReisekettenHistory();
+        pruneTripHistory();
+        saveTripHistory();
     }
 
-    function seedReisekettenHistoryFromSnapshot(snapshotObj) {
+    // Stores a baseline entry from the Auftraege API for trips not already covered
+    // by a richer Reiseketten entry. Called after upsertTripHistoryFromReiseketten
+    // so Reiseketten data always wins when both are available.
+    function upsertTripHistoryFromAuftraege(auftraege) {
+        if (!tripHistory || !tripHistory.entries) tripHistory = { entries: {} };
+        let changed = false;
+        (auftraege || []).forEach(a => {
+            extractAuftragItems(a).forEach(fahrt => {
+                if (!fahrt.abfahrt) return;
+                const gs  = fahrt.gueltigkeitsstrecke || {};
+                const ids = {
+                    reisekettenUuid: null,
+                    kundenwunschId:  fahrt.kundenwunschId || null,
+                    auftragsnummer:  a.auftragsnummer    || null,
+                    syntheticId:     null
+                };
+                if (!ids.kundenwunschId && !ids.auftragsnummer) return;
+                const key  = historyEntryPrimaryKey({ ids });
+                if (!key) return;
+                const prev = tripHistory.entries[key] || null;
+                // A Reiseketten entry for this trip already exists — don't overwrite it.
+                if (prev && prev.ids && prev.ids.reisekettenUuid) return;
+                const src = {
+                    typ:       'AUFTRAG',
+                    from:      fahrt.startort || gs.abgangsbahnhofName || null,
+                    to:        fahrt.zielort  || gs.zielbahnhofName    || null,
+                    departure: fahrt.abfahrt  || null,
+                    arrival:   fahrt.ankunft  || null,
+                };
+                tripHistory.entries[key] = makeHistoryEntryShape(src, ids, (prev && prev.cachedAt) || new Date().toISOString());
+                changed = true;
+            });
+        });
+        if (!changed) return;
+        pruneTripHistory();
+        saveTripHistory();
+    }
+
+    function seedTripHistoryFromSnapshot(snapshotObj) {
         if (!isPlainObject(snapshotObj)) return;
         const trips = Object.values(snapshotObj).filter(t =>
             !!t && (
@@ -1347,21 +1401,21 @@
             )
         );
         if (!trips.length) return;
-        upsertReisekettenHistoryFromTrips(trips);
+        upsertTripHistoryFromReiseketten(trips);
     }
 
-    function seedReisekettenHistoryFromSnapshotStorage() {
+    function seedTripHistoryFromSnapshotStorage() {
         try {
-            const hasEntries = Object.keys((reisekettenHistory && reisekettenHistory.entries) || {}).length > 0;
+            const hasEntries = Object.keys((tripHistory && tripHistory.entries) || {}).length > 0;
             if (hasEntries) return;
             const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-            seedReisekettenHistoryFromSnapshot(snapshot);
+            seedTripHistoryFromSnapshot(snapshot);
         } catch (_) {}
     }
 
-    function findReisekettenHistoryForTrip(trip) {
+    function findTripHistoryEntry(trip) {
         const ids = getTripIds(trip);
-        const entries = Object.values((reisekettenHistory && reisekettenHistory.entries) || {});
+        const entries = Object.values((tripHistory && tripHistory.entries) || {});
         if (!entries.length) return null;
 
         if (ids.kundenwunschId) {
@@ -1397,7 +1451,7 @@
         return best;
     }
 
-    function mergeReisekettenHistoryIntoPastTrip(trip, entry) {
+    function mergeTripHistoryIntoPastTrip(trip, entry) {
         if (!trip || !entry) return trip;
         const fillIfMissing = ['fromExtId','toExtId','departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','departureRt','arrivalRt','status',
             'alternativensuche','ueberwacht','ueberwachungName','wiederholung','letzterReiseplanBearbeiter','zugbindung'];
@@ -1432,7 +1486,7 @@
             notifications: normalizeNotificationEntries(entry.notifications || []),
             cachedAt: entry.cachedAt || null
         };
-        trip.hasReisekettenCache = true;
+        trip.hasTripHistoryEntry = true;
         trip.source = 'merged';
         return trip;
     }
@@ -1488,6 +1542,15 @@
         };
     }
 
+    function bookedZuegeFromFahrt(fahrt) {
+        const segs = (fahrt.verbindung && fahrt.verbindung.verbindungsAbschnitte) || [];
+        const names = segs
+            .filter(s => s.verkehrsmittel && s.verkehrsmittel.typ !== 'WALK')
+            .map(s => { const vm = s.verkehrsmittel || {}; return vm.mittelText || vm.name || ''; })
+            .filter(Boolean);
+        return names.length ? names.join(' → ') : null;
+    }
+
     function buildAuftragMap(auftraege) {
         const map = {};
         auftraege.forEach(a => {
@@ -1513,7 +1576,10 @@
                     pdfVerfuegbar:       !!(kanals.includes('WEB') || kanals.includes('BUCHUNG')),
                     teilpreis:           !!fahrt.isTeilpreis,
                     gueltigVon:          fahrt.zeitlicheGueltigkeit && fahrt.zeitlicheGueltigkeit.ersterGeltungszeitpunkt || null,
-                    gueltigBis:          fahrt.zeitlicheGueltigkeit && fahrt.zeitlicheGueltigkeit.letzterGeltungszeitpunkt || null
+                    gueltigBis:          fahrt.zeitlicheGueltigkeit && fahrt.zeitlicheGueltigkeit.letzterGeltungszeitpunkt || null,
+                    bookedDeparture:     fahrt.abfahrt || null,
+                    bookedArrival:       fahrt.ankunft || null,
+                    bookedZuege:         bookedZuegeFromFahrt(fahrt)
                 };
             });
         });
@@ -1605,24 +1671,39 @@
                     isPastTrip:   true
                 });
                 if (uiSettings.usePastCache) {
-                    const cached = findReisekettenHistoryForTrip(trip);
-                    result.push(mergeReisekettenHistoryIntoPastTrip(trip, cached));
+                    const cached = findTripHistoryEntry(trip);
+                    result.push(mergeTripHistoryIntoPastTrip(trip, cached));
                 } else {
                     result.push(trip);
                 }
             });
         });
-        // Add cached saved trips (FREI/WIEDERHOLEND) not already present
-        if (uiSettings.usePastCache && reisekettenHistory && reisekettenHistory.entries) {
+        // Add cached trips (any type) not already present in the result.
+        // Trips from auftraege use kundenwunschId as uuid; history entries use
+        // reisekettenUuid — so we track all known identifiers per trip to avoid
+        // cross-scheme false misses or duplicates.
+        if (uiSettings.usePastCache && tripHistory && tripHistory.entries) {
             const now = Date.now();
-            const tripIdentity = t => (t && (t.uuid || (t.ids && t.ids.reisekettenUuid) || `ao:${t.auftragsnummer || ''}:${t.departure || ''}`)) || '';
-            const existingUuids = new Set(result.map(tripIdentity).filter(Boolean));
-            Object.entries(reisekettenHistory.entries).forEach(([entryKey, t]) => {
+            const existingIds = new Set();
+            result.forEach(t => {
+                const ids = getTripIds(t);
+                if (t.uuid)              existingIds.add(t.uuid);
+                if (ids.reisekettenUuid) existingIds.add(ids.reisekettenUuid);
+                if (ids.kundenwunschId)  existingIds.add(ids.kundenwunschId);
+                if (ids.auftragsnummer && t.departure) existingIds.add(`ao:${ids.auftragsnummer}:${t.departure}`);
+            });
+            Object.entries(tripHistory.entries).forEach(([entryKey, t]) => {
                 if (!t) return;
-                if ((t.typ === 'FREI' || t.typ === 'WIEDERHOLEND') && t.departure && new Date(t.departure).getTime() < now) {
-                    const rkUuid = (t.ids && t.ids.reisekettenUuid) || t.uuid || null;
-                    const identity = tripIdentity({ ...t, uuid: rkUuid || t.uuid || `hist:${entryKey}` });
-                    if (existingUuids.has(identity)) return;
+                if (t.departure && new Date(t.departure).getTime() < now) {
+                    const histIds = t.ids || {};
+                    const rkUuid = histIds.reisekettenUuid || t.uuid || null;
+                    const aoKey  = `ao:${histIds.auftragsnummer || ''}:${t.departure || ''}`;
+                    if (
+                        (rkUuid && existingIds.has(rkUuid)) ||
+                        (histIds.kundenwunschId && existingIds.has(histIds.kundenwunschId)) ||
+                        (t.uuid && existingIds.has(t.uuid)) ||
+                        (histIds.auftragsnummer && existingIds.has(aoKey))
+                    ) return;
 
                     // Clone the persisted entry so we do not mutate history records in-place.
                     const cachedTrip = {
@@ -1631,7 +1712,7 @@
                         fromReiseketten: !!rkUuid,
                         isPastTrip: true,
                         isFromHistoryCache: true,
-                        hasReisekettenCache: true,
+                        hasTripHistoryEntry: true,
                         cacheInfo: {
                             departureRt: t.departureRt || null,
                             arrivalRt: t.arrivalRt || null,
@@ -1649,7 +1730,10 @@
                             cachedAt: t.cachedAt || null
                         }
                     };
-                    existingUuids.add(identity);
+                    if (rkUuid) existingIds.add(rkUuid);
+                    if (histIds.kundenwunschId) existingIds.add(histIds.kundenwunschId);
+                    if (t.uuid) existingIds.add(t.uuid);
+                    if (histIds.auftragsnummer) existingIds.add(aoKey);
                     result.push(cachedTrip);
                 }
             });
@@ -1810,7 +1894,7 @@
             const out = {
                 exportedAt: new Date().toISOString(),
                 dbmrppTripSummary: t,
-                dbmrppCachedLiveState: findReisekettenHistoryForTrip(t) || null,
+                dbmrppCachedLiveState: findTripHistoryEntry(t) || null,
                 customTags: resolvedCustomTags,
                 endpoints
             };
@@ -2136,7 +2220,7 @@
         const normalized = normalizeNotificationEntries([...topMsgs, ...segMsgs]);
         if (t && normalized.length) {
             t.notifications = normalized;
-            if (t.fromReiseketten) upsertReisekettenHistoryFromTrips([t]);
+            if (t.fromReiseketten) upsertTripHistoryFromReiseketten([t]);
         }
         return normalized;
     }
@@ -2267,7 +2351,7 @@
           label: ()  => T.tagReassigned },
         { id: 'tagMuted',          cls: 'warn', cond: t => t.ueberwacht === false,
           label: ()  => T.tagMuted },
-        { id: 'tagSaved',          cls: 'ok',   cond: t => t.typ === 'FREI' || t.isFromHistoryCache,
+        { id: 'tagSaved',          cls: 'ok',   cond: t => t.typ === 'FREI' || (t.isFromHistoryCache && t.typ !== 'AUFTRAG'),
           label: ()  => T.tagSaved },
         { id: 'tagWiederholend',   cls: 'ok',   cond: t => t.typ === 'WIEDERHOLEND',
           label: ()  => T.tagWiederholend },
@@ -2447,7 +2531,8 @@
             (customTagAssignments[t.uuid] || [])
                 .map(id => { const d = customTagDefs.find(x => x.id === id); return d ? d.label : null; })
                 .filter(Boolean)
-                .join(', ')
+                .join(', '),
+            tripNotes[t.uuid] || ''
         ]);
         const q = v => '"' + String(v).replace(/"/g, '""') + '"';
         const csv = [T.csvHeaders.map(q).join(','), ...rows.map(r => r.map(q).join(','))].join('\r\n');
@@ -2540,11 +2625,12 @@
                 snapshot: isPlainObject(snapshot) ? snapshot : {},
                 lastVisit: localStorage.getItem(LAST_VISIT_KEY),
                 settings: isPlainObject(settings) ? settings : {},
-                reisekettenHistory: isPlainObject(history) && isPlainObject(history.entries)
+                tripHistory: isPlainObject(history) && isPlainObject(history.entries)
                     ? { entries: history.entries }
                     : { entries: {} },
                 customTagDefs: customTagDefs.slice(),
-                customTagAssignments: { ...customTagAssignments }
+                customTagAssignments: { ...customTagAssignments },
+                tripNotes: { ...tripNotes }
             };
             triggerDownload(
                 new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }),
@@ -2590,7 +2676,7 @@
             )
         );
         trips.forEach(t => {
-            const entry = buildReisekettenHistoryEntry(t, cachedAtOverride || null);
+            const entry = buildTripHistoryEntry(t, cachedAtOverride || null);
             if (!entry) return;
             const key = historyEntryPrimaryKey(entry);
             if (!key) return;
@@ -2613,7 +2699,7 @@
 
             const localSnapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
             const localSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-            const localHistory = normalizeReisekettenHistory(JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}'));
+            const localHistory = normalizeTripHistory(JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}'));
 
             const localLastVisit = localStorage.getItem(LAST_VISIT_KEY);
             const importedLastVisit = (typeof data.lastVisit === 'string' && data.lastVisit) ? data.lastVisit : null;
@@ -2634,18 +2720,18 @@
                 localStorage.removeItem(LAST_VISIT_KEY);
             }
 
-            const importedHistory = data && data.reisekettenHistory;
+            const importedHistory = data && (data.tripHistory || data.reisekettenHistory);
             const hasHistoryShape = isPlainObject(importedHistory) && isPlainObject(importedHistory.entries);
             const normalizedImportedHistory = hasHistoryShape
-                ? normalizeReisekettenHistory(importedHistory)
-                : normalizeReisekettenHistory({
+                ? normalizeTripHistory(importedHistory)
+                : normalizeTripHistory({
                     entries: buildHistoryEntriesFromSnapshot(data.snapshot, importedLastVisit)
                 });
-            const mergedHistory = normalizeReisekettenHistory({
+            const mergedHistory = normalizeTripHistory({
                 entries: mergeHistoryEntriesNewestWins(localHistory.entries, normalizedImportedHistory.entries)
             });
             localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(mergedHistory));
-            reisekettenHistory = mergedHistory;
+            tripHistory = mergedHistory;
 
             if (Array.isArray(data.customTagDefs)) {
                 const mergedDefs = [...customTagDefs];
@@ -2664,6 +2750,12 @@
                     ? { ...customTagAssignments, ...data.customTagAssignments }
                     : { ...data.customTagAssignments, ...customTagAssignments };
                 saveCustomTagAssignments();
+            }
+            if (isPlainObject(data.tripNotes)) {
+                tripNotes = preferImported
+                    ? { ...tripNotes, ...data.tripNotes }
+                    : { ...data.tripNotes, ...tripNotes };
+                saveTripNotes();
             }
 
             uiSettings = loadUiSettings();
@@ -2878,6 +2970,8 @@
                     .dbmrpp-route-link, .dbmrpp-train-link { color: var(--dbmrpp-navy); text-decoration: none; }
                     .dbmrpp-route-link:hover, .dbmrpp-train-link:hover { text-decoration: underline; }
                     .dbmrpp-route-link { word-break: break-word; overflow-wrap: break-word; }
+                    .dbmrpp-route-cached { color: #000; font-weight: bold; cursor: default; }
+                    .dbmrpp-route-cached:hover { text-decoration: none; }
                     button.dbmrpp-train-link { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 
                     .dbmrpp-action-icon {
@@ -2965,6 +3059,7 @@
                     .dbmrpp-diff-old { color: #888; text-decoration: line-through; }
                     .dbmrpp-diff-new, .dbmrpp-delay { color: var(--dbmrpp-accent); font-weight: 600; }
                     .dbmrpp-early { color: #265c26; font-weight: 600; }
+                    .dbmrpp-plan-change { color: #7a5c00; font-size: 11px; font-weight: 500; }
 
                     .dbmrpp-filter-bar {
                         display: grid;
@@ -3191,6 +3286,51 @@
                     }
                     .dbmrpp-custom-tag-create input { padding: 2px 6px; min-width: 100px; max-width: 160px; }
                     .dbmrpp-custom-tag-create select { padding: 2px 4px; }
+
+                    .dbmrpp-note, .dbmrpp-note-summary {
+                        margin: 3px 0 0;
+                        font-size: 11.5px;
+                        color: #555;
+                        font-style: italic;
+                        padding: 0 0 0 6px;
+                        border-left: 2px solid #ccc;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    }
+                    .dbmrpp-note-details { margin: 3px 0 0; }
+                    .dbmrpp-note-details > .dbmrpp-note-summary {
+                        margin: 0;
+                        cursor: pointer;
+                        list-style: none;
+                    }
+                    .dbmrpp-note-details > .dbmrpp-note-summary::-webkit-details-marker { display: none; }
+                    .dbmrpp-note-details > .dbmrpp-note-summary::before { content: '▸ '; font-style: normal; font-size: 10px; }
+                    .dbmrpp-note-details[open] > .dbmrpp-note-summary::before { content: '▾ '; }
+                    .dbmrpp-note-body {
+                        font-size: 11.5px;
+                        color: #555;
+                        font-style: italic;
+                        padding: 2px 0 0 6px;
+                        border-left: 2px solid #ccc;
+                        white-space: pre-wrap;
+                        word-break: break-word;
+                        margin-top: 1px;
+                    }
+                    .dbmrpp-note-area { margin-top: 4px; }
+                    .dbmrpp-note-edit {
+                        display: block;
+                        width: 100%;
+                        font-size: 12px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        padding: 4px 6px;
+                        font-family: inherit;
+                        resize: vertical;
+                        min-height: 38px;
+                        box-sizing: border-box;
+                    }
+                    .dbmrpp-note-btn-active { opacity: 1 !important; color: #6600cc; }
                 `;
         document.head.appendChild(s);
     }
@@ -3637,6 +3777,44 @@
                 }
                 return;
             }
+            const noteBtn = ev.target.closest('.dbmrpp-note-btn');
+            if (noteBtn) {
+                ev.preventDefault();
+                const uuid = noteBtn.getAttribute('data-uuid');
+                const tripDiv = noteBtn.closest('.dbmrpp-trip');
+                if (!tripDiv) return;
+                const existingArea = tripDiv.querySelector('.dbmrpp-note-area');
+                if (existingArea) { existingArea.remove(); return; }
+                const area = document.createElement('div');
+                area.className = 'dbmrpp-note-area';
+                const ta = document.createElement('textarea');
+                ta.className = 'dbmrpp-note-edit';
+                ta.placeholder = T.notePlaceholder;
+                ta.value = tripNotes[uuid] || '';
+                ta.rows = 2;
+                ta.addEventListener('input', () => {
+                    const val = ta.value;
+                    if (val.trim()) {
+                        tripNotes[uuid] = val;
+                    } else {
+                        delete tripNotes[uuid];
+                    }
+                    saveTripNotes();
+                    const existingDisplay = tripDiv.querySelector('.dbmrpp-note, .dbmrpp-note-details');
+                    if (existingDisplay) existingDisplay.remove();
+                    if (val.trim()) {
+                        const nd = document.createElement('div');
+                        nd.className = 'dbmrpp-note';
+                        nd.textContent = val;
+                        area.before(nd);
+                    }
+                    noteBtn.classList.toggle('dbmrpp-note-btn-active', !!val.trim());
+                });
+                area.appendChild(ta);
+                tripDiv.appendChild(area);
+                ta.focus();
+                return;
+            }
             const abwBtn = ev.target.closest('.dbmrpp-abweichung-btn');
             if (abwBtn) {
                 ev.preventDefault();
@@ -3945,6 +4123,8 @@
         const label = hasRoute
             ? `${fromLabel || '?'} → ${toLabel || '?'}`
             : (t.leistungsname || t.name || '?');
+        if (t.isFromHistoryCache)
+            return `<span class="dbmrpp-route-link dbmrpp-route-cached">${esc(label)}</span>`;
         return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
     }
 
@@ -4360,6 +4540,22 @@
         return `<span class="dbmrpp-delay"> → ${esc(rt)}</span>`;
     }
 
+    function planChangeTag(t, field) {
+        if (field === 'arrival') {
+            if (!t || !t.bookedArrival || t.bookedArrival === t.arrival) return '';
+            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedArrival))}"> <s>${esc(formatTime(t.bookedArrival))}</s></span>`;
+        }
+        if (field === 'departure') {
+            if (!t || !t.bookedDeparture || t.bookedDeparture === t.departure) return '';
+            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedDeparture))}"> <s>${esc(formatTime(t.bookedDeparture))}</s></span>`;
+        }
+        if (field === 'zuege') {
+            if (!t || !t.bookedZuege || t.bookedZuege === t.zuege) return '';
+            return `<br><span class="dbmrpp-plan-change">🚅 <s>${esc(t.bookedZuege)}</s></span>`;
+        }
+        return '';
+    }
+
     function formatDelaySummary(label, soll, ist) {
         if (!soll || !ist || soll === ist) return '';
         const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
@@ -4391,6 +4587,21 @@
         return `<details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon${hasAssigned ? ' dbmrpp-custom-tag-assigned' : ''}" title="${esc(T.customTagAssignTt)}">🔖</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
     }
 
+    function renderNoteDisplay(uuid) {
+        const text = tripNotes[uuid];
+        if (!text || !text.trim()) return '';
+        if (!text.includes('\n')) {
+            return `<div class="dbmrpp-note">${esc(text)}</div>`;
+        }
+        const firstLine = text.split('\n')[0] || text;
+        return `<details class="dbmrpp-note-details"><summary class="dbmrpp-note-summary">${esc(firstLine)}</summary><div class="dbmrpp-note-body">${esc(text)}</div></details>`;
+    }
+
+    function renderNoteBtn(t) {
+        const hasNote = !!(tripNotes[t.uuid] && tripNotes[t.uuid].trim());
+        return `<button class="dbmrpp-action-icon dbmrpp-note-btn${hasNote ? ' dbmrpp-note-btn-active' : ''}" data-uuid="${esc(t.uuid)}" title="${esc(T.noteTt)}">✏️</button>`;
+    }
+
     function renderTripLine(t) {
         const d    = t.departure ? formatDateTime(t.departure) : '?';
         const sameDay = t.departure && t.arrival &&
@@ -4399,14 +4610,14 @@
         const showLeistungsnameMeta = !!t.leistungsname && !!(t.from || t.to);
         // Only suppress primary platform / train info when the trip is an
         // enriched past-trip that was merged from history — but keep original
-        // behaviour for normal tickets. Use hasReisekettenCache to decide that.
-        const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasReisekettenCache && !t.isFromHistoryCache);
-        const showPrimaryTrainInfo = !(t.isPastTrip && t.hasReisekettenCache && !t.isFromHistoryCache);
+        // behaviour for normal tickets. Use hasTripHistoryEntry to decide that.
+        const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasTripHistoryEntry && !t.isFromHistoryCache);
+        const showPrimaryTrainInfo = !(t.isPastTrip && t.hasTripHistoryEntry && !t.isFromHistoryCache);
         // For reconstructed saved trips, avoid duplicate transport lines:
         // show them in cache details only when missing from the primary line.
         const showTransportInCacheBlock = !t.isFromHistoryCache || (!t.zuege && !t.seats);
         const tags = buildTripTags(t);
-        const showCacheTagsInline = t.isPastTrip && t.hasReisekettenCache && tags.length > 0;
+        const showCacheTagsInline = t.isPastTrip && t.hasTripHistoryEntry && tags.length > 0;
         const cacheTags = showCacheTagsInline ? `<div class="dbmrpp-cache-tags">${tags.join('')}</div>` : '';
         const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
@@ -4424,13 +4635,14 @@
                 ${renderFahrgastrechteBtn(t)}
                 ${renderDeleteCacheBtn(t)}
                 ${renderCustomTagBtn(t)}
+                ${renderNoteBtn(t)}
             </div>
             <div class="dbmrpp-meta">
-                ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${delayTag(t.departure, t.departureRt)} – ${esc(a)}${delayTag(t.arrival, t.arrivalRt)}
+                ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${planChangeTag(t, 'departure')}${delayTag(t.departure, t.departureRt)} – <strong>${esc(a)}</strong>${planChangeTag(t, 'arrival')}${delayTag(t.arrival, t.arrivalRt)}
                 ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
                 ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
                 ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(t.departureTrack)}${trackChangedTag(t.departureTrackRt)} ` : ''}${renderTrainList(t)}${showPrimaryPlatformInfo && t.arrivalTrack && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(t.arrivalTrack)}${trackChangedTag(t.arrivalTrackRt)}` : ''}` : ''}
+                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(t.departureTrack)}${trackChangedTag(t.departureTrackRt)} ` : ''}${renderTrainList(t)}${showPrimaryPlatformInfo && t.arrivalTrack && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(t.arrivalTrack)}${trackChangedTag(t.arrivalTrackRt)}` : ''}${planChangeTag(t, 'zuege')}` : ''}
                 ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
                 ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
                 ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
@@ -4439,6 +4651,7 @@
                 ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
             </div>
             ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
+            ${renderNoteDisplay(t.uuid)}
             ${!showCacheTagsInline ? `<div class="dbmrpp-trip-tags">${tags.join('')}</div>` : ''}
         </div>`;
     }
@@ -4447,7 +4660,7 @@
         if (!t) return '';
         if (!uiSettings.usePastCache) return '';
         const showTransportLines = opts.showTransportLines !== false;
-        if (!t.hasReisekettenCache || !t.cacheInfo) {
+        if (!t.hasTripHistoryEntry || !t.cacheInfo) {
             if (!t.isPastTrip) return '';
                 if (t.isFromHistoryCache) return '';
             return `<div class="dbmrpp-cache-block dbmrpp-cache-missing"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${esc(T.cacheMissing)}</div>`;

@@ -6,6 +6,17 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 
 ---
+## [0.9.0]
+
+### Added
+- **show travel plan changes** - show inline how travel plans have changed based on a comparison of the reiseketten (travel plan) and auftrag (booking) response
+- **note taking** - add notes to trips, these will also be exported in the CSV
+- **commit auftrag responses to cache and render them** - this means that past bookings can be reconstructed from cache after they disappear from the API response 14 months after the trip
+
+### Changed
+- **omit link to detail page for trips rendered from cache** - the detail info gets stale quickly, 
+
+---
 ## [0.8.1]
 
 ### Fixed
@@ -18,7 +29,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 
 ---
-## [0.8.0] - "defekte Tür"
+## [0.8.0] - "Reparatur an einer Weiche"
 
 ### Added
 - **Added tagGebrochen** (cls: 'bad') for reisekette.status === 'GEBROCHEN' (connection operationally broken due to current events), with labels "Connection broken" / "Verbindung gebrochen" and onlyProblems filter
