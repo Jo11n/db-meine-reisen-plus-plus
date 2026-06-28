@@ -6,7 +6,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 
 ---
-## [0.9.0]
+## [0.9.0] - "Schnee und Eis"
 
 ### Added
 - **show travel plan changes** - show inline how travel plans have changed based on a comparison of the reiseketten (travel plan) and auftrag (booking) response
