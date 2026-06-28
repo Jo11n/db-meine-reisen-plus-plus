@@ -28,6 +28,10 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 - Download the raw trip data as JSON
 - Import/export your settings and change history as a bundle
 
+**Sync**
+- Sync your history, tags, and notes across browsers via WebDAV (e.g. Nextcloud, any WebDAV server)
+- Push trips as calendar events to any CalDAV calendar (e.g. Nextcloud, Fastmail, Radicale) — push only, changes in the calendar are not read back
+
 **Filtering**
 - Filter by origin or destination station
 - Filter by date range (past 7 / 30 / 90 days, or all)
@@ -65,15 +69,16 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 
 **Unofficial — use at your own risk.**
 
-- Runs entirely in your browser; no data leaves your device
-- Only calls Deutsche Bahn's own APIs (the same ones the website uses)
-- No tracking, no third-party servers (external services only linked to)
+- Runs entirely in your browser; no data leaves your device by default
+- Only calls Deutsche Bahn's own APIs (the same ones the website uses) by default
+- No tracking, no third-party servers (external services only linked to); if you enable WebDAV or CalDAV sync, data is sent to the server you configure
 - All snapshots and settings are stored locally in your browser
 
 ---
 
 ## Limitations
 
+- **CalDAV push is one-directional** — events pushed to your calendar are never read back; deletions or edits in the calendar are ignored
 - **Read-only** — the script never makes bookings or changes anything on your account
 - **Change tracking is best-effort** — it only catches what DB's API exposes; some changes may go undetected
 - **Tied to your browser** — saved data stays in the browser you use it in; switching browsers starts fresh. bahn.de and int.bahn.de do not share data automatically (use the export/import bundle to transfer)

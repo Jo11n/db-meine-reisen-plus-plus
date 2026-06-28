@@ -6,6 +6,16 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 
 ---
+## [0.10.0] - "Erdrutsch"
+
+### Added
+- **Caldav sync** - push trips and tickets to a caldav calendar
+- **Webdav sync** - synchronize script data (settings, trip history, tags, notes) to webdav
+
+## Changed
+- **grant GM_xmlhttpRequest instead of none** - necessary for caldav/webdav 
+
+
 ## [0.9.0] - "Schnee und Eis"
 
 ### Added

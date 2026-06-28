@@ -28,6 +28,10 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 - Rohdaten einzelner Reisen als JSON herunterladen
 - Einstellungen und Änderungsverlauf als Bundle exportieren/importieren
 
+**Synchronisierung**
+- Verlauf, Tags und Notizen per WebDAV (z. B. Nextcloud) zwischen Browsern synchronisieren
+- Reisen als Kalendereinträge per CalDAV-Push in einen beliebigen Kalender übertragen (z. B. Nextcloud, Fastmail, Radicale) — nur einseitig, Änderungen im Kalender werden nicht zurückgelesen
+
 **Filtern**
 - Nach Abfahrts- oder Zielbahnhof filtern
 - Nach Zeitraum filtern (letzte 7 / 30 / 90 Tage oder alle)
@@ -65,15 +69,16 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 **Inoffiziell — Nutzung auf eigene Verantwortung.**
 
-- Läuft vollständig im Browser; keine Daten verlassen das Gerät
-- Nutzt ausschließlich die APIs der Deutschen Bahn (dieselben, die die Website selbst verwendet)
-- Kein Tracking, keine Drittanbieter-Server (nach extern wird nur verlinkt)
+- Läuft vollständig im Browser; standardmäßig verlassen keine Daten das Gerät
+- Nutzt standardmäßig ausschließlich die APIs der Deutschen Bahn (dieselben, die die Website selbst verwendet)
+- Kein Tracking, keine Drittanbieter-Server (nach extern wird nur verlinkt); bei aktiviertem WebDAV- oder CalDAV-Sync werden Daten an den selbst konfigurierten Server übertragen
 - Alle Snapshots und Einstellungen werden lokal im Browser gespeichert
 
 ---
 
 ## Einschränkungen
 
+- **CalDAV-Push ist einseitig** — in den Kalender übertragene Einträge werden nie zurückgelesen; Änderungen oder Löschungen im Kalender werden ignoriert
 - **Nur lesend** — das Script nimmt keine Buchungen vor und ändert nichts am Konto
 - **Änderungsverfolgung ohne Garantie** — es werden nur Änderungen erkannt, die die DB-API preisgibt; manche Änderungen können unbemerkt bleiben
 - **Browserbezogen** — gespeicherte Daten bleiben im jeweiligen Browser; ein Browserwechsel beginnt von vorne. bahn.de und int.bahn.de teilen keine Daten automatisch (Export/Import-Bundle zur Übertragung nutzen)

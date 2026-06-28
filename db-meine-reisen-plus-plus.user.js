@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.9.0
+// @version      0.10.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -14,7 +14,8 @@
 // @author       Jo11n
 // @license      MIT
 // @run-at       document-start
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      *
 // ==/UserScript==
 
 (function () {
@@ -37,7 +38,7 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.9.0';
+    const SCRIPT_VERSION  = '0.10.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -50,6 +51,13 @@
     const DEBUG_LOG_MAX_ENTRIES = 500;
     const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v1';
     const RENDER_CACHE_TTL_MS   = 60 * 1000;
+    const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
+    const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
+    const CALDAV_CONFIG_KEY              = 'dbmrpp.caldavConfig.v1';
+    const CALDAV_SYNC_STATE_KEY          = 'dbmrpp.caldavSyncState.v1';
+    const SETTINGS_UPDATED_AT_KEY        = 'dbmrpp.settingsUpdatedAt';
+    const TAG_ASSIGNMENTS_UPDATED_AT_KEY = 'dbmrpp.tagAssignmentsUpdatedAt';
+    const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
     const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
                               'departure','arrival','departureRt','arrivalRt',
                               'departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','zuege','seats',
@@ -226,6 +234,35 @@
                 STORNIERT:           'Cancelled',
                 TEILWEISE_STORNIERT: 'Partially cancelled'
             },
+            settingsGroupSync:          'Sync',
+            settingsWebDavEnabled:      'Enable WebDAV sync',
+            settingsWebDavSyncDesc:     'Syncs history, tags, and notes to a WebDAV file (e.g. on Nextcloud). Enter the full URL to the sync file. Credentials are stored locally only and are never synced.',
+            settingsWebDavUrl:          'File URL',
+            settingsWebDavUsername:     'Username',
+            settingsWebDavPassword:     'Password',
+            settingsWebDavSave:         'Save',
+            settingsWebDavSyncNow:      'Sync now',
+            webDavStatusNever:          'Not synced yet.',
+            webDavStatusSyncing:        'Syncing…',
+            webDavStatusOk:             d => `Synced ${d}`,
+            webDavStatusError:          e => `Sync error: ${e}`,
+            settingsCalDavEnabled:      'Enable CalDAV push',
+            settingsCalDavSyncDesc:     'Pushes trips as calendar events to a CalDAV calendar (e.g. on a standard CalDAV server). Enter the full URL to the calendar collection. Events are only pushed from here to the calendar, never the other way around.',
+            settingsCalDavUrl:          'Calendar URL',
+            settingsCalDavUsername:     'Username',
+            settingsCalDavPassword:     'Password',
+            settingsCalDavSave:         'Save',
+            settingsCalDavSyncNow:      'Push now',
+            settingsCalDavIncludePast:  'Push past trips',
+            settingsCalDavIncludePastDesc: 'Also pushes trips that have already departed (up to ~14 months back, based on order history).',
+            settingsCalDavIncludeLeistung: 'Push add-on tickets (e.g. bike day tickets)',
+            settingsCalDavIncludeLeistungDesc: 'Pushes standalone add-on products (bike day tickets, etc.) as all-day calendar events on the date they are valid.',
+            settingsCalDavIncludeCached: 'Include saved trips from cache',
+            settingsCalDavIncludeCachedDesc: 'Also pushes trips that are only available from the local cache (previously visited trips no longer returned by the DB API). Requires "Enhance past view from cache" to have been used before.',
+            calDavStatusNever:          'Not pushed yet.',
+            calDavStatusSyncing:        'Pushing…',
+            calDavStatusOk:             d => `Pushed ${d}`,
+            calDavStatusError:          e => `Push error: ${e}`,
             alertIcsNoAuftrag:   'ICS export not possible: order number or last name missing.',
             alertIcsUnknownType: 'Unknown trip type.',
             alertIcsFailed:      c => `ICS export failed (HTTP ${c}). See console for details.`,
@@ -426,6 +463,35 @@
                 STORNIERT:           'Storniert',
                 TEILWEISE_STORNIERT: 'Teilweise storniert'
             },
+            settingsGroupSync:          'Synchronisierung',
+            settingsWebDavEnabled:      'WebDAV-Sync aktivieren',
+            settingsWebDavSyncDesc:     'Synchronisiert Verlauf, Tags und Notizen mit einer WebDAV-Datei (z. B. auf Nextcloud). Die vollständige URL zur Sync-Datei angeben. Zugangsdaten werden nur lokal gespeichert und niemals synchronisiert.',
+            settingsWebDavUrl:          'Datei-URL',
+            settingsWebDavUsername:     'Benutzername',
+            settingsWebDavPassword:     'Passwort',
+            settingsWebDavSave:         'Speichern',
+            settingsWebDavSyncNow:      'Jetzt synchronisieren',
+            webDavStatusNever:          'Noch nicht synchronisiert.',
+            webDavStatusSyncing:        'Synchronisiere…',
+            webDavStatusOk:             d => `Synchronisiert ${d}`,
+            webDavStatusError:          e => `Sync-Fehler: ${e}`,
+            settingsCalDavEnabled:      'CalDAV-Push aktivieren',
+            settingsCalDavSyncDesc:     'Überträgt Reisen als Kalendereinträge auf einen CalDAV-Kalender (z. B. auf einem Standard-CalDAV-Server). Die vollständige URL zur Kalendersammlung angeben. Ereignisse werden nur von hier in den Kalender übertragen, niemals zurück.',
+            settingsCalDavUrl:          'Kalender-URL',
+            settingsCalDavUsername:     'Benutzername',
+            settingsCalDavPassword:     'Passwort',
+            settingsCalDavSave:         'Speichern',
+            settingsCalDavSyncNow:      'Jetzt übertragen',
+            settingsCalDavIncludePast:  'Vergangene Reisen übertragen',
+            settingsCalDavIncludePastDesc: 'Überträgt auch bereits abgefahrene Reisen (bis zu ca. 14 Monate, basierend auf dem Auftragsverlauf).',
+            settingsCalDavIncludeLeistung: 'Zusatztickets übertragen (z. B. Fahrradtageskarten)',
+            settingsCalDavIncludeLeistungDesc: 'Überträgt eigenständige Zusatzprodukte (Fahrradtageskarten etc.) als ganztägige Kalendereinträge für den jeweiligen Gültigkeitstag.',
+            settingsCalDavIncludeCached: 'Gespeicherte Reisen aus Cache einschließen',
+            settingsCalDavIncludeCachedDesc: 'Überträgt auch Reisen, die nur im lokalen Cache verfügbar sind (früher besuchte Reisen, die von der DB-API nicht mehr zurückgegeben werden). Erfordert, dass zuvor die Option „Vergangenheitsansicht mit Cache anreichern" genutzt wurde.',
+            calDavStatusNever:          'Noch nicht übertragen.',
+            calDavStatusSyncing:        'Übertrage…',
+            calDavStatusOk:             d => `Übertragen ${d}`,
+            calDavStatusError:          e => `Übertragungs-Fehler: ${e}`,
             alertIcsNoAuftrag:   'ICS-Export nicht möglich: Auftragsnummer oder Nachname fehlt.',
             alertIcsUnknownType: 'Unbekannter Reisetyp.',
             alertIcsFailed:      c => `ICS-Export fehlgeschlagen (HTTP ${c}). Details in der Konsole.`,
@@ -493,6 +559,12 @@
     let is401Recovering = false;
     let _debugBuffer    = [];
     let _debugFlushTimer = null;
+    let webdavConfig    = loadWebDavConfig();
+    let webdavSyncState = loadWebDavSyncState();
+    let webdavSyncTimer = null;
+    let caldavConfig    = loadCalDavConfig();
+    let caldavSyncState = loadCalDavSyncState();
+    let caldavSyncTimer = null;
 
     function loadUiSettings() { 
         const defaults = {
@@ -539,7 +611,10 @@
     }
 
     function saveUiSettings() {
-        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings)); } catch (_) {}
+        try {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(uiSettings));
+            localStorage.setItem(SETTINGS_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
     }
 
     function saveFilterState() {
@@ -591,13 +666,19 @@
         try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_ASSIGNMENTS_KEY) || '{}'); } catch (_) { return {}; }
     }
     function saveCustomTagAssignments() {
-        try { localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments)); } catch (_) {}
+        try {
+            localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments));
+            localStorage.setItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
     }
     function loadTripNotes() {
         try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch (_) { return {}; }
     }
     function saveTripNotes() {
-        try { localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes)); } catch (_) {}
+        try {
+            localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes));
+            localStorage.setItem(TRIP_NOTES_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
     }
 
     loadFilterStateIfEnabled();
@@ -796,6 +877,8 @@
             tokenSyncTimer = null;
         }
         is401Recovering = false;
+        if (webdavSyncTimer !== null) { clearTimeout(webdavSyncTimer); webdavSyncTimer = null; }
+        if (caldavSyncTimer  !== null) { clearTimeout(caldavSyncTimer);  caldavSyncTimer  = null; }
         lastRenderArgs  = null;
         pastTrips       = null;
         auftraegeCache  = null;
@@ -1035,6 +1118,8 @@
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
                 localStorage.setItem(LAST_VISIT_KEY, new Date().toISOString());
             }
+            scheduleWebDavSync();
+            scheduleCalDavSync();
         } catch (err) {
             dbLog('run: error ' + err.message);
             console.error('[DBMRPP]', err);
@@ -1114,7 +1199,7 @@
     }
 
     // =========================================================
-    // 7) Auftrag (order) data helpers
+    // 7) Auftrag helpers + trip history
     // =========================================================
 
     // Extract all trip-like items from an auftrag entry.
@@ -1638,7 +1723,7 @@
         return result;
     }
 
-    function buildPastTrips(auftraege) {
+    function buildPastTrips(auftraege, includeHistoryCache = null) {
         const now = Date.now();
         const result = [];
         auftraege.forEach(a => {
@@ -1682,7 +1767,8 @@
         // Trips from auftraege use kundenwunschId as uuid; history entries use
         // reisekettenUuid — so we track all known identifiers per trip to avoid
         // cross-scheme false misses or duplicates.
-        if (uiSettings.usePastCache && tripHistory && tripHistory.entries) {
+        const useCache = includeHistoryCache !== null ? includeHistoryCache : uiSettings.usePastCache;
+        if (useCache && tripHistory && tripHistory.entries) {
             const now = Date.now();
             const existingIds = new Set();
             result.forEach(t => {
@@ -2597,7 +2683,7 @@
     }
 
     // =========================================================
-    // 16) Shared download helper
+    // 16) Snapshot export / WebDAV / CalDAV sync
     // =========================================================
     function triggerDownload(blob, filename) {
         const url = URL.createObjectURL(blob);
@@ -2630,7 +2716,10 @@
                     : { entries: {} },
                 customTagDefs: customTagDefs.slice(),
                 customTagAssignments: { ...customTagAssignments },
-                tripNotes: { ...tripNotes }
+                customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
+                tripNotes: { ...tripNotes },
+                tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null,
+                settingsUpdatedAt: localStorage.getItem(SETTINGS_UPDATED_AT_KEY) || null
             };
             triggerDownload(
                 new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }),
@@ -2771,9 +2860,493 @@
         }
     }
 
+    // =========================================================
+    // WebDAV sync
+    // =========================================================
+    function loadWebDavConfig() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(WEBDAV_CONFIG_KEY) || '{}');
+            return {
+                enabled:  !!raw.enabled,
+                url:      typeof raw.url      === 'string' ? raw.url      : '',
+                username: typeof raw.username === 'string' ? raw.username : '',
+                password: typeof raw.password === 'string' ? raw.password : ''
+            };
+        } catch (_) {
+            return { enabled: false, url: '', username: '', password: '' };
+        }
+    }
+
+    function saveWebDavConfig() {
+        try { localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(webdavConfig)); } catch (_) {}
+    }
+
+    function loadWebDavSyncState() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(WEBDAV_SYNC_STATE_KEY) || '{}');
+            return { lastSyncedAt: raw.lastSyncedAt || null, lastError: raw.lastError || null };
+        } catch (_) {
+            return { lastSyncedAt: null, lastError: null };
+        }
+    }
+
+    function saveWebDavSyncState() {
+        try { localStorage.setItem(WEBDAV_SYNC_STATE_KEY, JSON.stringify(webdavSyncState)); } catch (_) {}
+    }
+
+    function webdavSyncStatusText() {
+        if (webdavSyncState.lastError) return T.webDavStatusError(webdavSyncState.lastError);
+        if (webdavSyncState.lastSyncedAt) return T.webDavStatusOk(formatDateTime(webdavSyncState.lastSyncedAt));
+        return T.webDavStatusNever;
+    }
+
+    function reRenderSyncStatus() {
+        const el = document.getElementById('dbmrpp-webdav-status');
+        if (el) el.textContent = webdavSyncStatusText();
+    }
+
+    function scheduleWebDavSync() {
+        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        if (webdavSyncTimer !== null) clearTimeout(webdavSyncTimer);
+        webdavSyncTimer = setTimeout(() => { webdavSyncTimer = null; webdavSync(); }, 2000);
+    }
+
+    function gmXhr(method, url, headers, body) {
+        return new Promise((resolve, reject) => {
+            const req = {
+                method, url, headers, timeout: 15000,
+                anonymous: true,
+                onload:    r => resolve(r),
+                onerror:   e => reject(new Error('Network error' + (e && e.error ? ': ' + e.error : ''))),
+                ontimeout: () => reject(new Error('Timeout'))
+            };
+            if (body !== undefined) req.data = body;
+            GM_xmlhttpRequest(req);
+        });
+    }
+
+    function buildSyncBundle() {
+        const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        const history  = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
+        return {
+            format:     'dbmrpp-snapshot-export-v1',
+            exportedAt: new Date().toISOString(),
+            snapshot:   isPlainObject(snapshot) ? snapshot : {},
+            lastVisit:  localStorage.getItem(LAST_VISIT_KEY),
+            settings:   isPlainObject(settings) ? settings : {},
+            settingsUpdatedAt: localStorage.getItem(SETTINGS_UPDATED_AT_KEY) || null,
+            tripHistory: isPlainObject(history) && isPlainObject(history.entries)
+                ? { entries: history.entries }
+                : { entries: {} },
+            customTagDefs: customTagDefs.slice(),
+            customTagAssignments: { ...customTagAssignments },
+            customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
+            tripNotes: { ...tripNotes },
+            tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null
+        };
+    }
+
+    function mergeBundles(local, remote) {
+        const localVisitTs  = Date.parse(local.lastVisit  || 0) || 0;
+        const remoteVisitTs = Date.parse(remote.lastVisit || 0) || 0;
+        const preferRemoteSnapshot = remoteVisitTs > localVisitTs;
+
+        const localSettingsTs  = Date.parse(local.settingsUpdatedAt  || 0) || 0;
+        const remoteSettingsTs = Date.parse(remote.settingsUpdatedAt || 0) || 0;
+        const preferRemoteSettings = remoteSettingsTs > localSettingsTs;
+
+        const localTagTs  = Date.parse(local.customTagAssignmentsUpdatedAt  || 0) || 0;
+        const remoteTagTs = Date.parse(remote.customTagAssignmentsUpdatedAt || 0) || 0;
+        const preferRemoteTags = remoteTagTs > localTagTs;
+
+        const localNotesTs  = Date.parse(local.tripNotesUpdatedAt  || 0) || 0;
+        const remoteNotesTs = Date.parse(remote.tripNotesUpdatedAt || 0) || 0;
+        const preferRemoteNotes = remoteNotesTs > localNotesTs;
+
+        const mergedHistory = normalizeTripHistory({
+            entries: mergeHistoryEntriesNewestWins(
+                (local.tripHistory  && local.tripHistory.entries)  || {},
+                (remote.tripHistory && remote.tripHistory.entries) || {}
+            )
+        });
+
+        const mergedDefs = [...(local.customTagDefs || [])];
+        const localDefIds = new Map(mergedDefs.map((d, i) => [d.id, i]));
+        (remote.customTagDefs || []).forEach(def => {
+            if (!def || !def.id || !def.label) return;
+            const idx = localDefIds.get(def.id);
+            if (idx === undefined) { mergedDefs.push(def); localDefIds.set(def.id, mergedDefs.length - 1); }
+            else if (preferRemoteSettings) mergedDefs[idx] = def;
+        });
+
+        const localSnap  = isPlainObject(local.snapshot)  ? local.snapshot  : {};
+        const remoteSnap = isPlainObject(remote.snapshot) ? remote.snapshot : {};
+        const localSett  = isPlainObject(local.settings)  ? local.settings  : {};
+        const remoteSett = isPlainObject(remote.settings) ? remote.settings : {};
+
+        return {
+            format:     'dbmrpp-snapshot-export-v1',
+            exportedAt: new Date().toISOString(),
+            snapshot:   preferRemoteSnapshot ? { ...localSnap,  ...remoteSnap  } : { ...remoteSnap,  ...localSnap  },
+            lastVisit:  preferRemoteSnapshot
+                ? (remote.lastVisit || local.lastVisit)
+                : (local.lastVisit  || remote.lastVisit),
+            settings:   preferRemoteSettings ? { ...localSett,  ...remoteSett  } : { ...remoteSett,  ...localSett  },
+            settingsUpdatedAt: preferRemoteSettings
+                ? (remote.settingsUpdatedAt || local.settingsUpdatedAt)
+                : (local.settingsUpdatedAt  || remote.settingsUpdatedAt),
+            tripHistory: mergedHistory,
+            customTagDefs: mergedDefs,
+            customTagAssignments: preferRemoteTags
+                ? { ...(local.customTagAssignments  || {}), ...(remote.customTagAssignments || {}) }
+                : { ...(remote.customTagAssignments || {}), ...(local.customTagAssignments  || {}) },
+            customTagAssignmentsUpdatedAt: preferRemoteTags
+                ? (remote.customTagAssignmentsUpdatedAt || local.customTagAssignmentsUpdatedAt)
+                : (local.customTagAssignmentsUpdatedAt  || remote.customTagAssignmentsUpdatedAt),
+            tripNotes: preferRemoteNotes
+                ? { ...(local.tripNotes  || {}), ...(remote.tripNotes || {}) }
+                : { ...(remote.tripNotes || {}), ...(local.tripNotes  || {}) },
+            tripNotesUpdatedAt: preferRemoteNotes
+                ? (remote.tripNotesUpdatedAt || local.tripNotesUpdatedAt)
+                : (local.tripNotesUpdatedAt  || remote.tripNotesUpdatedAt)
+        };
+    }
+
+    function applyBundle(bundle) {
+        if (!isPlainObject(bundle)) return;
+        if (isPlainObject(bundle.snapshot)) {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle.snapshot)); } catch (_) {}
+        }
+        if (typeof bundle.lastVisit === 'string' && bundle.lastVisit) {
+            try { localStorage.setItem(LAST_VISIT_KEY, bundle.lastVisit); } catch (_) {}
+        }
+        if (isPlainObject(bundle.settings)) {
+            try {
+                localStorage.setItem(SETTINGS_KEY, JSON.stringify(bundle.settings));
+                if (bundle.settingsUpdatedAt) localStorage.setItem(SETTINGS_UPDATED_AT_KEY, bundle.settingsUpdatedAt);
+            } catch (_) {}
+            uiSettings = loadUiSettings();
+        }
+        if (isPlainObject(bundle.tripHistory) && isPlainObject(bundle.tripHistory.entries)) {
+            const normalized = normalizeTripHistory(bundle.tripHistory);
+            try { localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(normalized)); } catch (_) {}
+            tripHistory = normalized;
+        }
+        if (Array.isArray(bundle.customTagDefs)) {
+            customTagDefs = bundle.customTagDefs;
+            saveCustomTagDefs();
+        }
+        if (isPlainObject(bundle.customTagAssignments)) {
+            customTagAssignments = bundle.customTagAssignments;
+            try {
+                localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments));
+                if (bundle.customTagAssignmentsUpdatedAt) {
+                    localStorage.setItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY, bundle.customTagAssignmentsUpdatedAt);
+                }
+            } catch (_) {}
+        }
+        if (isPlainObject(bundle.tripNotes)) {
+            tripNotes = bundle.tripNotes;
+            try {
+                localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes));
+                if (bundle.tripNotesUpdatedAt) {
+                    localStorage.setItem(TRIP_NOTES_UPDATED_AT_KEY, bundle.tripNotesUpdatedAt);
+                }
+            } catch (_) {}
+        }
+    }
+
+    async function webdavSync() {
+        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        const authHeader = 'Basic ' + btoa(unescape(encodeURIComponent(webdavConfig.username + ':' + webdavConfig.password)));
+        const headers = { 'Authorization': authHeader };
+
+        const statusEl = document.getElementById('dbmrpp-webdav-status');
+        if (statusEl) statusEl.textContent = T.webDavStatusSyncing;
+        dbLog('webdav: sync start → ' + webdavConfig.url);
+
+        try {
+            let remoteBundle = null;
+            const getRes = await gmXhr('GET', webdavConfig.url, headers, undefined);
+            dbLog('webdav: GET ' + getRes.status);
+            if (getRes.status === 200 && getRes.responseText) {
+                try {
+                    const parsed = JSON.parse(getRes.responseText);
+                    if (parsed && parsed.format === 'dbmrpp-snapshot-export-v1') remoteBundle = parsed;
+                } catch (_) {}
+            } else if (getRes.status !== 404) {
+                dbLog('webdav: GET resp-hdrs: ' + (getRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
+                throw new Error(`HTTP ${getRes.status}`);
+            }
+
+            const localBundle = buildSyncBundle();
+            const merged = remoteBundle ? mergeBundles(localBundle, remoteBundle) : localBundle;
+            dbLog('webdav: merged (remote=' + !!remoteBundle + ')');
+            applyBundle(merged);
+
+            const putRes = await gmXhr('PUT', webdavConfig.url,
+                { ...headers, 'Content-Type': 'application/json' },
+                JSON.stringify(merged, null, 2)
+            );
+            dbLog('webdav: PUT ' + putRes.status);
+            if (putRes.status < 200 || putRes.status >= 300) {
+                dbLog('webdav: PUT resp-hdrs: ' + (putRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
+                dbLog('webdav: PUT resp-body: ' + (putRes.responseText || '(empty)').slice(0, 400));
+                throw new Error(`HTTP ${putRes.status}`);
+            }
+
+            webdavSyncState = { lastSyncedAt: new Date().toISOString(), lastError: null };
+            saveWebDavSyncState();
+            reRenderSyncStatus();
+            reRender();
+            dbLog('webdav: sync done');
+        } catch (err) {
+            dbLog('webdav: sync error ' + (err.message || err));
+            webdavSyncState = { ...webdavSyncState, lastError: err.message || String(err) };
+            saveWebDavSyncState();
+            reRenderSyncStatus();
+            console.error('[DBMRPP] WebDAV sync error:', err);
+        }
+    }
+
     function routeSlug(t) {
         return (t.from || 'Reise').replace(/[^a-z0-9]+/gi, '_')
              + '-' + (t.to || '').replace(/[^a-z0-9]+/gi, '_');
+    }
+
+    // =========================================================
+    // CalDAV push
+    // =========================================================
+    function loadCalDavConfig() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(CALDAV_CONFIG_KEY) || '{}');
+            return {
+                enabled:             !!raw.enabled,
+                url:                 typeof raw.url      === 'string' ? raw.url      : '',
+                username:            typeof raw.username === 'string' ? raw.username : '',
+                password:            typeof raw.password === 'string' ? raw.password : '',
+                includePastTrips:       raw.includePastTrips !== false,
+                includeCachedTrips:     !!raw.includeCachedTrips,
+                includeLeistungTickets: !!raw.includeLeistungTickets
+            };
+        } catch (_) {
+            return { enabled: false, url: '', username: '', password: '', includePastTrips: true, includeCachedTrips: false, includeLeistungTickets: false };
+        }
+    }
+
+    function saveCalDavConfig() {
+        try { localStorage.setItem(CALDAV_CONFIG_KEY, JSON.stringify(caldavConfig)); } catch (_) {}
+    }
+
+    function loadCalDavSyncState() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(CALDAV_SYNC_STATE_KEY) || '{}');
+            return {
+                lastSyncedAt:       raw.lastSyncedAt || null,
+                lastError:          raw.lastError    || null,
+                pushedFingerprints: isPlainObject(raw.pushedFingerprints) ? raw.pushedFingerprints : {}
+            };
+        } catch (_) {
+            return { lastSyncedAt: null, lastError: null, pushedFingerprints: {} };
+        }
+    }
+
+    function saveCalDavSyncState() {
+        try { localStorage.setItem(CALDAV_SYNC_STATE_KEY, JSON.stringify(caldavSyncState)); } catch (_) {}
+    }
+
+    function calDavSyncStatusText() {
+        if (caldavSyncState.lastError) return T.calDavStatusError(caldavSyncState.lastError);
+        if (caldavSyncState.lastSyncedAt) return T.calDavStatusOk(formatDateTime(caldavSyncState.lastSyncedAt));
+        return T.calDavStatusNever;
+    }
+
+    function reRenderCalDavStatus() {
+        const el = document.getElementById('dbmrpp-caldav-status');
+        if (el) el.textContent = calDavSyncStatusText();
+    }
+
+    function scheduleCalDavSync() {
+        if (!caldavConfig.enabled || !caldavConfig.url) return;
+        if (caldavSyncTimer !== null) clearTimeout(caldavSyncTimer);
+        caldavSyncTimer = setTimeout(() => { caldavSyncTimer = null; caldavSync(); }, 2000);
+    }
+
+    function caldavBerlinDate(iso) {
+        const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' })
+            .format(new Date(iso));
+        // dateStr is YYYY-MM-DD; add one day via noon-UTC trick to avoid DST edge cases
+        const next = new Date(dateStr + 'T12:00:00Z');
+        next.setUTCDate(next.getUTCDate() + 1);
+        const nextStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' })
+            .format(next);
+        return { start: dateStr.replace(/-/g, ''), end: nextStr.replace(/-/g, '') };
+    }
+
+    function buildCalDavEventIcs(t) {
+        const dtstamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+        const uid = caldavEventUid(t);
+
+        let vevent;
+        if (t.isLeistungTicket) {
+            const { start, end } = caldavBerlinDate(t.departure);
+            const descParts = [];
+            if (t.auftragsnummer) descParts.push(T.icsDescOrder(t.auftragsnummer));
+            vevent = [
+                'BEGIN:VEVENT',
+                `UID:${uid}`,
+                `DTSTAMP:${dtstamp}`,
+                `DTSTART;VALUE=DATE:${start}`,
+                `DTEND;VALUE=DATE:${end}`,
+                `SUMMARY:${icsEscape(t.leistungsname || 'Ticket')}`,
+                descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\\n'))}` : '',
+                'END:VEVENT'
+            ].filter(Boolean).map(icsFold).join('\r\n');
+        } else {
+        const dtstart = formatIcsDt(t.departure);
+        const dtend = t.arrival
+            ? formatIcsDt(t.arrival)
+            : formatIcsDt(new Date(new Date(t.departure).getTime() + 3600000).toISOString().slice(0, 19));
+        const descParts = [];
+        if (t.leistungsname)  descParts.push(t.leistungsname);
+        if (t.zuege)          descParts.push(T.icsDescTrains(t.zuege));
+        if (t.auftragsnummer) descParts.push(T.icsDescOrder(t.auftragsnummer));
+        if (t.seats)          descParts.push(T.icsDescSeat(t.seats));
+        if (t.zugbindung === 'AUFGEHOBEN') descParts.push(T.icsDescZugbindung);
+        vevent = [
+            'BEGIN:VEVENT',
+            `UID:${uid}`,
+            `DTSTAMP:${dtstamp}`,
+            `DTSTART;TZID=Europe/Berlin:${dtstart}`,
+            `DTEND;TZID=Europe/Berlin:${dtend}`,
+            `SUMMARY:${icsEscape(`${t.from || '?'} → ${t.to || '?'}`)}`,
+            descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\\n'))}` : '',
+            t.from ? `LOCATION:${icsEscape(t.from)}` : '',
+            'END:VEVENT'
+        ].filter(Boolean).map(icsFold).join('\r\n');
+        }
+        const needsTz = !t.isLeistungTicket;
+        return [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            `PRODID:-//DB Meine Reisen++//${IS_INT ? 'EN' : 'DE'}`,
+            'CALSCALE:GREGORIAN',
+            needsTz ? [
+                'BEGIN:VTIMEZONE',
+                'TZID:Europe/Berlin',
+                'BEGIN:STANDARD',
+                'TZOFFSETFROM:+0200',
+                'TZOFFSETTO:+0100',
+                'TZNAME:CET',
+                'DTSTART:19701025T030000',
+                'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
+                'END:STANDARD',
+                'BEGIN:DAYLIGHT',
+                'TZOFFSETFROM:+0100',
+                'TZOFFSETTO:+0200',
+                'TZNAME:CEST',
+                'DTSTART:19700329T020000',
+                'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
+                'END:DAYLIGHT',
+                'END:VTIMEZONE'
+            ].join('\r\n') : null,
+            vevent,
+            'END:VCALENDAR'
+        ].filter(Boolean).join('\r\n');
+    }
+
+    function caldavEventUid(t) {
+        return (t.typ === 'AUFTRAG' && t.kundenwunschId)
+            ? `${t.kundenwunschId}@db-meine-reisen-plus-plus`
+            : `${t.uuid}@db-meine-reisen-plus-plus`;
+    }
+
+    function caldavEventFilename(t) {
+        return caldavEventUid(t).replace(/[^a-zA-Z0-9@._-]/g, '_') + '.ics';
+    }
+
+    function caldavTripFingerprint(t) {
+        if (t.isLeistungTicket) {
+            return JSON.stringify({ dep: t.departure, name: t.leistungsname, order: t.auftragsnummer });
+        }
+        return JSON.stringify({
+            dep: t.departure, arr: t.arrival, from: t.from, to: t.to,
+            zuege: t.zuege, seats: t.seats, leistungsname: t.leistungsname,
+            auftragsnummer: t.auftragsnummer, zugbindung: t.zugbindung
+        });
+    }
+
+    async function caldavSync() {
+        if (!caldavConfig.enabled || !caldavConfig.url) return;
+        const trips = lastRenderArgs ? lastRenderArgs.trips : [];
+        if (!trips.length) return;
+
+        const authHeader = 'Basic ' + btoa(unescape(encodeURIComponent(caldavConfig.username + ':' + caldavConfig.password)));
+        const headers = { 'Authorization': authHeader };
+        const baseUrl = caldavConfig.url.endsWith('/') ? caldavConfig.url : caldavConfig.url + '/';
+
+        const statusEl = document.getElementById('dbmrpp-caldav-status');
+        if (statusEl) statusEl.textContent = T.calDavStatusSyncing;
+        dbLog('caldav: push start → ' + baseUrl);
+
+        let pushed = 0, failed = 0;
+        try {
+            const currentUids = new Set(trips.map(caldavEventUid));
+            const pastTripsAll = (caldavConfig.includePastTrips && auftraegeCache)
+                ? buildPastTrips(auftraegeCache, caldavConfig.includeCachedTrips)
+                : [];
+            const pastNew = pastTripsAll.filter(t => !currentUids.has(caldavEventUid(t)));
+            const pushable = [...trips, ...pastNew].filter(t => {
+                if (!t.departure || t.isVerbundticket) return false;
+                if (t.storniertStatus === 'STORNIERT') return false;
+                if (t.isLeistungTicket) return !!caldavConfig.includeLeistungTickets;
+                return true;
+            });
+
+            const fingerprints = isPlainObject(caldavSyncState.pushedFingerprints)
+                ? { ...caldavSyncState.pushedFingerprints }
+                : {};
+            let skipped = 0;
+            for (const t of pushable) {
+                const uid = caldavEventUid(t);
+                const fp  = caldavTripFingerprint(t);
+                if (fingerprints[uid] === fp) { skipped++; continue; }
+                const filename = caldavEventFilename(t);
+                const icsContent = buildCalDavEventIcs(t);
+                try {
+                    const putRes = await gmXhr('PUT', baseUrl + filename,
+                        { ...headers, 'Content-Type': 'text/calendar; charset=utf-8' },
+                        icsContent
+                    );
+                    dbLog('caldav: PUT ' + putRes.status + ' ' + filename);
+                    if (putRes.status >= 200 && putRes.status < 300) {
+                        fingerprints[uid] = fp;
+                        pushed++;
+                    } else {
+                        dbLog('caldav: PUT err: ' + (putRes.responseText || '').slice(0, 300));
+                        failed++;
+                    }
+                } catch (e) {
+                    dbLog('caldav: PUT error ' + e.message);
+                    failed++;
+                }
+            }
+            caldavSyncState = {
+                lastSyncedAt:       new Date().toISOString(),
+                lastError:          failed > 0 ? `${failed} event(s) failed` : null,
+                pushedFingerprints: fingerprints
+            };
+            saveCalDavSyncState();
+            reRenderCalDavStatus();
+            dbLog(`caldav: push done (${pushed} pushed, ${skipped} skipped, ${failed} failed)`);
+        } catch (err) {
+            dbLog('caldav: push error ' + (err.message || err));
+            caldavSyncState = { ...caldavSyncState, lastError: err.message || String(err) };
+            saveCalDavSyncState();
+            reRenderCalDavStatus();
+            console.error('[DBMRPP] CalDAV push error:', err);
+        }
     }
 
     // =========================================================
@@ -3146,6 +3719,25 @@
                         color: #888;
                     }
 
+                    .dbmrpp-webdav-row {
+                        display: grid;
+                        grid-template-columns: 90px 1fr;
+                        align-items: center;
+                        gap: 6px;
+                        width: 100%;
+                        font-size: 12px;
+                        color: #333;
+                    }
+                    .dbmrpp-webdav-input {
+                        padding: 2px 5px;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 3px;
+                        font-size: 12px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .dbmrpp-webdav-input:disabled { background: #f0f0f0; color: #888; }
+
                     .dbmrpp-day-btn, .dbmrpp-changes-toggle, .dbmrpp-settings-reset {
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
@@ -3414,80 +4006,9 @@
             }
         });
 
-        const customTagAddBtn = root.querySelector('#dbmrpp-custom-tag-add');
-        if (customTagAddBtn) customTagAddBtn.addEventListener('click', () => {
-            const nameInput = root.querySelector('#dbmrpp-custom-tag-name');
-            const colorSel  = root.querySelector('#dbmrpp-custom-tag-color');
-            const label = nameInput ? nameInput.value.trim() : '';
-            if (!label) return;
-            const color = (colorSel && ['info','ok','warn','bad'].includes(colorSel.value)) ? colorSel.value : 'info';
-            customTagDefs.push({ id: 'custom-' + Date.now(), label, color });
-            saveCustomTagDefs();
-            reRender();
-        });
-
-        root.querySelectorAll('.dbmrpp-custom-tag-edit').forEach(btn =>
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const def = customTagDefs.find(d => d.id === id);
-                if (!def) return;
-                const newLabel = prompt(T.customTagEditTt, def.label);
-                if (newLabel === null) return;
-                const trimmed = newLabel.trim();
-                if (!trimmed) return;
-                def.label = trimmed;
-                saveCustomTagDefs();
-                reRender();
-            })
-        );
-
-        root.querySelectorAll('.dbmrpp-custom-tag-delete').forEach(btn =>
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                customTagDefs = customTagDefs.filter(d => d.id !== id);
-                Object.keys(customTagAssignments).forEach(uuid => {
-                    customTagAssignments[uuid] = (customTagAssignments[uuid] || []).filter(tid => tid !== id);
-                    if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
-                });
-                saveCustomTagDefs();
-                saveCustomTagAssignments();
-                reRender();
-            })
-        );
-
-        root.addEventListener('click', ev => {
-            const btn = ev.target.closest('.dbmrpp-custom-tag-toggle');
-            if (!btn) return;
-            const uuid  = btn.getAttribute('data-uuid');
-            const tagId = btn.getAttribute('data-tagid');
-            if (!uuid || !tagId) return;
-            const assigned = customTagAssignments[uuid] || [];
-            const isNowAssigned = !assigned.includes(tagId);
-            customTagAssignments[uuid] = isNowAssigned
-                ? [...assigned, tagId]
-                : assigned.filter(id => id !== tagId);
-            if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
-            saveCustomTagAssignments();
-            btn.classList.toggle('active', isNowAssigned);
-            const tripDiv = btn.closest('.dbmrpp-trip');
-            if (tripDiv) {
-                const trip = trips.find(x => x.uuid === uuid) ||
-                             (pastTrips || []).find(x => x.uuid === uuid) ||
-                             orphans.find(x => x.uuid === uuid);
-                if (trip) {
-                    const newTagsHtml = buildTripTags(trip).join('');
-                    const tagsDiv = tripDiv.querySelector('.dbmrpp-trip-tags');
-                    if (tagsDiv) tagsDiv.innerHTML = newTagsHtml;
-                    const cacheTagsDiv = tripDiv.querySelector('.dbmrpp-cache-tags');
-                    if (cacheTagsDiv) cacheTagsDiv.innerHTML = newTagsHtml;
-                    const summary = btn.closest('details') && btn.closest('details').querySelector('summary');
-                    if (summary) {
-                        const hasAny = (customTagAssignments[uuid] || []).some(id => customTagDefs.some(d => d.id === id));
-                        summary.classList.toggle('dbmrpp-custom-tag-assigned', hasAny);
-                    }
-                }
-            }
-        });
+        bindTagHandlers(root, trips, orphans);
+        bindWebDavHandlers(root);
+        bindCalDavHandlers(root);
 
         const rememberFilterCb = root.querySelector('#dbmrpp-setting-remember-filter');
         if (rememberFilterCb) rememberFilterCb.addEventListener('change', e => {
@@ -3608,6 +4129,156 @@
             rememberUiState();
             reRender();
         });
+    }
+
+    function bindTagHandlers(root, trips, orphans) {
+        const customTagAddBtn = root.querySelector('#dbmrpp-custom-tag-add');
+        if (customTagAddBtn) customTagAddBtn.addEventListener('click', () => {
+            const nameInput = root.querySelector('#dbmrpp-custom-tag-name');
+            const colorSel  = root.querySelector('#dbmrpp-custom-tag-color');
+            const label = nameInput ? nameInput.value.trim() : '';
+            if (!label) return;
+            const color = (colorSel && ['info','ok','warn','bad'].includes(colorSel.value)) ? colorSel.value : 'info';
+            customTagDefs.push({ id: 'custom-' + Date.now(), label, color });
+            saveCustomTagDefs();
+            reRender();
+        });
+
+        root.querySelectorAll('.dbmrpp-custom-tag-edit').forEach(btn =>
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                const def = customTagDefs.find(d => d.id === id);
+                if (!def) return;
+                const newLabel = prompt(T.customTagEditTt, def.label);
+                if (newLabel === null) return;
+                const trimmed = newLabel.trim();
+                if (!trimmed) return;
+                def.label = trimmed;
+                saveCustomTagDefs();
+                reRender();
+            })
+        );
+
+        root.querySelectorAll('.dbmrpp-custom-tag-delete').forEach(btn =>
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                customTagDefs = customTagDefs.filter(d => d.id !== id);
+                Object.keys(customTagAssignments).forEach(uuid => {
+                    customTagAssignments[uuid] = (customTagAssignments[uuid] || []).filter(tid => tid !== id);
+                    if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
+                });
+                saveCustomTagDefs();
+                saveCustomTagAssignments();
+                reRender();
+            })
+        );
+
+        root.addEventListener('click', ev => {
+            const btn = ev.target.closest('.dbmrpp-custom-tag-toggle');
+            if (!btn) return;
+            const uuid  = btn.getAttribute('data-uuid');
+            const tagId = btn.getAttribute('data-tagid');
+            if (!uuid || !tagId) return;
+            const assigned = customTagAssignments[uuid] || [];
+            const isNowAssigned = !assigned.includes(tagId);
+            customTagAssignments[uuid] = isNowAssigned
+                ? [...assigned, tagId]
+                : assigned.filter(id => id !== tagId);
+            if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
+            saveCustomTagAssignments();
+            scheduleWebDavSync();
+            btn.classList.toggle('active', isNowAssigned);
+            const tripDiv = btn.closest('.dbmrpp-trip');
+            if (tripDiv) {
+                const trip = trips.find(x => x.uuid === uuid) ||
+                             (pastTrips || []).find(x => x.uuid === uuid) ||
+                             orphans.find(x => x.uuid === uuid);
+                if (trip) {
+                    const newTagsHtml = buildTripTags(trip).join('');
+                    const tagsDiv = tripDiv.querySelector('.dbmrpp-trip-tags');
+                    if (tagsDiv) tagsDiv.innerHTML = newTagsHtml;
+                    const cacheTagsDiv = tripDiv.querySelector('.dbmrpp-cache-tags');
+                    if (cacheTagsDiv) cacheTagsDiv.innerHTML = newTagsHtml;
+                    const summary = btn.closest('details') && btn.closest('details').querySelector('summary');
+                    if (summary) {
+                        const hasAny = (customTagAssignments[uuid] || []).some(id => customTagDefs.some(d => d.id === id));
+                        summary.classList.toggle('dbmrpp-custom-tag-assigned', hasAny);
+                    }
+                }
+            }
+        });
+    }
+
+    function bindWebDavHandlers(root) {
+        const webdavEnabledCb = root.querySelector('#dbmrpp-webdav-enabled');
+        if (webdavEnabledCb) webdavEnabledCb.addEventListener('change', e => {
+            webdavConfig.enabled = !!e.target.checked;
+            saveWebDavConfig();
+            reRender();
+        });
+
+        const webdavSaveBtn = root.querySelector('.dbmrpp-webdav-save');
+        if (webdavSaveBtn) webdavSaveBtn.addEventListener('click', () => {
+            const urlInput  = root.querySelector('#dbmrpp-webdav-url');
+            const userInput = root.querySelector('#dbmrpp-webdav-username');
+            const passInput = root.querySelector('#dbmrpp-webdav-password');
+            webdavConfig.url      = urlInput  ? urlInput.value.trim()  : webdavConfig.url;
+            webdavConfig.username = userInput ? userInput.value.trim() : webdavConfig.username;
+            webdavConfig.password = passInput ? passInput.value        : webdavConfig.password;
+            saveWebDavConfig();
+            if (webdavConfig.enabled && webdavConfig.url) webdavSync();
+        });
+
+        const webdavSyncNowBtn = root.querySelector('.dbmrpp-webdav-sync-now');
+        if (webdavSyncNowBtn) webdavSyncNowBtn.addEventListener('click', () => webdavSync());
+    }
+
+    function bindCalDavHandlers(root) {
+        const caldavEnabledCb = root.querySelector('#dbmrpp-caldav-enabled');
+        if (caldavEnabledCb) caldavEnabledCb.addEventListener('change', e => {
+            caldavConfig.enabled = !!e.target.checked;
+            saveCalDavConfig();
+            reRender();
+        });
+
+        const caldavIncludePastCb   = root.querySelector('#dbmrpp-caldav-include-past');
+        const caldavIncludeCachedCb = root.querySelector('#dbmrpp-caldav-include-cached');
+        if (caldavIncludePastCb) caldavIncludePastCb.addEventListener('change', e => {
+            caldavConfig.includePastTrips = !!e.target.checked;
+            if (caldavIncludeCachedCb) caldavIncludeCachedCb.disabled = !caldavConfig.includePastTrips;
+            saveCalDavConfig();
+        });
+        if (caldavIncludeCachedCb) caldavIncludeCachedCb.addEventListener('change', e => {
+            caldavConfig.includeCachedTrips = !!e.target.checked;
+            saveCalDavConfig();
+        });
+
+        const caldavIncludeLeistungCb = root.querySelector('#dbmrpp-caldav-include-leistung');
+        if (caldavIncludeLeistungCb) caldavIncludeLeistungCb.addEventListener('change', e => {
+            caldavConfig.includeLeistungTickets = !!e.target.checked;
+            saveCalDavConfig();
+        });
+
+        const caldavSaveBtn = root.querySelector('.dbmrpp-caldav-save');
+        if (caldavSaveBtn) caldavSaveBtn.addEventListener('click', () => {
+            const urlInput  = root.querySelector('#dbmrpp-caldav-url');
+            const userInput = root.querySelector('#dbmrpp-caldav-username');
+            const passInput = root.querySelector('#dbmrpp-caldav-password');
+            const pastCb    = root.querySelector('#dbmrpp-caldav-include-past');
+            const cachedCb  = root.querySelector('#dbmrpp-caldav-include-cached');
+            caldavConfig.url                = urlInput  ? urlInput.value.trim()  : caldavConfig.url;
+            caldavConfig.username           = userInput ? userInput.value.trim() : caldavConfig.username;
+            caldavConfig.password           = passInput ? passInput.value        : caldavConfig.password;
+            caldavConfig.includePastTrips      = pastCb    ? !!pastCb.checked    : caldavConfig.includePastTrips;
+            caldavConfig.includeCachedTrips    = cachedCb  ? !!cachedCb.checked  : caldavConfig.includeCachedTrips;
+            const leistungCb = root.querySelector('#dbmrpp-caldav-include-leistung');
+            caldavConfig.includeLeistungTickets = leistungCb ? !!leistungCb.checked : caldavConfig.includeLeistungTickets;
+            saveCalDavConfig();
+            if (caldavConfig.enabled && caldavConfig.url) caldavSync();
+        });
+
+        const caldavPushNowBtn = root.querySelector('.dbmrpp-caldav-push-now');
+        if (caldavPushNowBtn) caldavPushNowBtn.addEventListener('click', () => caldavSync());
     }
 
     function bindTripActionHandlers(root, trips, orphans) {
@@ -3800,6 +4471,7 @@
                         delete tripNotes[uuid];
                     }
                     saveTripNotes();
+                    scheduleWebDavSync();
                     const existingDisplay = tripDiv.querySelector('.dbmrpp-note, .dbmrpp-note-details');
                     if (existingDisplay) existingDisplay.remove();
                     if (val.trim()) {
@@ -3997,6 +4669,71 @@
                     <button class="dbmrpp-settings-export-snapshot dbmrpp-settings-reset">${T.settingsExportSnapshot}</button>
                     <button class="dbmrpp-settings-import-snapshot dbmrpp-settings-reset">${T.settingsImportSnapshot}</button>
                     <button class="dbmrpp-settings-reset dbmrpp-settings-reset-snapshot" title="${T.ttReset}">Reset Trips Snapshot</button>
+                </div>
+            </details>
+            <details class="dbmrpp-settings-group">
+                <summary>${esc(T.settingsGroupSync)}</summary>
+                <div class="dbmrpp-settings-group-body">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-webdav-enabled"${webdavConfig.enabled ? ' checked' : ''}>
+                        <span>${esc(T.settingsWebDavEnabled)}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsWebDavSyncDesc)}</div>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsWebDavUrl)}</span>
+                        <input type="text" id="dbmrpp-webdav-url" class="dbmrpp-webdav-input" value="${esc(webdavConfig.url)}" placeholder="https://…/dbmrpp-sync.json"${webdavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsWebDavUsername)}</span>
+                        <input type="text" id="dbmrpp-webdav-username" class="dbmrpp-webdav-input" value="${esc(webdavConfig.username)}" autocomplete="off"${webdavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsWebDavPassword)}</span>
+                        <input type="password" id="dbmrpp-webdav-password" class="dbmrpp-webdav-input" value="${esc(webdavConfig.password)}" autocomplete="new-password"${webdavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                        <button class="dbmrpp-settings-reset dbmrpp-webdav-save">${esc(T.settingsWebDavSave)}</button>
+                        <button class="dbmrpp-settings-reset dbmrpp-webdav-sync-now"${webdavConfig.enabled && webdavConfig.url ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
+                    </div>
+                    <div id="dbmrpp-webdav-status" style="font-size:11px;color:var(--dbmrpp-text-muted)">${esc(webdavSyncStatusText())}</div>
+                    <hr style="margin:10px 0;border:none;border-top:1px solid var(--dbmrpp-border)">
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-caldav-enabled"${caldavConfig.enabled ? ' checked' : ''}>
+                        <span>${esc(T.settingsCalDavEnabled)}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavSyncDesc)}</div>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsCalDavUrl)}</span>
+                        <input type="text" id="dbmrpp-caldav-url" class="dbmrpp-webdav-input" value="${esc(caldavConfig.url)}" placeholder="https://…/dav/calendars/user/trips/"${caldavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsCalDavUsername)}</span>
+                        <input type="text" id="dbmrpp-caldav-username" class="dbmrpp-webdav-input" value="${esc(caldavConfig.username)}" autocomplete="off"${caldavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <label class="dbmrpp-webdav-row">
+                        <span>${esc(T.settingsCalDavPassword)}</span>
+                        <input type="password" id="dbmrpp-caldav-password" class="dbmrpp-webdav-input" value="${esc(caldavConfig.password)}" autocomplete="new-password"${caldavConfig.enabled ? '' : ' disabled'}>
+                    </label>
+                    <label class="dbmrpp-settings-toggle" style="margin-top:4px">
+                        <input type="checkbox" id="dbmrpp-caldav-include-past"${caldavConfig.includePastTrips ? ' checked' : ''}${caldavConfig.enabled ? '' : ' disabled'}>
+                        <span>${esc(T.settingsCalDavIncludePast)}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludePastDesc)}</div>
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-caldav-include-cached"${caldavConfig.includeCachedTrips ? ' checked' : ''}${caldavConfig.enabled && caldavConfig.includePastTrips ? '' : ' disabled'}>
+                        <span>${esc(T.settingsCalDavIncludeCached)}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludeCachedDesc)}</div>
+                    <label class="dbmrpp-settings-toggle">
+                        <input type="checkbox" id="dbmrpp-caldav-include-leistung"${caldavConfig.includeLeistungTickets ? ' checked' : ''}${caldavConfig.enabled ? '' : ' disabled'}>
+                        <span>${esc(T.settingsCalDavIncludeLeistung)}</span>
+                    </label>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludeLeistungDesc)}</div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                        <button class="dbmrpp-settings-reset dbmrpp-caldav-save">${esc(T.settingsCalDavSave)}</button>
+                        <button class="dbmrpp-settings-reset dbmrpp-caldav-push-now"${caldavConfig.enabled && caldavConfig.url ? '' : ' disabled'}>${esc(T.settingsCalDavSyncNow)}</button>
+                    </div>
+                    <div id="dbmrpp-caldav-status" style="font-size:11px;color:var(--dbmrpp-text-muted)">${esc(calDavSyncStatusText())}</div>
                 </div>
             </details>
             <details class="dbmrpp-settings-group">
