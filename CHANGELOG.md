@@ -13,7 +13,17 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **Webdav sync** - synchronize script data (settings, trip history, tags, notes) to webdav
 
 ## Changed
-- **grant GM_xmlhttpRequest instead of none** - necessary for caldav/webdav 
+- **grant GM_xmlhttpRequest instead of none** - necessary for caldav/webdav
+- **indicate passenger rights claim, if filed** - we already allowed to check for it; once a claim is known, the claim (date + claim ids) is now rendered permanently as a highlighted notice below the trip info (same styling as the "no claim filed" answer) and the § query button disappears
+- **unified loading indicator** - every button that triggers an API call now shows ⏳ while the request is running, including the header refresh button (whose reload previously gave no visual feedback)
+- **consistent change block rendering** - new, changed and removed trips now share one compact row renderer (route, departure time, diff lines) with a slim action strip of routing, tag and note buttons instead of a mix of the full trip line and a minimal changed-trip layout
+- **readable diff values** - the change block now shows user-facing labels instead of raw API enums (e.g. "Verbindung wird umgeplant" instead of VORLAEUFIG_NICHT_REKONSTRUIERBAR), with proper English labels on int.bahn.de; unmapped values still fall back to the raw string
+
+## Fixed
+- **reset filter when switching tabs** - now also works for the date filter
+- **disruption button on orphaned trips** - the ⚠ handler only searched regular trips, so it silently did nothing on orphaned/past entries
+- **dead buttons on removed trips** - removed trips in the change block rendered the full action strip, but their snapshot data can't be resolved by the click handlers, so most buttons silently did nothing; the route also linked to a no-longer-existing detail page and is now plain text
+
 
 
 ## [0.9.0] - "Schnee und Eis"

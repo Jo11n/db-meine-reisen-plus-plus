@@ -35,6 +35,7 @@
     const CUSTOM_TAG_DEFS_KEY        = 'dbmrpp.customTagDefs.v1';
     const CUSTOM_TAG_ASSIGNMENTS_KEY = 'dbmrpp.customTagAssignments.v1';
     const NOTES_KEY                  = 'dbmrpp.tripNotes.v1';
+    const FGR_CLAIMS_KEY             = 'dbmrpp.fgrClaims.v1';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
@@ -49,7 +50,7 @@
     const SNAPSHOT_COOLDOWN_MS = 30 * 60 * 1000; // freeze baseline for 30 min against quick reloads
     const DEBUG_LOG_KEY         = 'dbmrpp.debugLog.v1';
     const DEBUG_LOG_MAX_ENTRIES = 500;
-    const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v1';
+    const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v2';
     const RENDER_CACHE_TTL_MS   = 60 * 1000;
     const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
     const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
@@ -58,6 +59,7 @@
     const SETTINGS_UPDATED_AT_KEY        = 'dbmrpp.settingsUpdatedAt';
     const TAG_ASSIGNMENTS_UPDATED_AT_KEY = 'dbmrpp.tagAssignmentsUpdatedAt';
     const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
+    const FGR_CLAIMS_UPDATED_AT_KEY      = 'dbmrpp.fgrClaimsUpdatedAt';
     const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
                               'departure','arrival','departureRt','arrivalRt',
                               'departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','zuege','seats',
@@ -193,7 +195,7 @@
             rawJsonTooltip:    'Download complete raw API JSON',
             gpxTooltip:        'Download GPX track',
             geojsonTooltip:    'Download GeoJSON track',
-            deleteCachedTripTooltip: 'Delete cached trip (local only)',
+            deleteCachedTripTooltip: 'Delete trip from script cache',
             shareCopied:       '✓ Copied!',
             shareError:        'Share failed — see console.',
             routeError:        'External route link failed — see console.',
@@ -201,11 +203,9 @@
             geoError:          'Geo data download failed — see console.',
             geoNoData:         'No route geometry available for geo data export.',
             abweichungTooltip: 'Show disruption details',
-            abweichungLoading: 'Loading…',
             abweichungNone:    'No current alerts.',
             abweichungError:   'Failed to load — see console.',
             fgrBtnTooltip:     'Passenger rights claim filed? (§)',
-            fgrLoading:        'Loading passenger rights…',
             fgrNone:           'No passenger rights claim filed.',
             fgrError:          'Failed to load — see console.',
             fgrClaim:          (date, ids) => `§ Claim filed ${date} · ${ids.join(', ')}`,
@@ -234,6 +234,34 @@
                 STORNIERT:           'Cancelled',
                 TEILWEISE_STORNIERT: 'Partially cancelled'
             },
+            // User-facing labels for raw API enum values in the change block,
+            // keyed per diff field. Unmapped values fall back to the raw string.
+            diffValues: {
+                status: {
+                    FAHRBAR:                          'OK',
+                    ABGESCHLOSSEN:                    'Completed',
+                    NICHT_REKONSTRUIERBAR:            'Not reconstructable',
+                    GEBROCHEN:                        'Connection broken',
+                    VORLAEUFIG_NICHT_REKONSTRUIERBAR: 'Connection is being replanned'
+                },
+                zugbindung: {
+                    BESTEHT:    'in effect',
+                    AUFGEHOBEN: 'lifted'
+                },
+                alternativensuche: {
+                    ALTERNATIVEN_KEINE: 'not needed',
+                    ALTERNATIVEN_KANN:  'Alternatives available',
+                    ALTERNATIVEN_MUSS:  'Connection not available'
+                },
+                storniertStatus: {
+                    NICHT_STORNIERT:     'Not cancelled',
+                    STORNIERT:           'Cancelled',
+                    TEILWEISE_STORNIERT: 'Partially cancelled'
+                },
+                auftragStatus: {
+                    ABGESCHLOSSEN: 'Completed'
+                }
+            },
             settingsGroupSync:          'Sync',
             settingsWebDavEnabled:      'Enable WebDAV sync',
             settingsWebDavSyncDesc:     'Syncs history, tags, and notes to a WebDAV file (e.g. on Nextcloud). Enter the full URL to the sync file. Credentials are stored locally only and are never synced.',
@@ -247,18 +275,18 @@
             webDavStatusOk:             d => `Synced ${d}`,
             webDavStatusError:          e => `Sync error: ${e}`,
             settingsCalDavEnabled:      'Enable CalDAV push',
-            settingsCalDavSyncDesc:     'Pushes trips as calendar events to a CalDAV calendar (e.g. on a standard CalDAV server). Enter the full URL to the calendar collection. Events are only pushed from here to the calendar, never the other way around.',
+            settingsCalDavSyncDesc:     'Pushes trips as calendar events to a CalDAV calendar. Enter the full URL to the calendar collection. Events are only pushed from here to the calendar, never the other way around.',
             settingsCalDavUrl:          'Calendar URL',
             settingsCalDavUsername:     'Username',
             settingsCalDavPassword:     'Password',
             settingsCalDavSave:         'Save',
             settingsCalDavSyncNow:      'Push now',
             settingsCalDavIncludePast:  'Push past trips',
-            settingsCalDavIncludePastDesc: 'Also pushes trips that have already departed (up to ~14 months back, based on order history).',
+            settingsCalDavIncludePastDesc: 'Also pushes trips to the calendar that have already departed (up to ~14 months back, based on order history).',
             settingsCalDavIncludeLeistung: 'Push add-on tickets (e.g. bike day tickets)',
             settingsCalDavIncludeLeistungDesc: 'Pushes standalone add-on products (bike day tickets, etc.) as all-day calendar events on the date they are valid.',
             settingsCalDavIncludeCached: 'Include saved trips from cache',
-            settingsCalDavIncludeCachedDesc: 'Also pushes trips that are only available from the local cache (previously visited trips no longer returned by the DB API). Requires "Enhance past view from cache" to have been used before.',
+            settingsCalDavIncludeCachedDesc: 'Also pushes trips to the calendar that are only available from the local cache (previously visited trips no longer returned by the DB API). Requires "Enhance past view from cache" to have been used before.',
             calDavStatusNever:          'Not pushed yet.',
             calDavStatusSyncing:        'Pushing…',
             calDavStatusOk:             d => `Pushed ${d}`,
@@ -283,6 +311,7 @@
             icsDescOrder:        n => `Order: ${n}`,
             icsDescSeat:         s => `Seat: ${s}`,
             icsDescZugbindung:   'Train binding lifted',
+            icsDescLink:         url => `Details: ${url}`,
             csvHeaders: [
                 'Date', 'Departure', 'Arrival', 'Departure (actual)', 'Arrival (actual)',
                 'From', 'To', 'Departure platform', 'Arrival platform', 'Trains',
@@ -422,7 +451,7 @@
             rawJsonTooltip:    'Vollständiges Raw-API-JSON herunterladen',
             gpxTooltip:        'GPX-Track herunterladen',
             geojsonTooltip:    'GeoJSON-Track herunterladen',
-            deleteCachedTripTooltip:     'Reise aus Cache löschen (nur lokal)',
+            deleteCachedTripTooltip:     'Reise aus Skript-Cache löschen',
             shareCopied:       '✓ Link kopiert!',
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
             routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
@@ -430,11 +459,9 @@
             geoError:          'Geo-Daten-Download fehlgeschlagen — siehe Konsole.',
             geoNoData:         'Keine Streckengeometrie für Geo-Daten-Export verfügbar.',
             abweichungTooltip: 'Abweichungsdetails anzeigen',
-            abweichungLoading: 'Lade…',
             abweichungNone:    'Keine aktuellen Meldungen.',
             abweichungError:   'Laden fehlgeschlagen — siehe Konsole.',
             fgrBtnTooltip:     'Fahrgastrechte-Antrag gestellt? (§)',
-            fgrLoading:        'Fahrgastrechte werden geladen…',
             fgrNone:           'Kein Fahrgastrechte-Antrag gestellt.',
             fgrError:          'Laden fehlgeschlagen — siehe Konsole.',
             fgrClaim:          (date, ids) => `§ Antrag vom ${date} · ${ids.join(', ')}`,
@@ -463,6 +490,32 @@
                 STORNIERT:           'Storniert',
                 TEILWEISE_STORNIERT: 'Teilweise storniert'
             },
+            diffValues: {
+                status: {
+                    FAHRBAR:                          'Fahrbar',
+                    ABGESCHLOSSEN:                    'Abgeschlossen',
+                    NICHT_REKONSTRUIERBAR:            'Nicht rekonstruierbar',
+                    GEBROCHEN:                        'Verbindung gebrochen',
+                    VORLAEUFIG_NICHT_REKONSTRUIERBAR: 'Verbindung wird umgeplant'
+                },
+                zugbindung: {
+                    BESTEHT:    'besteht',
+                    AUFGEHOBEN: 'aufgehoben'
+                },
+                alternativensuche: {
+                    ALTERNATIVEN_KEINE: 'nicht nötig',
+                    ALTERNATIVEN_KANN:  'Alternative möglich',
+                    ALTERNATIVEN_MUSS:  'Verbindung nicht möglich'
+                },
+                storniertStatus: {
+                    NICHT_STORNIERT:     'Nicht storniert',
+                    STORNIERT:           'Storniert',
+                    TEILWEISE_STORNIERT: 'Teilweise storniert'
+                },
+                auftragStatus: {
+                    ABGESCHLOSSEN: 'Abgeschlossen'
+                }
+            },
             settingsGroupSync:          'Synchronisierung',
             settingsWebDavEnabled:      'WebDAV-Sync aktivieren',
             settingsWebDavSyncDesc:     'Synchronisiert Verlauf, Tags und Notizen mit einer WebDAV-Datei (z. B. auf Nextcloud). Die vollständige URL zur Sync-Datei angeben. Zugangsdaten werden nur lokal gespeichert und niemals synchronisiert.',
@@ -476,18 +529,18 @@
             webDavStatusOk:             d => `Synchronisiert ${d}`,
             webDavStatusError:          e => `Sync-Fehler: ${e}`,
             settingsCalDavEnabled:      'CalDAV-Push aktivieren',
-            settingsCalDavSyncDesc:     'Überträgt Reisen als Kalendereinträge auf einen CalDAV-Kalender (z. B. auf einem Standard-CalDAV-Server). Die vollständige URL zur Kalendersammlung angeben. Ereignisse werden nur von hier in den Kalender übertragen, niemals zurück.',
+            settingsCalDavSyncDesc:     'Überträgt Reisen als Kalendereinträge auf einen CalDAV-Kalender. Die vollständige URL zur Kalendersammlung angeben. Ereignisse werden nur von hier in den Kalender übertragen, niemals zurück.',
             settingsCalDavUrl:          'Kalender-URL',
             settingsCalDavUsername:     'Benutzername',
             settingsCalDavPassword:     'Passwort',
             settingsCalDavSave:         'Speichern',
             settingsCalDavSyncNow:      'Jetzt übertragen',
-            settingsCalDavIncludePast:  'Vergangene Reisen übertragen',
-            settingsCalDavIncludePastDesc: 'Überträgt auch bereits abgefahrene Reisen (bis zu ca. 14 Monate, basierend auf dem Auftragsverlauf).',
+            settingsCalDavIncludePast:  'Vergangene Reisen in Kalender übertragen',
+            settingsCalDavIncludePastDesc: 'Überträgt auch bereits absolvierte Reisen (bis zu ca. 14 Monate, basierend auf dem Auftragsverlauf).',
             settingsCalDavIncludeLeistung: 'Zusatztickets übertragen (z. B. Fahrradtageskarten)',
             settingsCalDavIncludeLeistungDesc: 'Überträgt eigenständige Zusatzprodukte (Fahrradtageskarten etc.) als ganztägige Kalendereinträge für den jeweiligen Gültigkeitstag.',
             settingsCalDavIncludeCached: 'Gespeicherte Reisen aus Cache einschließen',
-            settingsCalDavIncludeCachedDesc: 'Überträgt auch Reisen, die nur im lokalen Cache verfügbar sind (früher besuchte Reisen, die von der DB-API nicht mehr zurückgegeben werden). Erfordert, dass zuvor die Option „Vergangenheitsansicht mit Cache anreichern" genutzt wurde.',
+            settingsCalDavIncludeCachedDesc: 'Überträgt auch Reisen in den Kalender, die nur im lokalen Cache verfügbar sind (früher besuchte Reisen, die von der DB-API nicht mehr zurückgegeben werden). Erfordert, dass zuvor die Option „Vergangenheitsansicht mit Cache anreichern" genutzt wurde.',
             calDavStatusNever:          'Noch nicht übertragen.',
             calDavStatusSyncing:        'Übertrage…',
             calDavStatusOk:             d => `Übertragen ${d}`,
@@ -512,6 +565,7 @@
             icsDescOrder:        n => `Auftrag: ${n}`,
             icsDescSeat:         s => `Sitzplatz: ${s}`,
             icsDescZugbindung:   'Zugbindung aufgehoben',
+            icsDescLink:         url => `Details: ${url}`,
             csvHeaders: [
                 'Datum', 'Abfahrt', 'Ankunft', 'Abfahrt aktuell', 'Ankunft aktuell',
                 'Von', 'Nach', 'Gleis Abfahrt', 'Gleis Ankunft', 'Züge',
@@ -553,6 +607,7 @@
     let customTagDefs        = loadCustomTagDefs();
     let customTagAssignments = loadCustomTagAssignments();
     let tripNotes            = loadTripNotes();
+    let fgrClaims            = loadFgrClaims();
     let panelVisible    = !!uiSettings.openOnLoad;
     let rawReisekettenMap = new Map();
     let tokenSyncTimer  = null;
@@ -678,6 +733,15 @@
         try {
             localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes));
             localStorage.setItem(TRIP_NOTES_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
+    }
+    function loadFgrClaims() {
+        try { return JSON.parse(localStorage.getItem(FGR_CLAIMS_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveFgrClaims() {
+        try {
+            localStorage.setItem(FGR_CLAIMS_KEY, JSON.stringify(fgrClaims));
+            localStorage.setItem(FGR_CLAIMS_UPDATED_AT_KEY, new Date().toISOString());
         } catch (_) {}
     }
 
@@ -954,35 +1018,32 @@
         });
     }
 
-    // Cached detail fetch — share link and abweichung call the same endpoint;
-    // cache avoids a redundant round-trip when both are used on the same trip.
-    // Cache is cleared on each full refresh so stale data is never shown.
-    function fetchDetail(uuid) {
-        if (!detailCache.has(uuid)) {
-            const p = dbFetch(`/web/api/reisebegleitung/reiseketten/${encodeURIComponent(uuid)}`)
+    // Cached JSON fetch: one in-flight/settled promise per key; evicted on
+    // failure so the next call retries instead of returning the cached error.
+    function cachedJsonFetch(cache, key, url) {
+        if (!cache.has(key)) {
+            const p = dbFetch(url)
                 .then(res => {
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     return res.json();
                 });
-            p.catch(() => detailCache.delete(uuid));
-            detailCache.set(uuid, p);
+            p.catch(() => cache.delete(key));
+            cache.set(key, p);
         }
-        return detailCache.get(uuid);
+        return cache.get(key);
+    }
+
+    // Cached detail fetch — share link and abweichung call the same endpoint;
+    // cache avoids a redundant round-trip when both are used on the same trip.
+    // Cache is cleared on each full refresh so stale data is never shown.
+    function fetchDetail(uuid) {
+        return cachedJsonFetch(detailCache, uuid, `/web/api/reisebegleitung/reiseketten/${encodeURIComponent(uuid)}`);
     }
 
     // On-demand cached fetch for single order details used by raw JSON export.
     function fetchAuftragDetail(auftragsnummer) {
         if (!auftragsnummer) return Promise.resolve(null);
-        if (!auftragDetailCache.has(auftragsnummer)) {
-            const p = dbFetch(`${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(auftragsnummer)}`)
-                .then(res => {
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    return res.json();
-                });
-            p.catch(() => auftragDetailCache.delete(auftragsnummer));
-            auftragDetailCache.set(auftragsnummer, p);
-        }
-        return auftragDetailCache.get(auftragsnummer);
+        return cachedJsonFetch(auftragDetailCache, auftragsnummer, `${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(auftragsnummer)}`);
     }
 
     // Detail APIs are not always shape-stable. These helpers normalize common wrappers
@@ -1061,7 +1122,10 @@
         if (runInProgress) return;
         runInProgress = true;
         dbLog('run: start');
-        const cache = loadRenderCache();
+        // Instant render from cache only while no panel exists yet (initial load);
+        // re-rendering an already visible panel would just rebuild identical content
+        // and destroy transient button states (e.g. the ⏳ on the refresh button).
+        const cache = document.getElementById('dbmrpp-root') ? null : loadRenderCache();
         if (cache) {
             dbLog('run: instant render from cache (' + cache.trips.length + ' trips)');
             try { await renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit); } catch (_) {}
@@ -2049,6 +2113,7 @@
     // =========================================================
     // 10) Geo export (GPX + GeoJSON)
     // =========================================================
+    // Works on any string carrying '@X=…@Y=…' fragments (halt ids, ctxRecon segments).
     function coordFromHaltId(id) {
         const s = String(id || '');
         const xm = /@X=(-?\d+(?:\.\d+)?)/.exec(s);
@@ -2384,11 +2449,15 @@
         return seats.join('; ');
     }
 
+    // All three categories share the { trip, changes? } shape so the change
+    // block can render them through a single code path. Note that entfernt
+    // trips are stale snapshot copies — they no longer exist in the current
+    // trip pool, so uuid-based action handlers cannot resolve them.
     function diffSnapshots(prev, curr) {
         const out = { neu: [], entfernt: [], geaendert: [] };
         for (const uuid of Object.keys(curr)) {
             if (!prev[uuid]) {
-                out.neu.push(curr[uuid]);
+                out.neu.push({ trip: curr[uuid] });
             } else {
                 const c = curr[uuid], p = prev[uuid];
                 const fld = DIFF_WATCHED
@@ -2401,7 +2470,7 @@
         for (const uuid of Object.keys(prev)) {
             if (!curr[uuid]) {
                 const dep = prev[uuid].departure ? new Date(prev[uuid].departure).getTime() : 0;
-                if (dep > cutoff) out.entfernt.push(prev[uuid]);
+                if (dep > cutoff) out.entfernt.push({ trip: prev[uuid] });
             }
         }
         return out;
@@ -2656,11 +2725,13 @@
                 ? formatIcsDt(t.arrival)
                 : formatIcsDt(new Date(new Date(t.departure).getTime() + 3600000).toISOString().slice(0, 19));
             const descParts = [];
+            if (tripNotes[t.uuid])  descParts.push(tripNotes[t.uuid]);
             if (t.leistungsname)  descParts.push(t.leistungsname);
             if (t.zuege)          descParts.push(T.icsDescTrains(t.zuege));
             if (t.auftragsnummer) descParts.push(T.icsDescOrder(t.auftragsnummer));
             if (t.seats)          descParts.push(T.icsDescSeat(t.seats));
             if (t.zugbindung === 'AUFGEHOBEN') descParts.push(T.icsDescZugbindung);
+            if (t.auftragsnummer || t.uuid) descParts.push(T.icsDescLink(buildDetailUrl(t)));
             return [
                 'BEGIN:VEVENT',
                 `UID:${uid}`,
@@ -2668,7 +2739,7 @@
                 `DTSTART;TZID=Europe/Berlin:${dtstart}`,
                 `DTEND;TZID=Europe/Berlin:${dtend}`,
                 `SUMMARY:${icsEscape(`${t.from || '?'} → ${t.to || '?'}`)}`,
-                descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\\n'))}` : '',
+                descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\n'))}` : '',
                 t.from ? `LOCATION:${icsEscape(t.from)}` : '',
                 'END:VEVENT'
             ].filter(Boolean).map(icsFold).join('\r\n');
@@ -2719,6 +2790,8 @@
                 customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
                 tripNotes: { ...tripNotes },
                 tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null,
+                fgrClaims: { ...fgrClaims },
+                fgrClaimsUpdatedAt: localStorage.getItem(FGR_CLAIMS_UPDATED_AT_KEY) || null,
                 settingsUpdatedAt: localStorage.getItem(SETTINGS_UPDATED_AT_KEY) || null
             };
             triggerDownload(
@@ -2846,6 +2919,12 @@
                     : { ...data.tripNotes, ...tripNotes };
                 saveTripNotes();
             }
+            if (isPlainObject(data.fgrClaims)) {
+                fgrClaims = preferImported
+                    ? { ...fgrClaims, ...data.fgrClaims }
+                    : { ...data.fgrClaims, ...fgrClaims };
+                saveFgrClaims();
+            }
 
             uiSettings = loadUiSettings();
             filterState = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
@@ -2943,7 +3022,9 @@
             customTagAssignments: { ...customTagAssignments },
             customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
             tripNotes: { ...tripNotes },
-            tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null
+            tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null,
+            fgrClaims: { ...fgrClaims },
+            fgrClaimsUpdatedAt: localStorage.getItem(FGR_CLAIMS_UPDATED_AT_KEY) || null
         };
     }
 
@@ -2963,6 +3044,10 @@
         const localNotesTs  = Date.parse(local.tripNotesUpdatedAt  || 0) || 0;
         const remoteNotesTs = Date.parse(remote.tripNotesUpdatedAt || 0) || 0;
         const preferRemoteNotes = remoteNotesTs > localNotesTs;
+
+        const localFgrTs  = Date.parse(local.fgrClaimsUpdatedAt  || 0) || 0;
+        const remoteFgrTs = Date.parse(remote.fgrClaimsUpdatedAt || 0) || 0;
+        const preferRemoteFgr = remoteFgrTs > localFgrTs;
 
         const mergedHistory = normalizeTripHistory({
             entries: mergeHistoryEntriesNewestWins(
@@ -3009,7 +3094,13 @@
                 : { ...(remote.tripNotes || {}), ...(local.tripNotes  || {}) },
             tripNotesUpdatedAt: preferRemoteNotes
                 ? (remote.tripNotesUpdatedAt || local.tripNotesUpdatedAt)
-                : (local.tripNotesUpdatedAt  || remote.tripNotesUpdatedAt)
+                : (local.tripNotesUpdatedAt  || remote.tripNotesUpdatedAt),
+            fgrClaims: preferRemoteFgr
+                ? { ...(local.fgrClaims  || {}), ...(remote.fgrClaims || {}) }
+                : { ...(remote.fgrClaims || {}), ...(local.fgrClaims  || {}) },
+            fgrClaimsUpdatedAt: preferRemoteFgr
+                ? (remote.fgrClaimsUpdatedAt || local.fgrClaimsUpdatedAt)
+                : (local.fgrClaimsUpdatedAt  || remote.fgrClaimsUpdatedAt)
         };
     }
 
@@ -3052,6 +3143,15 @@
                 localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes));
                 if (bundle.tripNotesUpdatedAt) {
                     localStorage.setItem(TRIP_NOTES_UPDATED_AT_KEY, bundle.tripNotesUpdatedAt);
+                }
+            } catch (_) {}
+        }
+        if (isPlainObject(bundle.fgrClaims)) {
+            fgrClaims = bundle.fgrClaims;
+            try {
+                localStorage.setItem(FGR_CLAIMS_KEY, JSON.stringify(fgrClaims));
+                if (bundle.fgrClaimsUpdatedAt) {
+                    localStorage.setItem(FGR_CLAIMS_UPDATED_AT_KEY, bundle.fgrClaimsUpdatedAt);
                 }
             } catch (_) {}
         }
@@ -3192,7 +3292,9 @@
         if (t.isLeistungTicket) {
             const { start, end } = caldavBerlinDate(t.departure);
             const descParts = [];
+            if (tripNotes[t.uuid])  descParts.push(tripNotes[t.uuid]);
             if (t.auftragsnummer) descParts.push(T.icsDescOrder(t.auftragsnummer));
+            if (t.auftragsnummer || t.uuid) descParts.push(T.icsDescLink(buildDetailUrl(t)));
             vevent = [
                 'BEGIN:VEVENT',
                 `UID:${uid}`,
@@ -3200,7 +3302,7 @@
                 `DTSTART;VALUE=DATE:${start}`,
                 `DTEND;VALUE=DATE:${end}`,
                 `SUMMARY:${icsEscape(t.leistungsname || 'Ticket')}`,
-                descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\\n'))}` : '',
+                descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\n'))}` : '',
                 'END:VEVENT'
             ].filter(Boolean).map(icsFold).join('\r\n');
         } else {
@@ -3209,11 +3311,13 @@
             ? formatIcsDt(t.arrival)
             : formatIcsDt(new Date(new Date(t.departure).getTime() + 3600000).toISOString().slice(0, 19));
         const descParts = [];
+        if (tripNotes[t.uuid])  descParts.push(tripNotes[t.uuid]);
         if (t.leistungsname)  descParts.push(t.leistungsname);
         if (t.zuege)          descParts.push(T.icsDescTrains(t.zuege));
         if (t.auftragsnummer) descParts.push(T.icsDescOrder(t.auftragsnummer));
         if (t.seats)          descParts.push(T.icsDescSeat(t.seats));
         if (t.zugbindung === 'AUFGEHOBEN') descParts.push(T.icsDescZugbindung);
+        if (t.auftragsnummer || t.uuid) descParts.push(T.icsDescLink(buildDetailUrl(t)));
         vevent = [
             'BEGIN:VEVENT',
             `UID:${uid}`,
@@ -3221,7 +3325,7 @@
             `DTSTART;TZID=Europe/Berlin:${dtstart}`,
             `DTEND;TZID=Europe/Berlin:${dtend}`,
             `SUMMARY:${icsEscape(`${t.from || '?'} → ${t.to || '?'}`)}`,
-            descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\\n'))}` : '',
+            descParts.length ? `DESCRIPTION:${icsEscape(descParts.join('\n'))}` : '',
             t.from ? `LOCATION:${icsEscape(t.from)}` : '',
             'END:VEVENT'
         ].filter(Boolean).map(icsFold).join('\r\n');
@@ -4281,6 +4385,203 @@
         if (caldavPushNowBtn) caldavPushNowBtn.addEventListener('click', () => caldavSync());
     }
 
+    // Unified loading indicator for buttons whose click triggers an API call:
+    // swap the icon for ⏳ while the action runs, restore it afterwards.
+    async function withLoadingIcon(btn, action) {
+        const origText = btn.textContent;
+        btn.textContent = '⏳';
+        btn.style.opacity = '1';
+        btn.disabled = true;
+        try {
+            return await action();
+        } finally {
+            btn.textContent = origText;
+            btn.style.opacity = '';
+            btn.disabled = false;
+        }
+    }
+
+    async function onRouteExtClick(btn, trip) {
+        const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+        try {
+            await withLoadingIcon(btn, async () => {
+                const url = await getExternalRoutingUrl(trip);
+                if (!url) throw new Error('No external routing URL available');
+                if (!openExternalUrlInNewTab(url, popup)) throw new Error('Could not open external routing URL');
+            });
+        } catch (err) {
+            console.error('[DBMRPP] Routing-Link-Fehler', err);
+            alert(T.routeError);
+        }
+    }
+
+    async function onShareClick(btn, trip) {
+        const origTitle = btn.title;
+        try {
+            await withLoadingIcon(btn, async () => {
+                await navigator.clipboard.writeText(await getShareLink(trip));
+            });
+            btn.textContent = '✓'; btn.title = T.shareCopied; btn.style.opacity = '1';
+            setTimeout(() => { btn.textContent = '⤴️'; btn.title = origTitle; btn.style.opacity = ''; }, 2000);
+        } catch (err) {
+            console.error('[DBMRPP] Share-Fehler', err);
+            alert(T.shareError);
+        }
+    }
+
+    async function onFgrClick(btn, trip) {
+        const tripDiv = btn.closest('.dbmrpp-trip');
+        const existing = tripDiv.querySelector('.dbmrpp-fgr-detail');
+        if (existing) { existing.remove(); return; }
+        let resultText = null;
+        try {
+            await withLoadingIcon(btn, async () => {
+                const auftrag = await fetchAuftragDetail(trip.auftragsnummer);
+                const ga = auftrag && auftrag.gesamtangebot;
+                const legs = ga ? [ga.hinfahrt, ga.rueckfahrt].filter(Boolean) : [];
+                const leg = legs.find(l => l.kundenwunschId === trip.kundenwunschId) || legs[0];
+                const submitted = (leg && leg.fahrgastrechte && leg.fahrgastrechte.submittedAntragList) || [];
+                if (!submitted.length) {
+                    // No claim found — evict cache so a re-click always fetches
+                    // fresh data (the user might file a claim in the meantime).
+                    auftragDetailCache.delete(trip.auftragsnummer);
+                    resultText = T.fgrNone;
+                    return;
+                }
+                fgrClaims[trip.auftragsnummer] = {
+                    savedAt: new Date().toISOString(),
+                    claims: submitted.map(a => ({ date: a.date || null, antragIds: a.antragIds || [] }))
+                };
+                saveFgrClaims();
+                scheduleWebDavSync();
+                // Re-render the trip div: the claim now appears permanently in the
+                // meta area and the § button disappears (it has no further purpose).
+                const tmpWrap = document.createElement('div');
+                tmpWrap.innerHTML = renderTripLine(trip).trim();
+                const newEl = tmpWrap.firstElementChild;
+                if (newEl) tripDiv.replaceWith(newEl);
+            });
+        } catch (err) {
+            console.error('[DBMRPP] FGR-Fehler', err);
+            resultText = T.fgrError;
+        }
+        if (resultText) {
+            const detailDiv = document.createElement('div');
+            detailDiv.className = 'dbmrpp-fgr-detail';
+            detailDiv.textContent = resultText;
+            tripDiv.appendChild(detailDiv);
+        }
+    }
+
+    async function onTrainNumClick(btn) {
+        const uuid = btn.getAttribute('data-uuid');
+        const trainNum = btn.getAttribute('data-train-num');
+        const departure = btn.getAttribute('data-departure');
+        if (!uuid || !trainNum) return;
+        const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+        const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+        try {
+            await withLoadingIcon(btn, async () => {
+                const detail = await fetchDetail(uuid);
+                const letters = findLettersFromDetail(detail, trainNum);
+                if (!letters) throw new Error(`No train type found for run number ${trainNum}`);
+                let url;
+                if (provider === 'zugfinder') {
+                    url = `https://www.zugfinder.net/de/zug-${encodeURIComponent(letters)}_${encodeURIComponent(trainNum)}`;
+                } else {
+                    const dep = departure ? new Date(departure) : null;
+                    const iso = dep && !isNaN(dep.getTime()) ? dep.toISOString() : null;
+                    const trainId = encodeURIComponent(`${letters} ${trainNum}`);
+                    url = iso
+                        ? `https://bahn.expert/details/${trainId}/${encodeURIComponent(iso)}`
+                        : `https://bahn.expert/details/${trainId}/`;
+                }
+                openExternalUrlInNewTab(url, popup);
+            });
+        } catch (err) {
+            console.error('[DBMRPP] Train-Name-Lookup-Fehler', err);
+            if (popup && !popup.closed) popup.close();
+        }
+    }
+
+    function onNoteClick(btn) {
+        const uuid = btn.getAttribute('data-uuid');
+        const tripDiv = btn.closest('.dbmrpp-trip');
+        if (!tripDiv) return;
+        const existingArea = tripDiv.querySelector('.dbmrpp-note-area');
+        if (existingArea) { existingArea.remove(); return; }
+        const area = document.createElement('div');
+        area.className = 'dbmrpp-note-area';
+        const ta = document.createElement('textarea');
+        ta.className = 'dbmrpp-note-edit';
+        ta.placeholder = T.notePlaceholder;
+        ta.value = tripNotes[uuid] || '';
+        ta.rows = 2;
+        ta.addEventListener('input', () => {
+            const val = ta.value;
+            if (val.trim()) {
+                tripNotes[uuid] = val;
+            } else {
+                delete tripNotes[uuid];
+            }
+            saveTripNotes();
+            scheduleWebDavSync();
+            const existingDisplay = tripDiv.querySelector('.dbmrpp-note, .dbmrpp-note-details');
+            if (existingDisplay) existingDisplay.remove();
+            if (val.trim()) {
+                const nd = document.createElement('div');
+                nd.className = 'dbmrpp-note';
+                nd.textContent = val;
+                area.before(nd);
+            }
+            btn.classList.toggle('dbmrpp-note-btn-active', !!val.trim());
+        });
+        area.appendChild(ta);
+        tripDiv.appendChild(area);
+        ta.focus();
+    }
+
+    async function onAbweichungClick(btn, trip) {
+        const tripDiv = btn.closest('.dbmrpp-trip');
+        const existing = tripDiv.querySelector('.dbmrpp-abweichung-detail');
+        if (existing) { existing.remove(); return; }
+        const detailDiv = document.createElement('div');
+        detailDiv.className = 'dbmrpp-abweichung-detail';
+        try {
+            await withLoadingIcon(btn, async () => {
+                const msgs = await loadAbweichungMessages(trip);
+                if (!msgs.length) {
+                    detailDiv.textContent = T.abweichungNone;
+                } else {
+                    detailDiv.innerHTML = msgs.map(m =>
+                        `<div class="dbmrpp-abweichung-msg">${esc((m && m.text) || '')}</div>`
+                    ).join('');
+                }
+            });
+        } catch (err) {
+            console.error('[DBMRPP] Abweichung-Fehler', err);
+            detailDiv.textContent = T.abweichungError;
+        }
+        tripDiv.appendChild(detailDiv);
+    }
+
+    // Delegated per-trip button actions: selector → handler(btn, trip).
+    // Entries with needsTrip: false read their data from the button's
+    // attributes instead of a resolved trip object.
+    const TRIP_ACTIONS = [
+        { selector: '.dbmrpp-ics-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadIcs(trip)) },
+        { selector: '.dbmrpp-pdf-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadPdf(trip)) },
+        { selector: '.dbmrpp-json-link',        handler: (btn, trip) => withLoadingIcon(btn, () => downloadRawJson(trip)) },
+        { selector: '.dbmrpp-geo-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadGeo(trip)) },
+        { selector: '.dbmrpp-delete-cache-btn', handler: (btn, trip) => { if (confirm(T.alertDeleteCachedTripConfirm)) deleteCachedTrip(trip); } },
+        { selector: '.dbmrpp-route-ext-btn',    handler: onRouteExtClick },
+        { selector: '.dbmrpp-share-btn',        handler: onShareClick },
+        { selector: '.dbmrpp-fgr-btn',          handler: onFgrClick },
+        { selector: '.dbmrpp-train-num-link',   needsTrip: false, handler: onTrainNumClick },
+        { selector: '.dbmrpp-note-btn',         needsTrip: false, handler: onNoteClick },
+        { selector: '.dbmrpp-abweichung-btn',   handler: onAbweichungClick },
+    ];
+
     function bindTripActionHandlers(root, trips, orphans) {
         const getFilteredPool = () => {
             const pool = activeView === 'past' ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
@@ -4297,220 +4598,22 @@
             );
         });
         root.querySelector('.dbmrpp-export').addEventListener('click', () => exportCsv(getFilteredPool()));
-        root.querySelector('.dbmrpp-refresh').addEventListener('click', () => run());
+        root.querySelector('.dbmrpp-refresh').addEventListener('click', ev => withLoadingIcon(ev.currentTarget, () => run()));
 
         root.addEventListener('click', async (ev) => {
             const findTrip = uuid =>
                 trips.find(x => x.uuid === uuid) ||
                 (pastTrips || []).find(x => x.uuid === uuid) ||
                 orphans.find(x => x.uuid === uuid);
-            const icsLink = ev.target.closest('.dbmrpp-ics-link');
-            if (icsLink) {
+            for (const action of TRIP_ACTIONS) {
+                const btn = ev.target.closest(action.selector);
+                if (!btn) continue;
                 ev.preventDefault();
-                const trip = findTrip(icsLink.getAttribute('data-uuid'));
-                if (trip) downloadIcs(trip);
-                return;
-            }
-            const pdfLink = ev.target.closest('.dbmrpp-pdf-link');
-            if (pdfLink) {
-                ev.preventDefault();
-                const trip = findTrip(pdfLink.getAttribute('data-uuid'));
-                if (trip) downloadPdf(trip);
-                return;
-            }
-            const rawJsonLink = ev.target.closest('.dbmrpp-json-link');
-            if (rawJsonLink) {
-                ev.preventDefault();
-                const trip = findTrip(rawJsonLink.getAttribute('data-uuid'));
-                if (trip) downloadRawJson(trip);
-                return;
-            }
-            const gpxLink = ev.target.closest('.dbmrpp-geo-link');
-            if (gpxLink) {
-                ev.preventDefault();
-                const trip = findTrip(gpxLink.getAttribute('data-uuid'));
-                if (trip) downloadGeo(trip);
-                return;
-            }
-            const deleteBtn = ev.target.closest('.dbmrpp-delete-cache-btn');
-            if (deleteBtn) {
-                ev.preventDefault();
-                const trip = findTrip(deleteBtn.getAttribute('data-uuid'));
-                if (!trip) return;
-
-                if (confirm(T.alertDeleteCachedTripConfirm)) {
-                    deleteCachedTrip(trip);
-                }
-                return;
-            }
-            const routeBtn = ev.target.closest('.dbmrpp-route-ext-btn');
-            if (routeBtn) {
-                ev.preventDefault();
-                const trip = findTrip(routeBtn.getAttribute('data-uuid'));
-                if (!trip) return;
-                const origTitle = routeBtn.title;
-                const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
-                routeBtn.textContent = '⏳'; routeBtn.style.opacity = '1';
-                try {
-                    const url = await getExternalRoutingUrl(trip);
-                    if (!url) throw new Error('No external routing URL available');
-                    if (!openExternalUrlInNewTab(url, popup)) throw new Error('Could not open external routing URL');
-                    routeBtn.textContent = '🧭'; routeBtn.title = origTitle; routeBtn.style.opacity = '';
-                } catch (err) {
-                    console.error('[DBMRPP] Routing-Link-Fehler', err);
-                    routeBtn.textContent = '🧭'; routeBtn.title = origTitle; routeBtn.style.opacity = '';
-                    alert(T.routeError);
-                }
-                return;
-            }
-            const shareBtn = ev.target.closest('.dbmrpp-share-btn');
-            if (shareBtn) {
-                ev.preventDefault();
-                const trip = findTrip(shareBtn.getAttribute('data-uuid'));
-                if (!trip) return;
-                const origTitle = shareBtn.title;
-                shareBtn.textContent = '⏳'; shareBtn.style.opacity = '1';
-                try {
-                    await navigator.clipboard.writeText(await getShareLink(trip));
-                    shareBtn.textContent = '✓'; shareBtn.title = T.shareCopied;
-                    setTimeout(() => { shareBtn.textContent = '⤴️'; shareBtn.title = origTitle; shareBtn.style.opacity = ''; }, 2000);
-                } catch (err) {
-                    console.error('[DBMRPP] Share-Fehler', err);
-                    shareBtn.textContent = '⤴️'; shareBtn.style.opacity = '';
-                    alert(T.shareError);
-                }
-                return;
-            }
-            const fgrBtn = ev.target.closest('.dbmrpp-fgr-btn');
-            if (fgrBtn) {
-                ev.preventDefault();
-                const trip = findTrip(fgrBtn.getAttribute('data-uuid'));
-                if (!trip) return;
-                const tripDiv = fgrBtn.closest('.dbmrpp-trip');
-                const existing = tripDiv.querySelector('.dbmrpp-fgr-detail');
-                if (existing) { existing.remove(); return; }
-                const detailDiv = document.createElement('div');
-                detailDiv.className = 'dbmrpp-fgr-detail';
-                detailDiv.textContent = T.fgrLoading;
-                tripDiv.appendChild(detailDiv);
-                try {
-                    const auftrag = await fetchAuftragDetail(trip.auftragsnummer);
-                    const ga = auftrag && auftrag.gesamtangebot;
-                    const legs = ga ? [ga.hinfahrt, ga.rueckfahrt].filter(Boolean) : [];
-                    const leg = legs.find(l => l.kundenwunschId === trip.kundenwunschId) || legs[0];
-                    const submitted = (leg && leg.fahrgastrechte && leg.fahrgastrechte.submittedAntragList) || [];
-                    if (!submitted.length) {
-                        // No claim found — evict cache so a re-click always fetches
-                        // fresh data (the user might file a claim in the meantime).
-                        auftragDetailCache.delete(trip.auftragsnummer);
-                        detailDiv.textContent = T.fgrNone;
-                    } else {
-                        detailDiv.innerHTML = submitted.map(a => {
-                            const date = a.date ? esc(formatDate(a.date)) : '?';
-                            const ids = (a.antragIds || []).map(esc);
-                            return `<div class="dbmrpp-fgr-claim">${T.fgrClaim(date, ids)}</div>`;
-                        }).join('');
-                    }
-                } catch (err) {
-                    console.error('[DBMRPP] FGR-Fehler', err);
-                    detailDiv.textContent = T.fgrError;
-                }
-                return;
-            }
-            const trainNumLink = ev.target.closest('.dbmrpp-train-num-link');
-            if (trainNumLink) {
-                ev.preventDefault();
-                const uuid = trainNumLink.getAttribute('data-uuid');
-                const trainNum = trainNumLink.getAttribute('data-train-num');
-                const departure = trainNumLink.getAttribute('data-departure');
-                if (!uuid || !trainNum) return;
-                const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
-                const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
-                try {
-                    const detail = await fetchDetail(uuid);
-                    const letters = findLettersFromDetail(detail, trainNum);
-                    if (!letters) throw new Error(`No train type found for run number ${trainNum}`);
-                    let url;
-                    if (provider === 'zugfinder') {
-                        url = `https://www.zugfinder.net/de/zug-${encodeURIComponent(letters)}_${encodeURIComponent(trainNum)}`;
-                    } else {
-                        const dep = departure ? new Date(departure) : null;
-                        const iso = dep && !isNaN(dep.getTime()) ? dep.toISOString() : null;
-                        const trainId = encodeURIComponent(`${letters} ${trainNum}`);
-                        url = iso
-                            ? `https://bahn.expert/details/${trainId}/${encodeURIComponent(iso)}`
-                            : `https://bahn.expert/details/${trainId}/`;
-                    }
-                    openExternalUrlInNewTab(url, popup);
-                } catch (err) {
-                    console.error('[DBMRPP] Train-Name-Lookup-Fehler', err);
-                    if (popup && !popup.closed) popup.close();
-                }
-                return;
-            }
-            const noteBtn = ev.target.closest('.dbmrpp-note-btn');
-            if (noteBtn) {
-                ev.preventDefault();
-                const uuid = noteBtn.getAttribute('data-uuid');
-                const tripDiv = noteBtn.closest('.dbmrpp-trip');
-                if (!tripDiv) return;
-                const existingArea = tripDiv.querySelector('.dbmrpp-note-area');
-                if (existingArea) { existingArea.remove(); return; }
-                const area = document.createElement('div');
-                area.className = 'dbmrpp-note-area';
-                const ta = document.createElement('textarea');
-                ta.className = 'dbmrpp-note-edit';
-                ta.placeholder = T.notePlaceholder;
-                ta.value = tripNotes[uuid] || '';
-                ta.rows = 2;
-                ta.addEventListener('input', () => {
-                    const val = ta.value;
-                    if (val.trim()) {
-                        tripNotes[uuid] = val;
-                    } else {
-                        delete tripNotes[uuid];
-                    }
-                    saveTripNotes();
-                    scheduleWebDavSync();
-                    const existingDisplay = tripDiv.querySelector('.dbmrpp-note, .dbmrpp-note-details');
-                    if (existingDisplay) existingDisplay.remove();
-                    if (val.trim()) {
-                        const nd = document.createElement('div');
-                        nd.className = 'dbmrpp-note';
-                        nd.textContent = val;
-                        area.before(nd);
-                    }
-                    noteBtn.classList.toggle('dbmrpp-note-btn-active', !!val.trim());
-                });
-                area.appendChild(ta);
-                tripDiv.appendChild(area);
-                ta.focus();
-                return;
-            }
-            const abwBtn = ev.target.closest('.dbmrpp-abweichung-btn');
-            if (abwBtn) {
-                ev.preventDefault();
-                const trip = trips.find(x => x.uuid === abwBtn.getAttribute('data-uuid'));
-                if (!trip) return;
-                const tripDiv = abwBtn.closest('.dbmrpp-trip');
-                const existing = tripDiv.querySelector('.dbmrpp-abweichung-detail');
-                if (existing) { existing.remove(); return; }
-                const detailDiv = document.createElement('div');
-                detailDiv.className = 'dbmrpp-abweichung-detail';
-                detailDiv.textContent = T.abweichungLoading;
-                tripDiv.appendChild(detailDiv);
-                try {
-                    const msgs = await loadAbweichungMessages(trip);
-                    if (!msgs.length) {
-                        detailDiv.textContent = T.abweichungNone;
-                    } else {
-                        detailDiv.innerHTML = msgs.map(m =>
-                            `<div class="dbmrpp-abweichung-msg">${esc((m && m.text) || '')}</div>`
-                        ).join('');
-                    }
-                } catch (err) {
-                    console.error('[DBMRPP] Abweichung-Fehler', err);
-                    detailDiv.textContent = T.abweichungError;
+                if (action.needsTrip === false) {
+                    await action.handler(btn);
+                } else {
+                    const trip = findTrip(btn.getAttribute('data-uuid'));
+                    if (trip) await action.handler(btn, trip);
                 }
                 return;
             }
@@ -4551,7 +4654,7 @@
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
                 if (!uiSettings.rememberFilter) {
-                    filterState.from = ''; filterState.to = ''; filterState.tags = [];
+                    filterState.from = ''; filterState.to = ''; filterState.tags = []; filterState.days = 0;
                     if (activeView === 'past') filterState.onlyProblems = false;
                 }
                 rememberUiState();
@@ -4821,9 +4924,9 @@
         return `
         <div class="dbmrpp-section dbmrpp-changes">
             <h3>${T.changesSince(esc(lastVisitTxt))}</h3>
-            ${changes.geaendert.map(renderChangedTrip).join('')}
-            ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(renderTripLine).join('')}` : ''}
-            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(renderTripLine).join('')}` : ''}
+            ${changes.geaendert.map(c => renderChangeLine(c)).join('')}
+            ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(c => renderChangeLine(c)).join('')}` : ''}
+            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(c => renderChangeLine(c, true)).join('')}` : ''}
         </div>`;
     }
 
@@ -4853,30 +4956,34 @@
         return `${location.origin}${locale}/buchung/reise?${params.toString()}`;
     }
 
-    function renderRouteLink(t) {
+    function tripRouteLabel(t) {
         const fromLabel = t && (t.from || t.fromExtId) ? (t.from || t.fromExtId) : null;
         const toLabel = t && (t.to || t.toExtId) ? (t.to || t.toExtId) : null;
-        const hasRoute = !!(fromLabel || toLabel);
-        const label = hasRoute
+        return (fromLabel || toLabel)
             ? `${fromLabel || '?'} → ${toLabel || '?'}`
             : (t.leistungsname || t.name || '?');
+    }
+
+    function renderRouteLink(t) {
+        const label = tripRouteLabel(t);
         if (t.isFromHistoryCache)
             return `<span class="dbmrpp-route-link dbmrpp-route-cached">${esc(label)}</span>`;
         return `<a class="dbmrpp-route-link" href="${esc(buildDetailUrl(t))}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
     }
 
-    
-    function renderDeleteCacheBtn(t) {
-        if (!t.isFromHistoryCache) return '';
-        return ` <button class="dbmrpp-delete-cache-btn dbmrpp-action-icon"
-                        data-uuid="${esc(t.uuid)}"
-                        title="${T.deleteCachedTripTooltip}">🗑️</button>`;
+    // Shared template for the per-trip action-icon buttons.
+    function actionButton(cls, t, title, icon) {
+        return ` <button type="button" class="${cls} dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${title}">${icon}</button>`;
     }
 
+    function renderDeleteCacheBtn(t) {
+        if (!t.isFromHistoryCache) return '';
+        return actionButton('dbmrpp-delete-cache-btn', t, T.deleteCachedTripTooltip, '🗑️');
+    }
 
     function renderShareLink(t) {
         if (t.fromReiseketten ? t.isOrphaned : (!t.auftragsnummer || !t.kundenwunschId)) return '';
-        return ` <button type="button" class="dbmrpp-share-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.shareTooltip}">⤴️</button>`;
+        return actionButton('dbmrpp-share-btn', t, T.shareTooltip, '⤴️');
     }
 
     function isRoutingEligibleTrip(t) {
@@ -4891,17 +4998,17 @@
     function renderExternalRouteLink(t) {
         if (!uiSettings.showRoutingButton) return '';
         if (!isRoutingEligibleTrip(t)) return '';
-        return ` <button class="dbmrpp-route-ext-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.routeTooltip}">🧭</button>`;
+        return actionButton('dbmrpp-route-ext-btn', t, T.routeTooltip, '🧭');
     }
 
     function renderAbweichungBtn(t) {
         if (!t.relevanteAbweichung || !t.fromReiseketten) return '';
-        return ` <button type="button" class="dbmrpp-abweichung-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.abweichungTooltip}">⚠️</button>`;
+        return actionButton('dbmrpp-abweichung-btn', t, T.abweichungTooltip, '⚠️');
     }
 
     function renderIcsLink(t) {
         if (!isIcsSupportedTrip(t)) return '';
-        return ` <button type="button" class="dbmrpp-ics-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.icsTooltip}">📅</button>`;
+        return actionButton('dbmrpp-ics-link', t, T.icsTooltip, '📅');
     }
 
     function isIcsSupportedTrip(t) {
@@ -4916,25 +5023,29 @@
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
         if (t.storniertStatus === 'STORNIERT') return '';
-        return ` <button type="button" class="dbmrpp-pdf-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.pdfTooltip}">🧾</button>`;
+        return actionButton('dbmrpp-pdf-link', t, T.pdfTooltip, '🧾');
     }
 
     function renderRawJsonLink(t) {
         if (uiSettings.showJsonButton === false) return '';
         if (!t.uuid) return '';
-        return ` <button type="button" class="dbmrpp-json-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.rawJsonTooltip}">{…}</button>`;
+        return actionButton('dbmrpp-json-link', t, T.rawJsonTooltip, '{…}');
     }
 
     function renderGeoLink(t) {
         if (!uiSettings.showGeoButton) return '';
         if (!t?.fromReiseketten || !t.uuid || t.isPastTrip) return '';
         const tooltip = uiSettings['geo-format'] === 'geojson' ? T.geojsonTooltip : T.gpxTooltip;
-        return ` <button type="button" class="dbmrpp-geo-link dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${tooltip}">🛤️</button>`;
+        return actionButton('dbmrpp-geo-link', t, tooltip, '🛤️');
     }
 
     function renderFahrgastrechteBtn(t) {
         if (!t.auftragsnummer || !t.isPastTrip) return '';
-        return ` <button type="button" class="dbmrpp-fgr-btn dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${T.fgrBtnTooltip}">§</button>`;
+        // Once a claim is known it is rendered permanently in the meta area,
+        // so the query button has no further purpose.
+        const stored = fgrClaims[t.auftragsnummer];
+        if (stored && stored.claims && stored.claims.length) return '';
+        return actionButton('dbmrpp-fgr-btn', t, T.fgrBtnTooltip, '§');
     }
 
     function parseCtxReconStops(ctxRecon) {
@@ -4954,21 +5065,15 @@
                 return candidates.length ? Math.min(...candidates) : text.length;
             })();
             const segment = text.slice(segStart, segEnd);
-            const xMatch = /@X=(-?\d+(?:\.\d+)?)/.exec(segment);
-            const yMatch = /@Y=(-?\d+(?:\.\d+)?)/.exec(segment);
             const lMatch = /@L=([^@$§¶]+)/.exec(segment);
-            if (!xMatch || !yMatch || !lMatch) continue;
-
-            const rawLon = Number(xMatch[1]);
-            const rawLat = Number(yMatch[1]);
-            if (!Number.isFinite(rawLon) || !Number.isFinite(rawLat)) continue;
-            const lon = Math.abs(rawLon) > 180 ? rawLon / 1e6 : rawLon;
-            const lat = Math.abs(rawLat) > 90 ? rawLat / 1e6 : rawLat;
+            if (!lMatch) continue;
+            const coord = coordFromHaltId(segment);
+            if (!coord) continue;
 
             stops.push({
                 name,
-                lon,
-                lat,
+                lon: coord.lon,
+                lat: coord.lat,
                 id: String(lMatch[1] || '').trim()
             });
         }
@@ -5336,7 +5441,49 @@
 
     function renderNoteBtn(t) {
         const hasNote = !!(tripNotes[t.uuid] && tripNotes[t.uuid].trim());
-        return `<button class="dbmrpp-action-icon dbmrpp-note-btn${hasNote ? ' dbmrpp-note-btn-active' : ''}" data-uuid="${esc(t.uuid)}" title="${esc(T.noteTt)}">✏️</button>`;
+        return actionButton(`dbmrpp-note-btn${hasNote ? ' dbmrpp-note-btn-active' : ''}`, t, esc(T.noteTt), '✏️');
+    }
+
+    // One "🚅 [platform] train list [platform]" meta line. `source` carries the
+    // track/train data (the trip itself, or its cached live state), `t` is the
+    // trip used for link context and the Verbundticket check.
+    function trainMetaLine(source, t, showPlatforms) {
+        const platform = (track, trackRt) =>
+            showPlatforms && track && !t.isVerbundticket
+                ? `${esc(T.metaPlatform)} ${esc(track)}${trackChangedTag(trackRt)}`
+                : '';
+        const dep = platform(source.departureTrack, source.departureTrackRt);
+        const arr = platform(source.arrivalTrack, source.arrivalTrackRt);
+        return `🚅 ${dep ? `${dep} ` : ''}${renderTrainList(source, t)}${arr ? ` ${arr}` : ''}`;
+    }
+
+    // Full per-trip action strip for the main trip list. Each renderer
+    // decides for itself whether its button applies and returns '' if not.
+    function renderTripActions(t) {
+        return [
+            renderExternalRouteLink(t),
+            renderShareLink(t),
+            renderAbweichungBtn(t),
+            renderIcsLink(t),
+            renderPdfLink(t),
+            renderGeoLink(t),
+            renderRawJsonLink(t),
+            renderFahrgastrechteBtn(t),
+            renderDeleteCacheBtn(t),
+            renderCustomTagBtn(t),
+            renderNoteBtn(t)
+        ].join(' ');
+    }
+
+    // Slim strip for the change block: routing, tag, note. Removed trips are
+    // stale snapshot copies that findTrip cannot resolve, so their routing
+    // button would be dead — skip it; tag and note work purely off data-uuid.
+    function renderChangeActions(t, removed) {
+        return [
+            removed ? '' : renderExternalRouteLink(t),
+            renderCustomTagBtn(t),
+            renderNoteBtn(t)
+        ].join(' ');
     }
 
     function renderTripLine(t) {
@@ -5361,25 +5508,15 @@
         <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}${(t.isPastTrip && t.isFromHistoryCache) ? ' dbmrpp-cached-trip' : ''}" data-uuid="${esc(t.uuid)}">
             <div class="dbmrpp-route">
                 ${t.isFromHistoryCache ? `<span class="dbmrpp-cache-badge">${esc(T.cacheLabel)}</span> ` : ''}
-                ${renderRouteLink(t)} 
-                ${renderExternalRouteLink(t)}
-                ${renderShareLink(t)}
-                ${renderAbweichungBtn(t)}
-                ${renderIcsLink(t)}
-                ${renderPdfLink(t)}
-                ${renderGeoLink(t)}
-                ${renderRawJsonLink(t)}
-                ${renderFahrgastrechteBtn(t)}
-                ${renderDeleteCacheBtn(t)}
-                ${renderCustomTagBtn(t)}
-                ${renderNoteBtn(t)}
+                ${renderRouteLink(t)}
+                ${renderTripActions(t)}
             </div>
             <div class="dbmrpp-meta">
                 ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${planChangeTag(t, 'departure')}${delayTag(t.departure, t.departureRt)} – <strong>${esc(a)}</strong>${planChangeTag(t, 'arrival')}${delayTag(t.arrival, t.arrivalRt)}
                 ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
                 ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
                 ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-                ${showPrimaryTrainInfo && t.zuege ? `<br>🚅 ${showPrimaryPlatformInfo && t.departureTrack && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(t.departureTrack)}${trackChangedTag(t.departureTrackRt)} ` : ''}${renderTrainList(t)}${showPrimaryPlatformInfo && t.arrivalTrack && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(t.arrivalTrack)}${trackChangedTag(t.arrivalTrackRt)}` : ''}${planChangeTag(t, 'zuege')}` : ''}
+                ${showPrimaryTrainInfo && t.zuege ? `<br>${trainMetaLine(t, t, showPrimaryPlatformInfo)}${planChangeTag(t, 'zuege')}` : ''}
                 ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
                 ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
                 ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
@@ -5387,10 +5524,23 @@
                 ${recurrenceRule ? `<br>${esc(recurrenceRule)}` : ''}
                 ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
             </div>
+            ${renderFgrClaimBlock(t)}
             ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
             ${renderNoteDisplay(t.uuid)}
             ${!showCacheTagsInline ? `<div class="dbmrpp-trip-tags">${tags.join('')}</div>` : ''}
         </div>`;
+    }
+
+    // Permanent notice for a known passenger-rights claim, styled like the
+    // transient "no claim" answer so both kinds of result look the same.
+    function renderFgrClaimBlock(t) {
+        const rec = t.auftragsnummer ? fgrClaims[t.auftragsnummer] : null;
+        if (!rec || !rec.claims || !rec.claims.length) return '';
+        return `<div class="dbmrpp-fgr-detail">${rec.claims.map(a => {
+            const date = a.date ? esc(formatDate(a.date)) : '?';
+            const ids = (a.antragIds || []).map(esc);
+            return `<div class="dbmrpp-fgr-claim">${T.fgrClaim(date, ids)}</div>`;
+        }).join('')}</div>`;
     }
 
     function renderCacheInfo(t, tagsHtml, opts = {}) {
@@ -5420,7 +5570,7 @@
 
         const lines = [];
         if (facts.length) lines.push(facts.join(' · '));
-        if (showTransportLines && c.zuege) lines.push(`🚅 ${c.departureTrack && !t.isFromHistoryCache && !t.isVerbundticket ? `${esc(T.metaPlatform)} ${esc(c.departureTrack)}${trackChangedTag(c.departureTrackRt)} ` : ''}${renderTrainList(c, t)}${c.arrivalTrack && !t.isFromHistoryCache && !t.isVerbundticket ? ` ${esc(T.metaPlatform)} ${esc(c.arrivalTrack)}${trackChangedTag(c.arrivalTrackRt)}` : ''}`);
+        if (showTransportLines && c.zuege) lines.push(trainMetaLine(c, t, !t.isFromHistoryCache));
         if (showTransportLines && c.seats) lines.push(`💺 ${esc(c.seats)}`);
 
         const notifEntries = normalizeNotificationEntries(c.notifications || []);
@@ -5435,19 +5585,26 @@
         return `<div class="dbmrpp-cache-block"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${lines.join('<br>')}${notifBlock}${tagsHtml || ''}</div>`;
     }
 
-    function renderChangedTrip(c) {
+    // One row in the change block, shared by all three categories. Removed
+    // trips no longer exist in the account, so their route is rendered as
+    // plain text instead of a link to a dead detail page.
+    function renderChangeLine(c, removed = false) {
         const t = c.trip;
+        const route = removed
+            ? `<span class="dbmrpp-route-link dbmrpp-route-cached">${esc(tripRouteLabel(t))}</span>`
+            : renderRouteLink(t);
         return `
-        <div class="dbmrpp-trip">
-            <div class="dbmrpp-route">${renderRouteLink(t)}${renderExternalRouteLink(t)}
+        <div class="dbmrpp-trip" data-uuid="${esc(t.uuid)}">
+            <div class="dbmrpp-route">${route}${renderChangeActions(t, removed)}
                 <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
             </div>
-            ${c.changes.map(d => `
+            ${(c.changes || []).map(d => `
             <div class="dbmrpp-diff">
                 <strong>${esc(T.fieldLabels[d.field] || d.field)}:</strong>
                 <span class="dbmrpp-diff-old">${esc(formatVal(d.field, d.old))}</span>
                 → <span class="dbmrpp-diff-new">${esc(formatVal(d.field, d.new))}</span>
             </div>`).join('')}
+            ${renderNoteDisplay(t.uuid)}
         </div>`;
     }
 
@@ -5457,7 +5614,8 @@
         if (v === null || v === undefined || v === '') return '–';
         if (['departure','arrival','departureRt','arrivalRt'].includes(field)) return formatDateTime(v);
         if (typeof v === 'boolean') return v ? (IS_INT ? 'yes' : 'ja') : (IS_INT ? 'no' : 'nein');
-        return String(v);
+        const mapped = T.diffValues[field] && T.diffValues[field][v];
+        return mapped || String(v);
     }
 
     function formatDateTime(iso) {
