@@ -50,8 +50,7 @@
     const SNAPSHOT_COOLDOWN_MS = 30 * 60 * 1000; // freeze baseline for 30 min against quick reloads
     const DEBUG_LOG_KEY         = 'dbmrpp.debugLog.v1';
     const DEBUG_LOG_MAX_ENTRIES = 500;
-    const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v2';
-    const RENDER_CACHE_TTL_MS   = 60 * 1000;
+    const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v3';
     const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
     const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
     const CALDAV_CONFIG_KEY              = 'dbmrpp.caldavConfig.v1';
@@ -83,6 +82,9 @@
             ttSettings:        'Settings',
             ttClose:           'Close',
             ttReleaseLog:      'Open changelog',
+            staleHint:         'refreshing…',
+            ttStaleHint:       'Showing cached data — current data is being loaded',
+            staleAsOf:         'as of',
             settingsTitle:     'Settings',
             settingsRememberFilter: 'Remember filters',
             settingsOpenOnLoad: 'Open panel on page load',
@@ -339,6 +341,9 @@
             ttSettings:        'Einstellungen',
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
+            staleHint:         'aktualisiere…',
+            ttStaleHint:       'Zeigt zwischengespeicherte Daten – aktuelle Daten werden geladen',
+            staleAsOf:         'Stand',
             settingsTitle:     'Einstellungen',
             settingsRememberFilter: 'Filter merken',
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
@@ -609,6 +614,8 @@
     let tripNotes            = loadTripNotes();
     let fgrClaims            = loadFgrClaims();
     let panelVisible    = !!uiSettings.openOnLoad;
+    let dataIsStale     = false; // panel currently shows cached data; a refresh is pending
+    let staleCachedAt   = null;  // cachedAt (ms) of the render cache currently on screen
     let rawReisekettenMap = new Map();
     let tokenSyncTimer  = null;
     let is401Recovering = false;
@@ -781,10 +788,16 @@
         try { localStorage.removeItem(DEBUG_LOG_KEY); } catch (_) {}
     }
 
+    // localStorage (not sessionStorage) so the panel can render instantly on a
+    // fresh visit, long before the site's own JS has booted and a token exists.
+    // Tagged with kundenprofilId so a cache written by another account is discarded.
+    // No TTL: however old the data, it renders with the ⏳ stale hint (which
+    // carries the cache timestamp) until the background refresh replaces it.
     function saveRenderCache(trips, orphans, changes, lastVisit) {
         try {
-            sessionStorage.setItem(RENDER_CACHE_KEY, JSON.stringify({
+            localStorage.setItem(RENDER_CACHE_KEY, JSON.stringify({
                 cachedAt: Date.now(),
+                kundenprofilId,
                 trips, orphans, changes, lastVisit
             }));
         } catch (_) {}
@@ -792,12 +805,17 @@
 
     function loadRenderCache() {
         try {
-            const raw = sessionStorage.getItem(RENDER_CACHE_KEY);
+            const raw = localStorage.getItem(RENDER_CACHE_KEY);
             if (!raw) return null;
             const parsed = JSON.parse(raw);
-            if (!parsed || !parsed.cachedAt || Date.now() - parsed.cachedAt > RENDER_CACHE_TTL_MS) return null;
+            if (!parsed || !parsed.cachedAt) return null;
+            if (parsed.kundenprofilId !== kundenprofilId) return null;
             return parsed;
         } catch (_) { return null; }
+    }
+
+    function clearRenderCache() {
+        try { localStorage.removeItem(RENDER_CACHE_KEY); } catch (_) {}
     }
 
     // Cache for reiseketten (journey-chain) detail responses.
@@ -867,6 +885,7 @@
         if (!url || typeof url !== 'string') return;
         const m = url.match(/[?&]kundenprofilId=([0-9a-fA-F-]+)/);
         if (m && m[1] && kundenprofilId !== m[1]) {
+            if (kundenprofilId) clearRenderCache(); // account switch — cached render belongs to the old profile
             kundenprofilId = m[1];
             try { localStorage.setItem(KUNDENPROFIL_KEY, kundenprofilId); } catch (_) {}
         }
@@ -932,6 +951,8 @@
         panelVisible    = !!uiSettings.openOnLoad;
         settingsOpen    = false;
         runInProgress   = false;
+        dataIsStale     = false;
+        staleCachedAt   = null;
         if (runTimerId !== null) {
             clearTimeout(runTimerId);
             runTimerId = null;
@@ -957,9 +978,25 @@
         if (fab) fab.remove();
     }
 
+    // Render the panel from the persistent cache as soon as we land on the target
+    // page — needs no token, so the FAB is available long before the site's own JS
+    // has booted and run() can refresh. The panel shows a "refreshing" hint until
+    // run() replaces it with fresh data.
+    function renderFromCacheEarly() {
+        if (document.getElementById('dbmrpp-root')) return;
+        const cache = loadRenderCache();
+        if (!cache) return;
+        dbLog('early render from cache (' + cache.trips.length + ' trips)');
+        dataIsStale = true;
+        staleCachedAt = cache.cachedAt;
+        renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit)
+            .catch(err => dbLog('early render failed: ' + err.message));
+    }
+
     function handleNavigation() {
         if (isTargetPath()) {
             dbLog('handleNavigation: on-target alreadyRan=' + alreadyRan + ' token=' + !!bearerToken);
+            renderFromCacheEarly();
             // Token already captured (SPA nav from another page in same session) — trigger run
             if (!alreadyRan && bearerToken) {
                 alreadyRan = true;
@@ -1122,12 +1159,15 @@
         if (runInProgress) return;
         runInProgress = true;
         dbLog('run: start');
-        // Instant render from cache only while no panel exists yet (initial load);
-        // re-rendering an already visible panel would just rebuild identical content
-        // and destroy transient button states (e.g. the ⏳ on the refresh button).
+        // Instant render from cache only while no panel exists yet (fallback — normally
+        // renderFromCacheEarly() has already done this at navigation time); re-rendering
+        // an already visible panel would just rebuild identical content and destroy
+        // transient button states (e.g. the ⏳ on the refresh button).
         const cache = document.getElementById('dbmrpp-root') ? null : loadRenderCache();
         if (cache) {
             dbLog('run: instant render from cache (' + cache.trips.length + ' trips)');
+            dataIsStale = true;
+            staleCachedAt = cache.cachedAt;
             try { await renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit); } catch (_) {}
         }
         try {
@@ -1174,6 +1214,8 @@
             const previous = lastVisit ? JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') : null;
             const changes = previous ? diffSnapshots(previous, current) : { neu: [], entfernt: [], geaendert: [] };
 
+            dataIsStale = false;
+            staleCachedAt = null;
             await renderUI(trips, orphans, changes, lastVisit);
             saveRenderCache(trips, orphans, changes, lastVisit);
             dbLog('run: done (' + trips.length + ' trips)');
@@ -1228,6 +1270,7 @@
             const data = await res.json();
             const id = data.kundenProfile && data.kundenProfile[0] && data.kundenProfile[0].id;
             if (id) {
+                if (kundenprofilId && kundenprofilId !== id) clearRenderCache();
                 kundenprofilId = id;
                 try { localStorage.setItem(KUNDENPROFIL_KEY, id); } catch (_) {}
                 console.log('[DBMRPP] kundenprofilId from kundenkonto/v2:', id);
@@ -3616,6 +3659,13 @@
 
                     .dbmrpp-version-link:hover { color: #fff; }
 
+                    .dbmrpp-stale-hint {
+                        color: rgba(255,255,255,.85);
+                        font-size: 11px;
+                        font-weight: 400;
+                        white-space: nowrap;
+                    }
+
                     #dbmrpp-root h2 button {
                         background: transparent;
                         border: 1px solid rgba(255,255,255,.6);
@@ -4105,6 +4155,7 @@
             if (confirm(T.alertResetConfirm)) {
                 localStorage.removeItem(STORAGE_KEY);
                 localStorage.removeItem(LAST_VISIT_KEY);
+                clearRenderCache(); // don't resurrect pre-reset changes on next visit
                 hidePanel();
                 run(); // re-fetch with clean snapshot so diff starts fresh
             }
@@ -4684,7 +4735,7 @@
         return `
         <h2>
                     <span class="dbmrpp-header-top">
-                        <span class="dbmrpp-title-wrap"><span>${T.title}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a></span>
+                        <span class="dbmrpp-title-wrap"><span>${T.title}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a>${dataIsStale ? `<span class="dbmrpp-stale-hint" title="${T.ttStaleHint}${staleCachedAt ? ` (${T.staleAsOf} ${new Date(staleCachedAt).toLocaleString()})` : ''}">⏳ ${T.staleHint}</span>` : ''}</span>
                         <button class="dbmrpp-close" title="${T.ttClose}">×</button>
                     </span>
                     <span class="dbmrpp-header-actions">

@@ -14,6 +14,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## Changed
 - **grant GM_xmlhttpRequest instead of none** - necessary for caldav/webdav
+- **instant panel on page load** - the render cache moved from sessionStorage (60s TTL) to localStorage (no TTL, guarded by kundenprofilId) and now renders at navigation time instead of after token capture, so the FAB and panel are usable seconds before bahn.de's own JS has booted; a ⏳ "refreshing…" hint in the panel header marks the data as cached (tooltip shows its timestamp) until the background refresh lands
 - **indicate passenger rights claim, if filed** - we already allowed to check for it; once a claim is known, the claim (date + claim ids) is now rendered permanently as a highlighted notice below the trip info (same styling as the "no claim filed" answer) and the § query button disappears
 - **unified loading indicator** - every button that triggers an API call now shows ⏳ while the request is running, including the header refresh button (whose reload previously gave no visual feedback)
 - **consistent change block rendering** - new, changed and removed trips now share one compact row renderer (route, departure time, diff lines) with a slim action strip of routing, tag and note buttons instead of a mix of the full trip line and a minimal changed-trip layout
