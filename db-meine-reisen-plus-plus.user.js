@@ -111,7 +111,7 @@
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
             settingsShowCancelledTrips: 'Show cancelled trips',
-            settingsShowCancelledTripsDesc: 'If disabled, fully cancelled trips are hidden in both the upcoming and past view. Partially cancelled trips are always shown.',
+            settingsShowCancelledTripsDesc: 'If disabled, fully cancelled trips are hidden in both the upcoming and past view and are also excluded from the ICS and CSV exports. Partially cancelled trips are always shown.',
             settingsGroupGeneral:       'General',
             settingsGroupPast:          'Past view',
             settingsGroupTripExports:        'Trip exports',
@@ -379,7 +379,7 @@
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
             settingsShowCancelledTrips: 'Stornierte Reisen anzeigen',
-            settingsShowCancelledTripsDesc: 'Wenn deaktiviert, werden vollständig stornierte Reisen weder in der bevorstehenden noch in der vergangenen Ansicht angezeigt. Teilweise stornierte Reisen werden immer angezeigt.',
+            settingsShowCancelledTripsDesc: 'Wenn deaktiviert, werden vollständig stornierte Reisen weder in der bevorstehenden noch in der vergangenen Ansicht angezeigt und auch vom ICS- und CSV-Export ausgenommen. Teilweise stornierte Reisen werden immer angezeigt.',
             settingsGroupGeneral:       'Allgemein',
             settingsGroupPast:          'Vergangenheitsansicht',
             settingsGroupTripExports:        'Reisen-Exporte',
@@ -1497,24 +1497,41 @@
             const text = toNotificationText(m);
             if (!text || seen.has(text)) return;
             seen.add(text);
-            out.push({ text });
+            // kind marks synthesized entries (e.g. 'deviation') so renderers
+            // can treat them differently from verbose RIS/HIM messages.
+            out.push(m && m.kind ? { text, kind: m.kind } : { text });
         });
         return out;
     }
 
-    function collectNotificationsFromTripShape(tripLike) {
+    // Flattens him/priorisierte/ris messages from the top level and every
+    // abschnitt of a trip-shaped object (bulk entry or detail trip). With
+    // labelSegments, segment messages get their train name as prefix so it is
+    // clear which train of the journey a message belongs to.
+    function collectTripMessages(tripLike, { labelSegments = false } = {}) {
         if (!tripLike || typeof tripLike !== 'object') return [];
+        const msgsOf = o => [
+            ...((o && o.himMeldungen) || []),
+            ...((o && o.priorisierteMeldungen) || []),
+            ...((o && o.risNotizen) || [])
+        ];
         const abschnitte = Array.isArray(tripLike.verbindungsAbschnitte) ? tripLike.verbindungsAbschnitte : [];
-        return normalizeNotificationEntries([
-            ...(tripLike.himMeldungen || []),
-            ...(tripLike.priorisierteMeldungen || []),
-            ...(tripLike.risNotizen || []),
-            ...abschnitte.flatMap(a => [
-                ...((a && a.himMeldungen) || []),
-                ...((a && a.priorisierteMeldungen) || []),
-                ...((a && a.risNotizen) || [])
-            ])
-        ]);
+        const segMsgs = abschnitte.flatMap(a => {
+            const raw = msgsOf(a);
+            if (!labelSegments || !raw.length) return raw;
+            const vm = (a && a.verkehrsmittel) || {};
+            const label = vm.langText || vm.mittelText || vm.name || '';
+            if (!label) return raw;
+            return raw.map(m => {
+                const text = toNotificationText(m);
+                return text ? { text: `${label}: ${text}` } : m;
+            });
+        });
+        return [...msgsOf(tripLike), ...segMsgs];
+    }
+
+    function collectNotificationsFromTripShape(tripLike) {
+        return normalizeNotificationEntries(collectTripMessages(tripLike));
     }
 
     function buildTripHistoryEntry(t, cachedAtOverride) {
@@ -1534,15 +1551,16 @@
         return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
     }
 
-    // Preserve updatedAt while the content is unchanged; bump it on any real
-    // change so sync merges can order entry versions (cachedAt never moves).
-    function stampHistoryEntryUpdatedAt(entry, prev) {
-        if (prev && prev.updatedAt && historyEntryContentEquals(prev, entry)) {
-            entry.updatedAt = prev.updatedAt;
-        } else {
-            entry.updatedAt = new Date().toISOString();
-        }
-        return entry;
+    // Writes an entry into tripHistory, preserving updatedAt while the content
+    // is unchanged and bumping it on any real change so sync merges can order
+    // entry versions (cachedAt never moves). Skips the write when the stored
+    // entry would be identical; returns whether anything was written.
+    function commitHistoryEntry(key, entry, prev) {
+        const unchanged = prev && historyEntryContentEquals(prev, entry);
+        entry.updatedAt = (unchanged && prev.updatedAt) ? prev.updatedAt : new Date().toISOString();
+        if (unchanged && prev.updatedAt === entry.updatedAt) return false;
+        tripHistory.entries[key] = entry;
+        return true;
     }
 
     function historyEntryPrimaryKey(entry) {
@@ -1597,10 +1615,7 @@
             const prev = tripHistory.entries[key] || null;
             const entry = buildTripHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
             if (!entry) return;
-            stampHistoryEntryUpdatedAt(entry, prev);
-            if (prev && prev.updatedAt === entry.updatedAt && historyEntryContentEquals(prev, entry)) return;
-            tripHistory.entries[key] = entry;
-            changed = true;
+            if (commitHistoryEntry(key, entry, prev)) changed = true;
         });
         if (!changed) return;
         pruneTripHistory();
@@ -1651,10 +1666,7 @@
                     arrival:   fahrt.ankunft  || null,
                 };
                 const entry = makeHistoryEntryShape(src, ids, (prev && prev.cachedAt) || new Date().toISOString());
-                stampHistoryEntryUpdatedAt(entry, prev);
-                if (prev && prev.updatedAt === entry.updatedAt && historyEntryContentEquals(prev, entry)) return;
-                tripHistory.entries[key] = entry;
-                changed = true;
+                if (commitHistoryEntry(key, entry, prev)) changed = true;
             });
         });
         if (!changed) return;
@@ -2484,9 +2496,8 @@
                 if (!h || !h.name) return;
                 [['ankunft', T.deviationArr], ['abfahrt', T.deviationDep]].forEach(([k, word]) => {
                     const ev = h[k];
-                    if (!ev || !ev.sollzeit || !ev.echtzeit || ev.echtzeit === ev.sollzeit) return;
-                    const min = Math.round((new Date(ev.echtzeit) - new Date(ev.sollzeit)) / 60000);
-                    if (!min || !Number.isFinite(min)) return;
+                    const min = ev ? delayMinutes(ev.sollzeit, ev.echtzeit) : null;
+                    if (min === null) return;
                     const sign = min > 0 ? '+' : '';
                     parts.push(`${h.name} ${word} ${sign}${min}' (${formatTime(ev.echtzeit)})`);
                 });
@@ -2494,7 +2505,7 @@
             if (a.originCancelled && a.abfahrtsOrt) parts.push(`${a.abfahrtsOrt}: ${T.deviationStopCancelled}`);
             if (a.destinationCancelled && a.ankunftsOrt) parts.push(`${a.ankunftsOrt}: ${T.deviationStopCancelled}`);
             if (!parts.length) return;
-            out.push({ text: `${label ? label + ': ' : ''}${parts.join(', ')}` });
+            out.push({ text: `${label ? label + ': ' : ''}${parts.join(', ')}`, kind: 'deviation' });
         });
         return out;
     }
@@ -2502,29 +2513,9 @@
     async function loadAbweichungMessages(t) {
         const data = await fetchDetail(t.uuid);
         const trip0 = getDetailTrip(data);
-        const abschnitte = Array.isArray(trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
-        const topMsgs = [
-            ...(trip0.himMeldungen         || []),
-            ...(trip0.priorisierteMeldungen || []),
-            ...(trip0.risNotizen           || []),
-        ];
-        const segMsgs = abschnitte.flatMap(a => {
-            if (!a) return [];
-            const vm = a.verkehrsmittel || {};
-            const label = vm.langText || vm.mittelText || vm.name || '';
-            const raw = [
-                ...((a.himMeldungen) || []),
-                ...((a.priorisierteMeldungen) || []),
-                ...((a.risNotizen) || [])
-            ];
-            if (!label || !raw.length) return raw;
-            return raw.map(m => {
-                const text = toNotificationText(m);
-                return text ? { text: `${label}: ${text}` } : m;
-            });
-        });
         const deviations = collectDetailDeviationEntries(trip0);
-        const normalized = normalizeNotificationEntries([...deviations, ...topMsgs, ...segMsgs]);
+        const messages = collectTripMessages(trip0, { labelSegments: true });
+        const normalized = normalizeNotificationEntries([...deviations, ...messages]);
         if (t && normalized.length) {
             t.notifications = normalized;
             if (t.fromReiseketten) upsertTripHistoryFromReiseketten([t]);
@@ -2818,10 +2809,14 @@
                 fs.tags.every(tagId => getTripTagIds(t).includes(tagId))
             );
         }
-        if (!uiSettings.showCancelledTrips) {
-            result = result.filter(t => t.storniertStatus !== 'STORNIERT');
-        }
         return result;
+    }
+
+    // Trip pool of the active view with the cancelled-trips setting applied.
+    // Single source for both the rendered list and the ICS/CSV exports.
+    function visibleTripPool(trips, orphans, isPast) {
+        const raw = isPast ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
+        return uiSettings.showCancelledTrips ? raw : raw.filter(t => t.storniertStatus !== 'STORNIERT');
     }
 
     function filterUpcomingTrips(trips) {
@@ -2838,6 +2833,17 @@
         if (!lastRenderArgs) return;
         const { trips, orphans, changes, lastVisit } = lastRenderArgs;
         renderUI(trips, orphans, changes, lastVisit);
+    }
+
+    // Swaps only the dynamic part below the settings bar (change block, tabs,
+    // filters, trip list). Header and settings bar DOM stay alive, so open
+    // <details> groups, focus and scroll position survive filter interactions.
+    function reRenderContent() {
+        if (!lastRenderArgs) return;
+        const content = document.getElementById('dbmrpp-content');
+        if (!content) { reRender(); return; }
+        const { trips, orphans, changes, lastVisit } = lastRenderArgs;
+        content.innerHTML = buildContent(trips, orphans, changes, lastVisit);
     }
 
     function formatReisende(reisende) {
@@ -3942,6 +3948,15 @@
                     }
                     .dbmrpp-cache-label { font-weight: 600; color: #222; }
                     .dbmrpp-cache-msg { margin-top: 3px; padding-left: 2px; }
+                    .dbmrpp-trip-notifications {
+                        margin: 2px 0;
+                        color: var(--dbmrpp-text-muted);
+                        font-size: 11.5px;
+                        line-height: 1.4;
+                    }
+                    .dbmrpp-notif-collapse summary { cursor: pointer; }
+                    .dbmrpp-notif-collapse[open] summary { margin-bottom: 2px; }
+                    .dbmrpp-notif-msg { margin: 2px 0 2px 16px; }
                     .dbmrpp-cache-missing { background: #f7f7f7; border-left-color: #9ca3af; color: #666; }
                     .dbmrpp-cache-tags { margin-top: 4px; }
 
@@ -3965,12 +3980,16 @@
                     .dbmrpp-early { color: #265c26; font-weight: 600; }
                     .dbmrpp-plan-change { color: #7a5c00; font-size: 11px; font-weight: 500; }
 
+                    /* Sits inside .dbmrpp-section below the view tabs; negative
+                       margins bleed it to the section edges and pull it flush
+                       under the tab-bar border. */
                     .dbmrpp-filter-bar {
                         display: grid;
                         gap: 6px;
                         padding: 6px 14px;
                         border-bottom: 1px solid var(--dbmrpp-divider);
                         background: #fafafa;
+                        margin: -8px -14px 10px;
                     }
 
                     .dbmrpp-filter-row {
@@ -3993,6 +4012,10 @@
                         font-weight: 700;
                         color: #27408a;
                     }
+
+                    .dbmrpp-settings-btn-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+                    .dbmrpp-settings-status { font-size: 11px; color: var(--dbmrpp-text-muted); }
+                    .dbmrpp-settings-hr { margin: 10px 0; border: none; border-top: 1px solid var(--dbmrpp-border); }
 
                     .dbmrpp-settings-group {
                         border-top: 1px solid var(--dbmrpp-border);
@@ -4126,6 +4149,8 @@
 
                     .dbmrpp-view-tab.active { color: var(--dbmrpp-accent); border-bottom-color: var(--dbmrpp-accent); }
                     .dbmrpp-view-tab:hover:not(.active) { color: #444; }
+                    .dbmrpp-tab-badge { color: var(--dbmrpp-accent); font-weight: 700; font-size: 9.5px; margin-left: 1px; }
+                    .dbmrpp-changes-current { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--dbmrpp-divider); }
                     .dbmrpp-view-count {
                         margin-left: auto;
                         font-size: 12px;
@@ -4793,9 +4818,11 @@
                 if (!msgs.length) {
                     detailDiv.textContent = T.abweichungNone;
                 } else {
-                    detailDiv.innerHTML = msgs.map(m =>
-                        `<div class="dbmrpp-abweichung-msg">${esc((m && m.text) || '')}</div>`
-                    ).join('');
+                    detailDiv.innerHTML = msgs.map(m => {
+                        const text = (m && m.text) || '';
+                        const html = isDeviationEntry(m) ? deviationTextHtml(text) : esc(text);
+                        return `<div class="dbmrpp-abweichung-msg">${html}</div>`;
+                    }).join('');
                 }
             });
         } catch (err) {
@@ -4824,8 +4851,8 @@
 
     function bindTripActionHandlers(root, trips, orphans) {
         const getFilteredPool = () => {
-            const pool = activeView === 'past' ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
-            return filterTrips(pool, filterState, activeView === 'past');
+            const isPast = activeView === 'past';
+            return filterTrips(visibleTripPool(trips, orphans, isPast), filterState, isPast);
         };
 
         root.querySelector('.dbmrpp-ics-bulk').addEventListener('click', () => {
@@ -4860,43 +4887,58 @@
         });
     }
 
+    // All filter/tab controls live inside #dbmrpp-content, which gets swapped
+    // on every interaction — so the handlers are delegated from the root and
+    // survive the swaps without re-binding.
     function bindFilterHandlers(root) {
-        const fromSel = root.querySelector('#dbmrpp-from-sel');
-        if (fromSel) fromSel.addEventListener('change', e => { filterState.from = e.target.value; rememberUiState(); reRender(); });
-        const toSel = root.querySelector('#dbmrpp-to-sel');
-        if (toSel)   toSel.addEventListener('change',   e => { filterState.to   = e.target.value; rememberUiState(); reRender(); });
-        root.querySelectorAll('.dbmrpp-day-btn').forEach(btn =>
-            btn.addEventListener('click', () => { filterState.days = Number(btn.getAttribute('data-days')); rememberUiState(); reRender(); })
-        );
-        const tagSel = root.querySelector('#dbmrpp-tag-sel');
-        if (tagSel) tagSel.addEventListener('change', e => {
-            if (e.target.value) {
+        root.addEventListener('change', e => {
+            const id = e.target.id;
+            if (id === 'dbmrpp-from-sel') {
+                filterState.from = e.target.value;
+            } else if (id === 'dbmrpp-to-sel') {
+                filterState.to = e.target.value;
+            } else if (id === 'dbmrpp-tag-sel') {
+                if (!e.target.value) return;
                 if (!filterState.tags.includes(e.target.value)) {
                     filterState.tags.push(e.target.value);
                 }
-                e.target.value = '';
-                rememberUiState();
-                reRender();
+            } else {
+                return;
             }
+            rememberUiState();
+            reRenderContent();
         });
-        root.querySelectorAll('.dbmrpp-tag-remove').forEach(btn =>
-            btn.addEventListener('click', () => {
-                const tagId = btn.getAttribute('data-tag');
+
+        root.addEventListener('click', ev => {
+            const dayBtn = ev.target.closest('.dbmrpp-day-btn');
+            if (dayBtn) {
+                filterState.days = Number(dayBtn.getAttribute('data-days'));
+                rememberUiState();
+                reRenderContent();
+                return;
+            }
+            const tagRemove = ev.target.closest('.dbmrpp-tag-remove');
+            if (tagRemove) {
+                const tagId = tagRemove.getAttribute('data-tag');
                 filterState.tags = filterState.tags.filter(t => t !== tagId);
                 rememberUiState();
-                reRender();
-            })
-        );
-        const changesToggle = root.querySelector('.dbmrpp-changes-toggle');
-        if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyProblems = !filterState.onlyProblems; rememberUiState(); reRender(); });
-        const changeLogClear = root.querySelector('.dbmrpp-changelog-clear');
-        if (changeLogClear) changeLogClear.addEventListener('click', () => {
-            if (!confirm(T.alertChangeLogClearConfirm)) return;
-            try { localStorage.removeItem(CHANGE_LOG_KEY); } catch (_) {}
-            reRender();
-        });
-        root.querySelectorAll('.dbmrpp-view-tab').forEach(tab =>
-            tab.addEventListener('click', () => {
+                reRenderContent();
+                return;
+            }
+            if (ev.target.closest('.dbmrpp-changes-toggle')) {
+                filterState.onlyProblems = !filterState.onlyProblems;
+                rememberUiState();
+                reRenderContent();
+                return;
+            }
+            if (ev.target.closest('.dbmrpp-changelog-clear')) {
+                if (!confirm(T.alertChangeLogClearConfirm)) return;
+                try { localStorage.removeItem(CHANGE_LOG_KEY); } catch (_) {}
+                reRenderContent();
+                return;
+            }
+            const tab = ev.target.closest('.dbmrpp-view-tab');
+            if (tab) {
                 activeView = tab.getAttribute('data-view');
                 if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
                 if (!uiSettings.rememberFilter) {
@@ -4904,30 +4946,49 @@
                     if (activeView === 'past') filterState.onlyProblems = false;
                 }
                 rememberUiState();
-                reRender();
-            })
-        );
+                reRenderContent();
+            }
+        });
     }
 
     // =========================================================
     // 18) HTML builders
     // =========================================================
-    function buildHTML(trips, orphans, changes, lastVisit) {
-        const isPast = activeView === 'past';
-        const isChanges = activeView === 'changes';
-        const rawPool    = isPast ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
-        const sourcePool = uiSettings.showCancelledTrips ? rawPool : rawPool.filter(t => t.storniertStatus !== 'STORNIERT');
-        const filtered    = filterTrips(sourcePool, filterState, isPast);
-        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyProblems: false, tags: [] }, isPast);
-        const availableTags = collectAvailableTags(filtered);
-        const fromOptions = [...new Set(
-            dayFiltered.filter(t => !filterState.to   || t.to   === filterState.to).map(t => t.from).filter(Boolean)
-        )].sort();
-        const toOptions = [...new Set(
-            dayFiltered.filter(t => !filterState.from || t.from === filterState.from).map(t => t.to).filter(Boolean)
-        )].sort();
-        const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
+    // One checkbox setting, optionally with an info line below it.
+    // opts: desc (info text), disabled, style (inline style for the label).
+    function settingsToggle(id, checked, label, opts = {}) {
+        return `<label class="dbmrpp-settings-toggle"${opts.style ? ` style="${opts.style}"` : ''}>
+                        <input type="checkbox" id="${id}"${checked ? ' checked' : ''}${opts.disabled ? ' disabled' : ''}>
+                        <span>${label}</span>
+                    </label>${opts.desc ? `
+                    <div class="dbmrpp-settings-info-text">${opts.desc}</div>` : ''}`;
+    }
 
+    // Dependent provider/format dropdown; options is an array of [value, label].
+    function settingsSelect(id, label, enabled, current, options) {
+        return `<label class="dbmrpp-settings-provider dbmrpp-settings-sub">
+                        <span>${label}</span>
+                        <select id="${id}"${enabled ? '' : ' disabled'}>
+                            ${options.map(([v, l]) => `<option value="${v}"${current === v ? ' selected' : ''}>${l}</option>`).join('')}
+                        </select>
+                    </label>`;
+    }
+
+    // Labelled text/password input row for the sync settings.
+    // opts: type ('text' default), placeholder, autocomplete.
+    function settingsInput(id, label, value, enabled, opts = {}) {
+        return `<label class="dbmrpp-webdav-row">
+                        <span>${label}</span>
+                        <input type="${opts.type || 'text'}" id="${id}" class="dbmrpp-webdav-input" value="${esc(value)}"${opts.placeholder ? ` placeholder="${opts.placeholder}"` : ''}${opts.autocomplete ? ` autocomplete="${opts.autocomplete}"` : ''}${enabled ? '' : ' disabled'}>
+                    </label>`;
+    }
+
+    function debugLogEntryCount() {
+        try { return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || '[]').length + _debugBuffer.length; }
+        catch (_) { return _debugBuffer.length; }
+    }
+
+    function buildHTML(trips, orphans, changes, lastVisit) {
         return `
         <h2>
                     <span class="dbmrpp-header-top">
@@ -4941,76 +5002,48 @@
                         <button class="dbmrpp-settings-btn" title="${T.ttSettings}">⚙️</button>
                     </span>
         </h2>
+        ${buildSettingsBar()}
+        <div id="dbmrpp-content">${buildContent(trips, orphans, changes, lastVisit)}</div>`;
+    }
+
+    // The collapsible settings bar between the header and the content area.
+    function buildSettingsBar() {
+        return `
         <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
             <div class="dbmrpp-settings-title">${T.settingsTitle}</div>
             <details class="dbmrpp-settings-group" open>
                 <summary>${T.settingsGroupGeneral}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-remember-filter"${uiSettings.rememberFilter ? ' checked' : ''}>
-                        <span>${T.settingsRememberFilter}</span>
-                    </label>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-open-on-load"${uiSettings.openOnLoad ? ' checked' : ''}>
-                        <span>${T.settingsOpenOnLoad}</span>
-                    </label>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-show-cancelled-trips"${uiSettings.showCancelledTrips !== false ? ' checked' : ''}>
-                        <span>${T.settingsShowCancelledTrips}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsShowCancelledTripsDesc}</div>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-use-past-cache"${uiSettings.usePastCache ? ' checked' : ''}>
-                        <span>${T.settingsUsePastCacheLabel}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsUsePastCacheDesc}</div>
+                    ${settingsToggle('dbmrpp-setting-remember-filter', uiSettings.rememberFilter, T.settingsRememberFilter)}
+                    ${settingsToggle('dbmrpp-setting-open-on-load', uiSettings.openOnLoad, T.settingsOpenOnLoad)}
+                    ${settingsToggle('dbmrpp-setting-show-cancelled-trips', uiSettings.showCancelledTrips, T.settingsShowCancelledTrips, { desc: T.settingsShowCancelledTripsDesc })}
+                    ${settingsToggle('dbmrpp-setting-use-past-cache', uiSettings.usePastCache, T.settingsUsePastCacheLabel, { desc: T.settingsUsePastCacheDesc })}
                 </div>
             </details>
             <details class="dbmrpp-settings-group" open>
                 <summary>${T.settingsGroupTripExports}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-show-geo-button"${uiSettings.showGeoButton !== false ? ' checked' : ''}>
-                        <span>${T.settingsShowGeoButton}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsShowGeoButtonDesc}</div>
-                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
-                        <span>${T.settingsGeoFormat}</span>
-                        <select id="dbmrpp-setting-geo-format"${uiSettings.showGeoButton !== false ? '' : ' disabled'}>
-                            <option value="gpx"${uiSettings['geo-format'] === 'gpx' ? ' selected' : ''}>${T.settingsGeoFormatGpx}</option>
-                            <option value="geojson"${uiSettings['geo-format'] === 'geojson' ? ' selected' : ''}>${T.settingsGeoFormatGeojson}</option>
-                        </select>
-                    </label>
+                    ${settingsToggle('dbmrpp-setting-show-geo-button', uiSettings.showGeoButton, T.settingsShowGeoButton, { desc: T.settingsShowGeoButtonDesc })}
+                    ${settingsSelect('dbmrpp-setting-geo-format', T.settingsGeoFormat, uiSettings.showGeoButton, uiSettings['geo-format'], [
+                        ['gpx', T.settingsGeoFormatGpx],
+                        ['geojson', T.settingsGeoFormatGeojson],
+                    ])}
                 </div>
             </details>
             <details class="dbmrpp-settings-group">
                 <summary>${T.settingsGroupExternalLinks}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-show-routing-button"${uiSettings.showRoutingButton ? ' checked' : ''}>
-                        <span>${T.settingsShowRoutingButton}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsShowRoutingButtonDesc}</div>
-                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
-                        <span>${T.settingsRoutingLinkProvider}</span>
-                        <select id="dbmrpp-setting-routing-provider"${uiSettings.showRoutingButton ? '' : ' disabled'}>
-                            <option value="bahn.expert"${uiSettings['routing-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsRoutingProviderBahnExpert}</option>
-                            <option value="chuuchuu"${uiSettings['routing-provider'] === 'chuuchuu' ? ' selected' : ''}>${T.settingsRoutingProviderChuuchuu}</option>
-                            <option value="transitous.org"${uiSettings['routing-provider'] === 'transitous.org' ? ' selected' : ''}>${T.settingsRoutingProviderTransitous}</option>
-                        </select>
-                    </label>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-train-links"${uiSettings.trainLinksEnabled ? ' checked' : ''}>
-                        <span>${T.settingsTrainLinksEnabled}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsTrainLinksDesc}</div>
-                    <label class="dbmrpp-settings-provider dbmrpp-settings-sub">
-                        <span>${T.settingsTrainLinkProvider}</span>
-                        <select id="dbmrpp-setting-traininfo-provider"${uiSettings.trainLinksEnabled ? '' : ' disabled'}>
-                            <option value="zugfinder"${uiSettings['traininfo-provider'] === 'zugfinder' ? ' selected' : ''}>${T.settingsTrainProviderZugfinder}</option>
-                            <option value="bahn.expert"${uiSettings['traininfo-provider'] === 'bahn.expert' ? ' selected' : ''}>${T.settingsTrainProviderBahnExpert}</option>
-                        </select>
-                    </label>
+                    ${settingsToggle('dbmrpp-setting-show-routing-button', uiSettings.showRoutingButton, T.settingsShowRoutingButton, { desc: T.settingsShowRoutingButtonDesc })}
+                    ${settingsSelect('dbmrpp-setting-routing-provider', T.settingsRoutingLinkProvider, uiSettings.showRoutingButton, uiSettings['routing-provider'], [
+                        ['bahn.expert', T.settingsRoutingProviderBahnExpert],
+                        ['chuuchuu', T.settingsRoutingProviderChuuchuu],
+                        ['transitous.org', T.settingsRoutingProviderTransitous],
+                    ])}
+                    ${settingsToggle('dbmrpp-setting-train-links', uiSettings.trainLinksEnabled, T.settingsTrainLinksEnabled, { desc: T.settingsTrainLinksDesc })}
+                    ${settingsSelect('dbmrpp-setting-traininfo-provider', T.settingsTrainLinkProvider, uiSettings.trainLinksEnabled, uiSettings['traininfo-provider'], [
+                        ['zugfinder', T.settingsTrainProviderZugfinder],
+                        ['bahn.expert', T.settingsTrainProviderBahnExpert],
+                    ])}
                 </div>
             </details>
             <details class="dbmrpp-settings-group">
@@ -5024,86 +5057,40 @@
             <details class="dbmrpp-settings-group">
                 <summary>${esc(T.settingsGroupSync)}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-webdav-enabled"${webdavConfig.enabled ? ' checked' : ''}>
-                        <span>${esc(T.settingsWebDavEnabled)}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsWebDavSyncDesc)}</div>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsWebDavUrl)}</span>
-                        <input type="text" id="dbmrpp-webdav-url" class="dbmrpp-webdav-input" value="${esc(webdavConfig.url)}" placeholder="https://…/dbmrpp-sync.json"${webdavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsWebDavUsername)}</span>
-                        <input type="text" id="dbmrpp-webdav-username" class="dbmrpp-webdav-input" value="${esc(webdavConfig.username)}" autocomplete="off"${webdavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsWebDavPassword)}</span>
-                        <input type="password" id="dbmrpp-webdav-password" class="dbmrpp-webdav-input" value="${esc(webdavConfig.password)}" autocomplete="new-password"${webdavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                    ${settingsToggle('dbmrpp-webdav-enabled', webdavConfig.enabled, esc(T.settingsWebDavEnabled), { desc: esc(T.settingsWebDavSyncDesc) })}
+                    ${settingsInput('dbmrpp-webdav-url', esc(T.settingsWebDavUrl), webdavConfig.url, webdavConfig.enabled, { placeholder: 'https://…/dbmrpp-sync.json' })}
+                    ${settingsInput('dbmrpp-webdav-username', esc(T.settingsWebDavUsername), webdavConfig.username, webdavConfig.enabled, { autocomplete: 'off' })}
+                    ${settingsInput('dbmrpp-webdav-password', esc(T.settingsWebDavPassword), webdavConfig.password, webdavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
+                    <div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-settings-reset dbmrpp-webdav-save">${esc(T.settingsWebDavSave)}</button>
                         <button class="dbmrpp-settings-reset dbmrpp-webdav-sync-now"${webdavConfig.enabled && webdavConfig.url ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
                     </div>
-                    <div id="dbmrpp-webdav-status" style="font-size:11px;color:var(--dbmrpp-text-muted)">${esc(webdavSyncStatusText())}</div>
-                    <hr style="margin:10px 0;border:none;border-top:1px solid var(--dbmrpp-border)">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-caldav-enabled"${caldavConfig.enabled ? ' checked' : ''}>
-                        <span>${esc(T.settingsCalDavEnabled)}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavSyncDesc)}</div>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsCalDavUrl)}</span>
-                        <input type="text" id="dbmrpp-caldav-url" class="dbmrpp-webdav-input" value="${esc(caldavConfig.url)}" placeholder="https://…/dav/calendars/user/trips/"${caldavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsCalDavUsername)}</span>
-                        <input type="text" id="dbmrpp-caldav-username" class="dbmrpp-webdav-input" value="${esc(caldavConfig.username)}" autocomplete="off"${caldavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <label class="dbmrpp-webdav-row">
-                        <span>${esc(T.settingsCalDavPassword)}</span>
-                        <input type="password" id="dbmrpp-caldav-password" class="dbmrpp-webdav-input" value="${esc(caldavConfig.password)}" autocomplete="new-password"${caldavConfig.enabled ? '' : ' disabled'}>
-                    </label>
-                    <label class="dbmrpp-settings-toggle" style="margin-top:4px">
-                        <input type="checkbox" id="dbmrpp-caldav-include-past"${caldavConfig.includePastTrips ? ' checked' : ''}${caldavConfig.enabled ? '' : ' disabled'}>
-                        <span>${esc(T.settingsCalDavIncludePast)}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludePastDesc)}</div>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-caldav-include-cached"${caldavConfig.includeCachedTrips ? ' checked' : ''}${caldavConfig.enabled && caldavConfig.includePastTrips ? '' : ' disabled'}>
-                        <span>${esc(T.settingsCalDavIncludeCached)}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludeCachedDesc)}</div>
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-caldav-include-leistung"${caldavConfig.includeLeistungTickets ? ' checked' : ''}${caldavConfig.enabled ? '' : ' disabled'}>
-                        <span>${esc(T.settingsCalDavIncludeLeistung)}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsCalDavIncludeLeistungDesc)}</div>
-                    <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
+                    <div id="dbmrpp-webdav-status" class="dbmrpp-settings-status">${esc(webdavSyncStatusText())}</div>
+                    <hr class="dbmrpp-settings-hr">
+                    ${settingsToggle('dbmrpp-caldav-enabled', caldavConfig.enabled, esc(T.settingsCalDavEnabled), { desc: esc(T.settingsCalDavSyncDesc) })}
+                    ${settingsInput('dbmrpp-caldav-url', esc(T.settingsCalDavUrl), caldavConfig.url, caldavConfig.enabled, { placeholder: 'https://…/dav/calendars/user/trips/' })}
+                    ${settingsInput('dbmrpp-caldav-username', esc(T.settingsCalDavUsername), caldavConfig.username, caldavConfig.enabled, { autocomplete: 'off' })}
+                    ${settingsInput('dbmrpp-caldav-password', esc(T.settingsCalDavPassword), caldavConfig.password, caldavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
+                    ${settingsToggle('dbmrpp-caldav-include-past', caldavConfig.includePastTrips, esc(T.settingsCalDavIncludePast), { desc: esc(T.settingsCalDavIncludePastDesc), disabled: !caldavConfig.enabled, style: 'margin-top:4px' })}
+                    ${settingsToggle('dbmrpp-caldav-include-cached', caldavConfig.includeCachedTrips, esc(T.settingsCalDavIncludeCached), { desc: esc(T.settingsCalDavIncludeCachedDesc), disabled: !(caldavConfig.enabled && caldavConfig.includePastTrips) })}
+                    ${settingsToggle('dbmrpp-caldav-include-leistung', caldavConfig.includeLeistungTickets, esc(T.settingsCalDavIncludeLeistung), { desc: esc(T.settingsCalDavIncludeLeistungDesc), disabled: !caldavConfig.enabled })}
+                    <div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-settings-reset dbmrpp-caldav-save">${esc(T.settingsCalDavSave)}</button>
                         <button class="dbmrpp-settings-reset dbmrpp-caldav-push-now"${caldavConfig.enabled && caldavConfig.url ? '' : ' disabled'}>${esc(T.settingsCalDavSyncNow)}</button>
                     </div>
-                    <div id="dbmrpp-caldav-status" style="font-size:11px;color:var(--dbmrpp-text-muted)">${esc(calDavSyncStatusText())}</div>
+                    <div id="dbmrpp-caldav-status" class="dbmrpp-settings-status">${esc(calDavSyncStatusText())}</div>
                 </div>
             </details>
             <details class="dbmrpp-settings-group">
                 <summary>${T.settingsGroupDev}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <label class="dbmrpp-settings-toggle">
-                        <input type="checkbox" id="dbmrpp-setting-show-json-button"${uiSettings.showJsonButton !== false ? ' checked' : ''}>
-                        <span>${T.settingsShowJsonButton}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsShowJsonButtonDesc}</div>
+                    ${settingsToggle('dbmrpp-setting-show-json-button', uiSettings.showJsonButton, T.settingsShowJsonButton, { desc: T.settingsShowJsonButtonDesc })}
                     <button class="dbmrpp-settings-bulk-json dbmrpp-settings-reset">${T.settingsDownloadBulkJson}</button>
-                    <label class="dbmrpp-settings-toggle" style="margin-top:8px">
-                        <input type="checkbox" id="dbmrpp-setting-debug-logging"${uiSettings.debugLogging ? ' checked' : ''}>
-                        <span>${T.settingsDebugLogging}</span>
-                    </label>
-                    <div class="dbmrpp-settings-info-text">${T.settingsDebugLoggingDesc}</div>
-                    ${uiSettings.debugLogging ? `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+                    ${settingsToggle('dbmrpp-setting-debug-logging', uiSettings.debugLogging, T.settingsDebugLogging, { desc: T.settingsDebugLoggingDesc, style: 'margin-top:8px' })}
+                    ${uiSettings.debugLogging ? `<div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-debug-log-copy dbmrpp-settings-reset">${esc(T.settingsDebugLogCopy)}</button>
                         <button class="dbmrpp-debug-log-clear dbmrpp-settings-reset">${esc(T.settingsDebugLogClear)}</button>
-                        <span class="dbmrpp-debug-log-count" style="font-size:11px;color:var(--dbmrpp-text-muted)">${esc(T.settingsDebugLogEntries((() => { try { return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || '[]').length + _debugBuffer.length; } catch(_) { return _debugBuffer.length; } })()))}</span>
+                        <span class="dbmrpp-debug-log-count dbmrpp-settings-status">${esc(T.settingsDebugLogEntries(debugLogEntryCount()))}</span>
                     </div>` : ''}
                 </div>
             </details>
@@ -5127,10 +5114,29 @@
                     </div>
                 </div>
             </details>
-        </div>
-        ${isChanges ? '' : buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
-        ${isChanges ? '' : buildChangeBlock(changes, lastVisitTxt)}
-        ${isChanges ? buildChangeLogSection() : buildTripSection(filtered, sourcePool, isPast)}`;
+        </div>`;
+    }
+
+    // Everything below the settings bar: change block, view tabs, filters and
+    // the trip list / change log. Kept separate from buildHTML so filter and
+    // tab interactions can swap only this container (see reRenderContent).
+    function buildContent(trips, orphans, changes, lastVisit) {
+        const isPast = activeView === 'past';
+        const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
+        const changeCount = changes.neu.length + changes.geaendert.length + changes.entfernt.length;
+        if (activeView === 'changes') return buildChangeLogSection(changes, lastVisitTxt, changeCount);
+
+        const sourcePool = visibleTripPool(trips, orphans, isPast);
+        const filtered    = filterTrips(sourcePool, filterState, isPast);
+        const dayFiltered = filterTrips(sourcePool, { from: '', to: '', days: filterState.days, onlyProblems: false, tags: [] }, isPast);
+        const availableTags = collectAvailableTags(filtered);
+        const fromOptions = [...new Set(
+            dayFiltered.filter(t => !filterState.to   || t.to   === filterState.to).map(t => t.from).filter(Boolean)
+        )].sort();
+        const toOptions = [...new Set(
+            dayFiltered.filter(t => !filterState.from || t.from === filterState.from).map(t => t.to).filter(Boolean)
+        )].sort();
+        return buildTripSection(filtered, sourcePool, isPast, buildFilterBar(fromOptions, toOptions, availableTags, isPast), changeCount);
     }
 
     function buildFilterBar(fromOptions, toOptions, availableTags, isPast) {
@@ -5157,56 +5163,62 @@
                                     `<button class="dbmrpp-day-btn${filterState.days === d ? ' active' : ''}" data-days="${d}">${d === 0 ? T.dayAll : T.dayN(d)}</button>`
                             ).join('')}
                         </div>
-                        ${filterState.tags.length > 0 ? `<div class="dbmrpp-selected-tags">${filterState.tags.map(t => `<span class="dbmrpp-tag-filter">${esc(getTagLabel(t))} <button class="dbmrpp-tag-remove" data-tag="${esc(t)}" style="border:none;background:none;color:inherit;cursor:pointer;padding:0;margin-left:4px;">×</button></span>`).join('')}</div>` : ''}
+                        ${filterState.tags.length > 0 ? `<div class="dbmrpp-selected-tags">${filterState.tags.map(t => `<span class="dbmrpp-tag-filter">${esc(getTagLabel(t))} <button class="dbmrpp-tag-remove" data-tag="${esc(t)}">×</button></span>`).join('')}</div>` : ''}
                         ${isPast ? '' : `<button class="dbmrpp-changes-toggle${filterState.onlyProblems ? ' active' : ''}">${T.onlyIssues}</button>`}
                     </div>
         </div>`;
     }
 
+    // Current-session diff ("Änderungen seit letztem Besuch"); rendered at the
+    // top of the Änderungen pane, above the archived change log.
     function buildChangeBlock(changes, lastVisitTxt) {
         const hasChanges = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
-        if (!hasChanges) {
-            return `<div class="dbmrpp-section dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
-        }
-        return `
-        <div class="dbmrpp-section dbmrpp-changes">
-            <h3>${T.changesSince(esc(lastVisitTxt))}</h3>
+        const inner = hasChanges
+            ? `<h3>${T.changesSince(esc(lastVisitTxt))}</h3>
             ${changes.geaendert.map(c => renderChangeLine(c)).join('')}
             ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(c => renderChangeLine(c)).join('')}` : ''}
-            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(c => renderChangeLine(c, true)).join('')}` : ''}
-        </div>`;
+            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(c => renderChangeLine(c, true)).join('')}` : ''}`
+            : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
+        return `<div class="dbmrpp-changes-current">${inner}</div>`;
     }
 
     // Shared tab bar for the trip and change-log sections; rightHtml lands
-    // right-aligned next to the tabs (trip count, clear button).
-    function buildViewTabs(rightHtml = '') {
+    // right-aligned next to the tabs (trip count, clear button). changeCount
+    // puts a red superscript badge on the Änderungen tab.
+    function buildViewTabs(rightHtml = '', changeCount = 0) {
+        const badge = changeCount > 0 ? `<sup class="dbmrpp-tab-badge">${changeCount}</sup>` : '';
         return `
             <div class="dbmrpp-view-tabs">
-                <button class="dbmrpp-view-tab${activeView === 'current' ? ' active' : ''}" data-view="current">${T.tabUpcoming}</button>
-                <button class="dbmrpp-view-tab${activeView === 'past'    ? ' active' : ''}" data-view="past">${T.tabPast}</button>
-                <button class="dbmrpp-view-tab${activeView === 'changes' ? ' active' : ''}" data-view="changes">${T.tabChanges}</button>
+                ${[['current', T.tabUpcoming], ['changes', T.tabChanges], ['past', T.tabPast]].map(([view, label]) =>
+                    `<button class="dbmrpp-view-tab${activeView === view ? ' active' : ''}" data-view="${view}">${label}${view === 'changes' ? badge : ''}</button>`
+                ).join('')}
                 ${rightHtml}
             </div>`;
     }
 
-    function buildTripSection(filtered, sourcePool, isPast) {
+    function buildTripSection(filtered, sourcePool, isPast, filterBarHtml = '', changeCount = 0) {
         const count = `${filtered.length}/${sourcePool.length}`;
         const empty = filtered.length !== sourcePool.length ? T.noTripsFilter : T.noTrips;
         return `
         <div class="dbmrpp-section">
-            ${buildViewTabs(`<span class="dbmrpp-view-count">${count}</span>`)}
+            ${buildViewTabs(`<span class="dbmrpp-view-count">${count}</span>`, changeCount)}
+            ${filterBarHtml}
             ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
         </div>`;
     }
 
-    // Persistent "Changes" tab: the archived change log, newest run first,
-    // grouped by detection time (all entries of one run share detectedAt).
-    function buildChangeLogSection() {
+    // The Änderungen pane: the current-session diff on top, then the archived
+    // change log, newest run first, grouped by detection time (all entries of
+    // one run share detectedAt).
+    function buildChangeLogSection(changes, lastVisitTxt, changeCount) {
+        const currentBlock = buildChangeBlock(changes, lastVisitTxt);
         const log = loadChangeLog();
+        const sectionCls = changeCount > 0 || log.length ? 'dbmrpp-section dbmrpp-changes' : 'dbmrpp-section';
         if (!log.length) {
             return `
-        <div class="dbmrpp-section">
-            ${buildViewTabs()}
+        <div class="${sectionCls}">
+            ${buildViewTabs('', changeCount)}
+            ${currentBlock}
             <div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>
         </div>`;
         }
@@ -5221,8 +5233,9 @@
             k === 'neu'      ? `<span class="dbmrpp-tag dbmrpp-tag-ok">${T.changeLogNew}</span> ` :
             k === 'entfernt' ? `<span class="dbmrpp-tag dbmrpp-tag-bad">${T.changesRemoved}</span> ` : '';
         return `
-        <div class="dbmrpp-section dbmrpp-changes">
-            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
+        <div class="${sectionCls}">
+            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`, changeCount)}
+            ${currentBlock}
             ${groups.map(g => `
             <h4>${esc(formatDateTime(g.detectedAt))}</h4>
             ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}`).join('')}
@@ -5655,10 +5668,17 @@
         }).join(' → ');
     }
 
-    function delayTag(soll, ist) {
-        if (!soll || !ist || soll === ist) return '';
+    // Signed delay in minutes between a scheduled and a realtime timestamp;
+    // null when either is missing or invalid or the difference rounds to 0.
+    function delayMinutes(soll, ist) {
+        if (!soll || !ist || soll === ist) return null;
         const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
-        if (min === 0) return '';
+        return (min && Number.isFinite(min)) ? min : null;
+    }
+
+    function delayTag(soll, ist) {
+        const min = delayMinutes(soll, ist);
+        if (min === null) return '';
         return min > 0 ? `<span class="dbmrpp-delay"> +${min}'</span>` : `<span class="dbmrpp-early"> ${min}'</span>`;
     }
 
@@ -5684,9 +5704,8 @@
     }
 
     function formatDelaySummary(label, soll, ist) {
-        if (!soll || !ist || soll === ist) return '';
-        const min = Math.round((new Date(ist) - new Date(soll)) / 60000);
-        if (min === 0 || !Number.isFinite(min)) return '';
+        const min = delayMinutes(soll, ist);
+        if (min === null) return '';
         const sign = min > 0 ? '+' : '';
         return `${label} ${sign}${min}'`;
     }
@@ -5817,14 +5836,44 @@
         </div>`;
     }
 
+    // Deviation entries are marked with kind: 'deviation' when synthesized,
+    // but entries cached before that flag existed don't carry it — recognize
+    // those by their shape ("+15' (09:41)" delay token or cancelled-stop note)
+    // so they keep rendering as visible focal lines instead of collapsed ones.
+    function isDeviationEntry(e) {
+        if (!e) return false;
+        if (e.kind === 'deviation') return true;
+        const text = e.text || '';
+        return /[+-]\d+'\s*\(/.test(text) || text.includes(T.deviationStopCancelled);
+    }
+
+    // Delay figures ("+15'") and cancelled-stop notes are the focal points of
+    // a deviation line — tint them like realtime diff values. Works on escaped
+    // text, hence the &#39; apostrophe in the pattern.
+    function deviationTextHtml(text) {
+        const cancelled = esc(T.deviationStopCancelled);
+        return esc(text)
+            .replace(/([+-]\d+)&#39;/g, (m, num) =>
+                `<span class="${num.startsWith('-') ? 'dbmrpp-early' : 'dbmrpp-delay'}">${num}&#39;</span>`)
+            .split(cancelled).join(`<span class="dbmrpp-delay">${cancelled}</span>`);
+    }
+
     // Notifications on current trip cards (bulk messages, or detail-fetch
     // results adopted from the history cache). Past trips render theirs via
     // the cache block instead, so skip them here to avoid duplication.
+    // Deviation lines are the focal info and stay visible; the verbose RIS/HIM
+    // messages are collapsed behind a summary toggle.
     function renderTripNotifications(t) {
         if (!t || !t.fromReiseketten || t.isPastTrip || t.isFromHistoryCache) return '';
         const entries = normalizeNotificationEntries(t.notifications || []);
         if (!entries.length) return '';
-        return `<div class="dbmrpp-cache-msg">${entries.map(n => `ℹ️ ${esc(n.text)}`).join('<br>')}</div>`;
+        const deviations = entries.filter(isDeviationEntry);
+        const messages = entries.filter(e => !isDeviationEntry(e));
+        const devLines = deviations.map(e => `<div>⚠️ ${deviationTextHtml(e.text)}</div>`).join('');
+        const msgBlock = messages.length
+            ? `<details class="dbmrpp-notif-collapse"><summary>ℹ️ ${esc(T.cacheNotificationsLabel)} (${messages.length})</summary>${messages.map(e => `<div class="dbmrpp-notif-msg">${esc(e.text)}</div>`).join('')}</details>`
+            : '';
+        return `<div class="dbmrpp-trip-notifications">${devLines}${msgBlock}</div>`;
     }
 
     // Permanent notice for a known passenger-rights claim, styled like the
