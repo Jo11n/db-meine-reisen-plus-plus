@@ -287,7 +287,7 @@
             webDavStatusOk:             d => `Synced ${d}`,
             webDavStatusError:          e => `Sync error: ${e}`,
             settingsCalDavEnabled:      'Enable CalDAV push',
-            settingsCalDavSyncDesc:     'Pushes trips as calendar events to a CalDAV calendar. Enter the full URL to the calendar collection. Events are only pushed from here to the calendar, never the other way around.',
+            settingsCalDavSyncDesc:     'Pushes trips as calendar events to a CalDAV calendar. Enter the full URL to the calendar collection, or a server address (e.g. https://caldav.icloud.com/ — for iCloud use an app-specific password) and pick a calendar via "Find calendars". Events are only pushed from here to the calendar, never the other way around.',
             settingsCalDavUrl:          'Calendar URL',
             settingsCalDavUsername:     'Username',
             settingsCalDavPassword:     'Password',
@@ -299,6 +299,11 @@
             settingsCalDavIncludeLeistungDesc: 'Pushes standalone add-on products (bike day tickets, etc.) as all-day calendar events on the date they are valid.',
             settingsCalDavIncludeCached: 'Include saved trips from cache',
             settingsCalDavIncludeCachedDesc: 'Also pushes trips to the calendar that are only available from the local cache (previously visited trips no longer returned by the DB API). Requires "Enhance past view from cache" to have been used before.',
+            settingsCalDavDiscover:     'Find calendars',
+            calDavDiscoverSearching:    'Searching calendars…',
+            calDavDiscoverNone:         'No calendars found.',
+            calDavDiscoverPick:         'Select the target calendar:',
+            calDavDiscoverError:        e => `Discovery error: ${e}`,
             calDavStatusNever:          'Not pushed yet.',
             calDavStatusSyncing:        'Pushing…',
             calDavStatusOk:             d => `Pushed ${d}`,
@@ -553,7 +558,7 @@
             webDavStatusOk:             d => `Synchronisiert ${d}`,
             webDavStatusError:          e => `Sync-Fehler: ${e}`,
             settingsCalDavEnabled:      'CalDAV-Push aktivieren',
-            settingsCalDavSyncDesc:     'Überträgt Reisen als Kalendereinträge auf einen CalDAV-Kalender. Die vollständige URL zur Kalendersammlung angeben. Ereignisse werden nur von hier in den Kalender übertragen, niemals zurück.',
+            settingsCalDavSyncDesc:     'Überträgt Reisen als Kalendereinträge auf einen CalDAV-Kalender. Die vollständige URL zur Kalendersammlung angeben, oder eine Server-Adresse (z. B. https://caldav.icloud.com/ — bei iCloud ein anwendungsspezifisches Passwort verwenden) und den Kalender über „Kalender suchen" wählen. Ereignisse werden nur von hier in den Kalender übertragen, niemals zurück.',
             settingsCalDavUrl:          'Kalender-URL',
             settingsCalDavUsername:     'Benutzername',
             settingsCalDavPassword:     'Passwort',
@@ -565,6 +570,11 @@
             settingsCalDavIncludeLeistungDesc: 'Überträgt eigenständige Zusatzprodukte (Fahrradtageskarten etc.) als ganztägige Kalendereinträge für den jeweiligen Gültigkeitstag.',
             settingsCalDavIncludeCached: 'Gespeicherte Reisen aus Cache einschließen',
             settingsCalDavIncludeCachedDesc: 'Überträgt auch Reisen in den Kalender, die nur im lokalen Cache verfügbar sind (früher besuchte Reisen, die von der DB-API nicht mehr zurückgegeben werden). Erfordert, dass zuvor die Option „Vergangenheitsansicht mit Cache anreichern" genutzt wurde.',
+            settingsCalDavDiscover:     'Kalender suchen',
+            calDavDiscoverSearching:    'Suche Kalender…',
+            calDavDiscoverNone:         'Keine Kalender gefunden.',
+            calDavDiscoverPick:         'Ziel-Kalender auswählen:',
+            calDavDiscoverError:        e => `Suche fehlgeschlagen: ${e}`,
             calDavStatusNever:          'Noch nicht übertragen.',
             calDavStatusSyncing:        'Übertrage…',
             calDavStatusOk:             d => `Übertragen ${d}`,
@@ -626,6 +636,7 @@
     let uiSettings      = loadUiSettings();
     let settingsOpen    = false;
     let activeView      = 'current';
+    let changesBadgeSeen = false;   // once the Änderungen pane was opened, the tab badge stays hidden
     let pastTrips       = null;
     let auftraegeCache  = null;
     let tripHistory = loadTripHistory();
@@ -1505,9 +1516,7 @@
     }
 
     // Flattens him/priorisierte/ris messages from the top level and every
-    // abschnitt of a trip-shaped object (bulk entry or detail trip). With
-    // labelSegments, segment messages get their train name as prefix so it is
-    // clear which train of the journey a message belongs to.
+    // abschnitt; labelSegments prefixes segment messages with their train name.
     function collectTripMessages(tripLike, { labelSegments = false } = {}) {
         if (!tripLike || typeof tripLike !== 'object') return [];
         const msgsOf = o => [
@@ -2531,10 +2540,10 @@
         Object.assign(t, info);
     }
 
-    // Realtime timestamps appear on travel day even when the train is on plan.
-    // Keep them only when they actually differ from the schedule (mirrors the
-    // rtTrack handling) so the mere arrival of realtime data is not a change.
-    function normalizeRtTime(soll, rt) {
+    // Realtime values (timestamps, tracks) appear on travel day even when the
+    // train is on plan. Keep them only when they actually differ from the
+    // schedule so the mere arrival of realtime data is not a change.
+    function normalizeRtValue(soll, rt) {
         return (rt && rt !== soll) ? rt : null;
     }
 
@@ -2559,9 +2568,9 @@
             departure:               r.origin      && r.origin.dateTime      && r.origin.dateTime.local,
             arrival:                 r.destination && r.destination.dateTime && r.destination.dateTime.local,
             departureTrack:          r.origin      && r.origin.track      || null,
-            departureTrackRt:        r.origin      && r.origin.rtTrack && r.origin.rtTrack !== r.origin.track ? r.origin.rtTrack : null,
+            departureTrackRt:        normalizeRtValue(r.origin && r.origin.track, r.origin && r.origin.rtTrack),
             arrivalTrack:            r.destination && r.destination.track || null,
-            arrivalTrackRt:          r.destination && r.destination.rtTrack && r.destination.rtTrack !== r.destination.track ? r.destination.rtTrack : null,
+            arrivalTrackRt:          normalizeRtValue(r.destination && r.destination.track, r.destination && r.destination.rtTrack),
             zugbindung:              r.auftrag && r.auftrag.zugbindung,
             auftragsnummer:          r.auftrag && r.auftrag.auftragsnummer,
             kundenwunschId:          r.auftrag && r.auftrag.kundenwunschId,
@@ -2569,10 +2578,10 @@
             status:                  r.status,
             relevanteAbweichung:     !!r.relevanteAbweichung,
             alternativensuche:       r.alternativensuche,
-            departureRt:             normalizeRtTime(r.origin && r.origin.dateTime && r.origin.dateTime.local,
-                                                     r.origin && r.origin.rtDateTime && r.origin.rtDateTime.local),
-            arrivalRt:               normalizeRtTime(r.destination && r.destination.dateTime && r.destination.dateTime.local,
-                                                     r.destination && r.destination.rtDateTime && r.destination.rtDateTime.local),
+            departureRt:             normalizeRtValue(r.origin && r.origin.dateTime && r.origin.dateTime.local,
+                                                      r.origin && r.origin.rtDateTime && r.origin.rtDateTime.local),
+            arrivalRt:               normalizeRtValue(r.destination && r.destination.dateTime && r.destination.dateTime.local,
+                                                      r.destination && r.destination.rtDateTime && r.destination.rtDateTime.local),
             klasse:                  (r.einstiegsInformationen || []).some(e => e.leistungsKlasse === 'KLASSE_1') ? 1 : 2,
             zuege:                   (r.einstiegsInformationen || []).map(e => e.name).join(' → '),
             seats:                   collectSeats(r.einstiegsInformationen || []),
@@ -2605,7 +2614,7 @@
         return seats.join('; ');
     }
 
-    // Plan-equal rt times are stored as null (see normalizeRtTime), but older
+    // Plan-equal rt times are stored as null (see normalizeRtValue), but older
     // snapshots and history-cache fills may still carry rt values identical to
     // the plan — normalize both sides here so those don't diff as changes.
     const DIFF_RT_PLAN_FIELD = { departureRt: 'departure', arrivalRt: 'arrival' };
@@ -2812,7 +2821,6 @@
         return result;
     }
 
-    // Trip pool of the active view with the cancelled-trips setting applied.
     // Single source for both the rendered list and the ICS/CSV exports.
     function visibleTripPool(trips, orphans, isPast) {
         const raw = isPast ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
@@ -2835,9 +2843,8 @@
         renderUI(trips, orphans, changes, lastVisit);
     }
 
-    // Swaps only the dynamic part below the settings bar (change block, tabs,
-    // filters, trip list). Header and settings bar DOM stay alive, so open
-    // <details> groups, focus and scroll position survive filter interactions.
+    // Swaps only #dbmrpp-content; header/settings DOM stays alive, so open
+    // <details>, focus and scroll survive filter interactions.
     function reRenderContent() {
         if (!lastRenderArgs) return;
         const content = document.getElementById('dbmrpp-content');
@@ -3607,13 +3614,78 @@
         });
     }
 
+    function caldavAuthHeader() {
+        return 'Basic ' + btoa(unescape(encodeURIComponent(caldavConfig.username + ':' + caldavConfig.password)));
+    }
+
+    const DAV_NS = 'DAV:', CALDAV_NS = 'urn:ietf:params:xml:ns:caldav';
+
+    function caldavPropfind(url, depth, props) {
+        return gmXhr('PROPFIND', url, {
+            'Authorization': caldavAuthHeader(),
+            'Depth': String(depth),
+            'Content-Type': 'application/xml; charset=utf-8'
+        }, '<?xml version="1.0" encoding="UTF-8"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop>' + props + '</d:prop></d:propfind>');
+    }
+
+    function caldavParseMultistatus(res) {
+        if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+        const doc = new DOMParser().parseFromString(res.responseText, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) throw new Error('Bad XML response');
+        return doc;
+    }
+
+    function caldavHrefIn(doc, ns, tag) {
+        const el = doc.getElementsByTagNameNS(ns, tag)[0];
+        const href = el && el.getElementsByTagNameNS(DAV_NS, 'href')[0];
+        return href ? href.textContent.trim() : null;
+    }
+
+    // RFC 6764/4791 discovery: current-user-principal → calendar-home-set → VEVENT collections.
+    // Hrefs may be relative or absolute; each step resolves against finalUrl since
+    // servers (iCloud) redirect to per-user hosts.
+    async function caldavDiscoverCalendars() {
+        let url = caldavConfig.url.trim();
+        if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+        let res = await caldavPropfind(url, 0, '<d:current-user-principal/>');
+        if (res.status === 404 || res.status === 405) {
+            res = await caldavPropfind(new URL('/.well-known/caldav', url).href, 0, '<d:current-user-principal/>');
+        }
+        let base = res.finalUrl || url;
+        const principal = caldavHrefIn(caldavParseMultistatus(res), DAV_NS, 'current-user-principal');
+        if (!principal) throw new Error('no principal');
+        const principalUrl = new URL(principal, base).href;
+        res = await caldavPropfind(principalUrl, 0, '<c:calendar-home-set/>');
+        base = res.finalUrl || principalUrl;
+        const home = caldavHrefIn(caldavParseMultistatus(res), CALDAV_NS, 'calendar-home-set');
+        if (!home) throw new Error('no calendar home');
+        const homeUrl = new URL(home, base).href;
+        res = await caldavPropfind(homeUrl, 1, '<d:displayname/><d:resourcetype/><c:supported-calendar-component-set/>');
+        const doc = caldavParseMultistatus(res);
+        base = res.finalUrl || homeUrl;
+        const cals = [];
+        for (const r of doc.getElementsByTagNameNS(DAV_NS, 'response')) {
+            const hrefEl = r.getElementsByTagNameNS(DAV_NS, 'href')[0];
+            const rtype  = r.getElementsByTagNameNS(DAV_NS, 'resourcetype')[0];
+            if (!hrefEl || !rtype || !rtype.getElementsByTagNameNS(CALDAV_NS, 'calendar').length) continue;
+            const comps = [...r.getElementsByTagNameNS(CALDAV_NS, 'comp')];
+            if (comps.length && !comps.some(c => c.getAttribute('name') === 'VEVENT')) continue;
+            const href = hrefEl.textContent.trim();
+            const nameEl = r.getElementsByTagNameNS(DAV_NS, 'displayname')[0];
+            cals.push({
+                url: new URL(href, base).href,
+                name: (nameEl && nameEl.textContent.trim()) || decodeURIComponent(href.replace(/\/+$/, '').split('/').pop() || href)
+            });
+        }
+        return cals;
+    }
+
     async function caldavSync() {
         if (!caldavConfig.enabled || !caldavConfig.url) return;
         const trips = lastRenderArgs ? lastRenderArgs.trips : [];
         if (!trips.length) return;
 
-        const authHeader = 'Basic ' + btoa(unescape(encodeURIComponent(caldavConfig.username + ':' + caldavConfig.password)));
-        const headers = { 'Authorization': authHeader };
+        const headers = { 'Authorization': caldavAuthHeader() };
         const baseUrl = caldavConfig.url.endsWith('/') ? caldavConfig.url : caldavConfig.url + '/';
 
         const statusEl = document.getElementById('dbmrpp-caldav-status');
@@ -3860,8 +3932,10 @@
                     }
 
                     #dbmrpp-root h2 button:hover { background: rgba(255,255,255,.15); }
-                    #dbmrpp-root h3 { margin: 0 0 8px; font-size: 13px; color: var(--dbmrpp-accent); }
-                    #dbmrpp-root h4 { margin: 10px 0 4px; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+                    /* font-family must be set directly: the host page styles h3/h4
+                       by element, which beats inheritance from #dbmrpp-root. */
+                    #dbmrpp-root h3 { margin: 0 0 8px; font-family: inherit; font-size: 13px; color: var(--dbmrpp-accent); }
+                    #dbmrpp-root h4 { margin: 10px 0 4px; font-family: inherit; font-size: 11.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
 
                     .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); }
                     .dbmrpp-changes { background: #fff5f5; }
@@ -4151,6 +4225,7 @@
                     .dbmrpp-view-tab:hover:not(.active) { color: #444; }
                     .dbmrpp-tab-badge { color: var(--dbmrpp-accent); font-weight: 700; font-size: 9.5px; margin-left: 1px; }
                     .dbmrpp-changes-current { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--dbmrpp-divider); }
+                    .dbmrpp-changes-current.dbmrpp-changes { padding: 6px 10px 8px; border-radius: 4px; border-bottom: none; }
                     .dbmrpp-view-count {
                         margin-left: auto;
                         font-size: 12px;
@@ -4648,6 +4723,37 @@
 
         const caldavPushNowBtn = root.querySelector('.dbmrpp-caldav-push-now');
         if (caldavPushNowBtn) caldavPushNowBtn.addEventListener('click', () => caldavSync());
+
+        const caldavDiscoverBtn = root.querySelector('.dbmrpp-caldav-discover');
+        if (caldavDiscoverBtn) caldavDiscoverBtn.addEventListener('click', async () => {
+            const urlInput  = root.querySelector('#dbmrpp-caldav-url');
+            const userInput = root.querySelector('#dbmrpp-caldav-username');
+            const passInput = root.querySelector('#dbmrpp-caldav-password');
+            caldavConfig.url      = urlInput  ? urlInput.value.trim()  : caldavConfig.url;
+            caldavConfig.username = userInput ? userInput.value.trim() : caldavConfig.username;
+            caldavConfig.password = passInput ? passInput.value        : caldavConfig.password;
+            saveCalDavConfig();
+            const listEl = root.querySelector('#dbmrpp-caldav-calendars');
+            if (!listEl || !caldavConfig.url) return;
+            listEl.textContent = T.calDavDiscoverSearching;
+            try {
+                const cals = await caldavDiscoverCalendars();
+                dbLog('caldav: discover found ' + cals.length);
+                if (!cals.length) { listEl.textContent = T.calDavDiscoverNone; return; }
+                listEl.innerHTML = `<div>${esc(T.calDavDiscoverPick)}</div>`
+                    + cals.map(c => `<button class="dbmrpp-settings-reset dbmrpp-caldav-cal" data-url="${esc(c.url)}">${esc(c.name)}</button>`).join(' ');
+                listEl.querySelectorAll('.dbmrpp-caldav-cal').forEach(btn => btn.addEventListener('click', () => {
+                    caldavConfig.url = btn.dataset.url;
+                    saveCalDavConfig();
+                    if (urlInput) urlInput.value = caldavConfig.url;
+                    listEl.textContent = '';
+                    if (caldavPushNowBtn) caldavPushNowBtn.disabled = !(caldavConfig.enabled && caldavConfig.url);
+                }));
+            } catch (e) {
+                dbLog('caldav: discover error ' + (e.message || e));
+                listEl.textContent = T.calDavDiscoverError(e.message || String(e));
+            }
+        });
     }
 
     // Unified loading indicator for buttons whose click triggers an API call:
@@ -5006,7 +5112,6 @@
         <div id="dbmrpp-content">${buildContent(trips, orphans, changes, lastVisit)}</div>`;
     }
 
-    // The collapsible settings bar between the header and the content area.
     function buildSettingsBar() {
         return `
         <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
@@ -5076,8 +5181,10 @@
                     ${settingsToggle('dbmrpp-caldav-include-leistung', caldavConfig.includeLeistungTickets, esc(T.settingsCalDavIncludeLeistung), { desc: esc(T.settingsCalDavIncludeLeistungDesc), disabled: !caldavConfig.enabled })}
                     <div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-settings-reset dbmrpp-caldav-save">${esc(T.settingsCalDavSave)}</button>
+                        <button class="dbmrpp-settings-reset dbmrpp-caldav-discover"${caldavConfig.enabled ? '' : ' disabled'}>${esc(T.settingsCalDavDiscover)}</button>
                         <button class="dbmrpp-settings-reset dbmrpp-caldav-push-now"${caldavConfig.enabled && caldavConfig.url ? '' : ' disabled'}>${esc(T.settingsCalDavSyncNow)}</button>
                     </div>
+                    <div id="dbmrpp-caldav-calendars" class="dbmrpp-settings-status"></div>
                     <div id="dbmrpp-caldav-status" class="dbmrpp-settings-status">${esc(calDavSyncStatusText())}</div>
                 </div>
             </details>
@@ -5117,14 +5224,16 @@
         </div>`;
     }
 
-    // Everything below the settings bar: change block, view tabs, filters and
-    // the trip list / change log. Kept separate from buildHTML so filter and
-    // tab interactions can swap only this container (see reRenderContent).
+    // Kept out of buildHTML so reRenderContent can swap only this container.
     function buildContent(trips, orphans, changes, lastVisit) {
         const isPast = activeView === 'past';
         const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
+        if (activeView === 'changes') {
+            changesBadgeSeen = true;
+            return buildChangeLogSection(changes, lastVisitTxt);
+        }
         const changeCount = changes.neu.length + changes.geaendert.length + changes.entfernt.length;
-        if (activeView === 'changes') return buildChangeLogSection(changes, lastVisitTxt, changeCount);
+        const badgeCount  = changesBadgeSeen ? 0 : changeCount;
 
         const sourcePool = visibleTripPool(trips, orphans, isPast);
         const filtered    = filterTrips(sourcePool, filterState, isPast);
@@ -5136,7 +5245,7 @@
         const toOptions = [...new Set(
             dayFiltered.filter(t => !filterState.from || t.from === filterState.from).map(t => t.to).filter(Boolean)
         )].sort();
-        return buildTripSection(filtered, sourcePool, isPast, buildFilterBar(fromOptions, toOptions, availableTags, isPast), changeCount);
+        return buildTripSection(filtered, sourcePool, isPast, buildFilterBar(fromOptions, toOptions, availableTags, isPast), badgeCount);
     }
 
     function buildFilterBar(fromOptions, toOptions, availableTags, isPast) {
@@ -5169,8 +5278,7 @@
         </div>`;
     }
 
-    // Current-session diff ("Änderungen seit letztem Besuch"); rendered at the
-    // top of the Änderungen pane, above the archived change log.
+    // Current-session diff, rendered above the archived log in the Änderungen pane.
     function buildChangeBlock(changes, lastVisitTxt) {
         const hasChanges = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
         const inner = hasChanges
@@ -5179,12 +5287,11 @@
             ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(c => renderChangeLine(c)).join('')}` : ''}
             ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(c => renderChangeLine(c, true)).join('')}` : ''}`
             : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
-        return `<div class="dbmrpp-changes-current">${inner}</div>`;
+        return `<div class="dbmrpp-changes-current${hasChanges ? ' dbmrpp-changes' : ''}">${inner}</div>`;
     }
 
-    // Shared tab bar for the trip and change-log sections; rightHtml lands
-    // right-aligned next to the tabs (trip count, clear button). changeCount
-    // puts a red superscript badge on the Änderungen tab.
+    // rightHtml lands right-aligned next to the tabs (trip count, clear
+    // button); changeCount renders the red badge on the Änderungen tab.
     function buildViewTabs(rightHtml = '', changeCount = 0) {
         const badge = changeCount > 0 ? `<sup class="dbmrpp-tab-badge">${changeCount}</sup>` : '';
         return `
@@ -5207,17 +5314,15 @@
         </div>`;
     }
 
-    // The Änderungen pane: the current-session diff on top, then the archived
-    // change log, newest run first, grouped by detection time (all entries of
-    // one run share detectedAt).
-    function buildChangeLogSection(changes, lastVisitTxt, changeCount) {
+    // Current diff on top, then the archived log, newest run first, grouped
+    // by detectedAt (shared by all entries of one detection run).
+    function buildChangeLogSection(changes, lastVisitTxt) {
         const currentBlock = buildChangeBlock(changes, lastVisitTxt);
         const log = loadChangeLog();
-        const sectionCls = changeCount > 0 || log.length ? 'dbmrpp-section dbmrpp-changes' : 'dbmrpp-section';
         if (!log.length) {
             return `
-        <div class="${sectionCls}">
-            ${buildViewTabs('', changeCount)}
+        <div class="dbmrpp-section">
+            ${buildViewTabs()}
             ${currentBlock}
             <div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>
         </div>`;
@@ -5233,8 +5338,8 @@
             k === 'neu'      ? `<span class="dbmrpp-tag dbmrpp-tag-ok">${T.changeLogNew}</span> ` :
             k === 'entfernt' ? `<span class="dbmrpp-tag dbmrpp-tag-bad">${T.changesRemoved}</span> ` : '';
         return `
-        <div class="${sectionCls}">
-            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`, changeCount)}
+        <div class="dbmrpp-section">
+            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
             ${currentBlock}
             ${groups.map(g => `
             <h4>${esc(formatDateTime(g.detectedAt))}</h4>
@@ -5858,22 +5963,26 @@
             .split(cancelled).join(`<span class="dbmrpp-delay">${cancelled}</span>`);
     }
 
-    // Notifications on current trip cards (bulk messages, or detail-fetch
-    // results adopted from the history cache). Past trips render theirs via
-    // the cache block instead, so skip them here to avoid duplication.
-    // Deviation lines are the focal info and stay visible; the verbose RIS/HIM
-    // messages are collapsed behind a summary toggle.
-    function renderTripNotifications(t) {
-        if (!t || !t.fromReiseketten || t.isPastTrip || t.isFromHistoryCache) return '';
-        const entries = normalizeNotificationEntries(t.notifications || []);
-        if (!entries.length) return '';
+    // Deviation lines stay visible, verbose RIS/HIM messages collapse behind
+    // a toggle. Callers provide the wrapper (trip card vs. blue cache block).
+    function notificationListHtml(entries) {
+        if (!entries || !entries.length) return '';
         const deviations = entries.filter(isDeviationEntry);
         const messages = entries.filter(e => !isDeviationEntry(e));
         const devLines = deviations.map(e => `<div>⚠️ ${deviationTextHtml(e.text)}</div>`).join('');
         const msgBlock = messages.length
             ? `<details class="dbmrpp-notif-collapse"><summary>ℹ️ ${esc(T.cacheNotificationsLabel)} (${messages.length})</summary>${messages.map(e => `<div class="dbmrpp-notif-msg">${esc(e.text)}</div>`).join('')}</details>`
             : '';
-        return `<div class="dbmrpp-trip-notifications">${devLines}${msgBlock}</div>`;
+        return devLines + msgBlock;
+    }
+
+    // Notifications on current trip cards (bulk messages, or detail-fetch
+    // results adopted from the history cache). Past trips render theirs via
+    // the cache block instead, so skip them here to avoid duplication.
+    function renderTripNotifications(t) {
+        if (!t || !t.fromReiseketten || t.isPastTrip || t.isFromHistoryCache) return '';
+        const body = notificationListHtml(normalizeNotificationEntries(t.notifications || []));
+        return body ? `<div class="dbmrpp-trip-notifications">${body}</div>` : '';
     }
 
     // Permanent notice for a known passenger-rights claim, styled like the
@@ -5918,10 +6027,8 @@
         if (showTransportLines && c.zuege) lines.push(trainMetaLine(c, t, !t.isFromHistoryCache));
         if (showTransportLines && c.seats) lines.push(`💺 ${esc(c.seats)}`);
 
-        const notifEntries = normalizeNotificationEntries(c.notifications || []);
-        const notifBlock = notifEntries.length
-            ? `<div class="dbmrpp-cache-msg"><strong>${esc(T.cacheNotificationsLabel)}:</strong><br>${notifEntries.map(n => `ℹ️ ${esc(n.text)}`).join('<br>')}</div>`
-            : '';
+        const notifBody = notificationListHtml(normalizeNotificationEntries(c.notifications || []));
+        const notifBlock = notifBody ? `<div class="dbmrpp-cache-msg">${notifBody}</div>` : '';
 
         if (!lines.length && !notifBlock && !tagsHtml) return '';
         if (t.isFromHistoryCache) {
@@ -5949,7 +6056,6 @@
                 <span class="dbmrpp-diff-old">${esc(formatVal(d.field, d.old))}</span>
                 → <span class="dbmrpp-diff-new">${esc(formatVal(d.field, d.new))}</span>
             </div>`).join('')}
-            ${renderNoteDisplay(t.uuid)}
         </div>`;
     }
 

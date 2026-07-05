@@ -7,7 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **tracked changes pane** - moved from ephemeral change info to preserving it in a separate pane
-- **per-stop deviations in disruption details** - the ⚠ button now also reports realtime delays and cancelled stops at intermediate stations (e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)"), which the bulk response can't see; the result is shown on the trip card, cached in the trip history, and kept across refreshes while DB still flags the deviation
+- **per-stop deviations in disruption details** - the ⚠ button now also reports realtime delays and cancelled stops at intermediate stations (e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)"), which the bulk response can't see; the result is shown on the trip card, cached in the trip history, and kept across refreshes while DB still flags the deviation; delay figures are highlighted like realtime changes, and the verbose RIS/HIM messages are collapsed behind a toggle — both on current trip cards and in the past-trip cache block
+- **CalDAV calendar discovery** - a "Find calendars" button resolves the calendar list from a bare server address via PROPFIND (current-user-principal → calendar-home-set → calendar collections), so iCloud (caldav.icloud.com + app-specific password) and other servers can be set up without knowing the collection URL
 
 ### Changed 
 
