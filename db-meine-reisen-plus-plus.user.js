@@ -214,6 +214,9 @@
             abweichungTooltip: 'Show disruption details',
             abweichungNone:    'No current alerts.',
             abweichungError:   'Failed to load — see console.',
+            deviationArr:      'arr',
+            deviationDep:      'dep',
+            deviationStopCancelled: 'stop cancelled',
             fgrBtnTooltip:     'Passenger rights claim filed? (§)',
             fgrNone:           'No passenger rights claim filed.',
             fgrError:          'Failed to load — see console.',
@@ -479,6 +482,9 @@
             abweichungTooltip: 'Abweichungsdetails anzeigen',
             abweichungNone:    'Keine aktuellen Meldungen.',
             abweichungError:   'Laden fehlgeschlagen — siehe Konsole.',
+            deviationArr:      'an',
+            deviationDep:      'ab',
+            deviationStopCancelled: 'Halt entfällt',
             fgrBtnTooltip:     'Fahrgastrechte-Antrag gestellt? (§)',
             fgrNone:           'Kein Fahrgastrechte-Antrag gestellt.',
             fgrError:          'Laden fehlgeschlagen — siehe Konsole.',
@@ -1215,6 +1221,7 @@
             const auftragMap = buildAuftragMap(auftraege);
             const trips = (reisekettenData.reiseketten || []).map(simplify);
             trips.forEach(t => mergeAuftrag(t, auftragMap[t.kundenwunschId]));
+            trips.forEach(adoptCachedNotifications);
             upsertTripHistoryFromReiseketten(trips);
             upsertTripHistoryFromAuftraege(auftraege);
 
@@ -1598,6 +1605,20 @@
         if (!changed) return;
         pruneTripHistory();
         saveTripHistory();
+    }
+
+    // The bulk response rarely carries messages (they live in the detail
+    // endpoint), so a plain refresh would wipe notifications captured via the
+    // ⚠ button from the history entry. While DB still reports a relevante
+    // Abweichung, adopt the cached ones onto the fresh trip — must run before
+    // the upsert rebuilds the entry. Once the flag clears they are dropped.
+    function adoptCachedNotifications(t) {
+        if (!t || !t.fromReiseketten || !t.relevanteAbweichung) return;
+        if (Array.isArray(t.notifications) && t.notifications.length) return;
+        const entry = findTripHistoryEntry(t);
+        if (entry && Array.isArray(entry.notifications) && entry.notifications.length) {
+            t.notifications = normalizeNotificationEntries(entry.notifications);
+        }
     }
 
     // Stores a baseline entry from the Auftraege API for trips not already covered
@@ -2445,6 +2466,39 @@
     // =========================================================
     // 12) Disruption detail — uses fetchDetail cache
     // =========================================================
+    // Synthesizes per-stop realtime deviations (delays, cancelled stops) from
+    // the detail response. The bulk reiseketten response only carries rt data
+    // for the first departure and final arrival, so a relevante Abweichung at
+    // an intermediate stop is only visible here. One line per affected train,
+    // e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)".
+    function collectDetailDeviationEntries(trip0) {
+        const abschnitte = Array.isArray(trip0 && trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
+        const out = [];
+        abschnitte.forEach(a => {
+            if (!a) return;
+            const vm = a.verkehrsmittel || {};
+            const label = vm.mittelText || vm.name || vm.langText || '';
+            const parts = [];
+            const halte = Array.isArray(a.halte) && a.halte.length ? a.halte : [a.startHalt, a.zielHalt];
+            halte.forEach(h => {
+                if (!h || !h.name) return;
+                [['ankunft', T.deviationArr], ['abfahrt', T.deviationDep]].forEach(([k, word]) => {
+                    const ev = h[k];
+                    if (!ev || !ev.sollzeit || !ev.echtzeit || ev.echtzeit === ev.sollzeit) return;
+                    const min = Math.round((new Date(ev.echtzeit) - new Date(ev.sollzeit)) / 60000);
+                    if (!min || !Number.isFinite(min)) return;
+                    const sign = min > 0 ? '+' : '';
+                    parts.push(`${h.name} ${word} ${sign}${min}' (${formatTime(ev.echtzeit)})`);
+                });
+            });
+            if (a.originCancelled && a.abfahrtsOrt) parts.push(`${a.abfahrtsOrt}: ${T.deviationStopCancelled}`);
+            if (a.destinationCancelled && a.ankunftsOrt) parts.push(`${a.ankunftsOrt}: ${T.deviationStopCancelled}`);
+            if (!parts.length) return;
+            out.push({ text: `${label ? label + ': ' : ''}${parts.join(', ')}` });
+        });
+        return out;
+    }
+
     async function loadAbweichungMessages(t) {
         const data = await fetchDetail(t.uuid);
         const trip0 = getDetailTrip(data);
@@ -2469,7 +2523,8 @@
                 return text ? { text: `${label}: ${text}` } : m;
             });
         });
-        const normalized = normalizeNotificationEntries([...topMsgs, ...segMsgs]);
+        const deviations = collectDetailDeviationEntries(trip0);
+        const normalized = normalizeNotificationEntries([...deviations, ...topMsgs, ...segMsgs]);
         if (t && normalized.length) {
             t.notifications = normalized;
             if (t.fromReiseketten) upsertTripHistoryFromReiseketten([t]);
@@ -5755,10 +5810,21 @@
                 ${t.gueltigVon && t.gueltigBis && !t.isVerbundticket ? `<br>${T.metaValidRange(esc(formatDate(t.gueltigVon)), esc(formatDate(t.gueltigBis)))}` : ''}
             </div>
             ${renderFgrClaimBlock(t)}
+            ${renderTripNotifications(t)}
             ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
             ${renderNoteDisplay(t.uuid)}
             ${!showCacheTagsInline ? `<div class="dbmrpp-trip-tags">${tags.join('')}</div>` : ''}
         </div>`;
+    }
+
+    // Notifications on current trip cards (bulk messages, or detail-fetch
+    // results adopted from the history cache). Past trips render theirs via
+    // the cache block instead, so skip them here to avoid duplication.
+    function renderTripNotifications(t) {
+        if (!t || !t.fromReiseketten || t.isPastTrip || t.isFromHistoryCache) return '';
+        const entries = normalizeNotificationEntries(t.notifications || []);
+        if (!entries.length) return '';
+        return `<div class="dbmrpp-cache-msg">${entries.map(n => `ℹ️ ${esc(n.text)}`).join('<br>')}</div>`;
     }
 
     // Permanent notice for a known passenger-rights claim, styled like the

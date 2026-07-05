@@ -7,6 +7,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **tracked changes pane** - moved from ephemeral change info to preserving it in a separate pane
+- **per-stop deviations in disruption details** - the ⚠ button now also reports realtime delays and cancelled stops at intermediate stations (e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)"), which the bulk response can't see; the result is shown on the trip card, cached in the trip history, and kept across refreshes while DB still flags the deviation
 
 ### Changed 
 
