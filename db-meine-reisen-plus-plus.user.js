@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.10.0
+// @version      0.11.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -24,6 +24,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
+    const SCRIPT_VERSION  = '0.11.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -39,7 +40,6 @@
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
     const AUFTRAG_PATH     = '/web/api/buchung/auftrag/v2';
     const AUFTRAG_DETAIL_PATH = '/web/api/buchung/auftrag';
-    const SCRIPT_VERSION  = '0.10.0';
     const CHANGELOG_URL   = 'https://github.com/Jo11n/db-meine-reisen-plus-plus/blob/main/CHANGELOG.md';
     const PAGESIZE         = 100;
     const AUFTRAG_PAGESIZE = 100;
@@ -51,6 +51,8 @@
     const DEBUG_LOG_KEY         = 'dbmrpp.debugLog.v1';
     const DEBUG_LOG_MAX_ENTRIES = 500;
     const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v3';
+    const CHANGE_LOG_KEY         = 'dbmrpp.changeLog.v1';
+    const CHANGE_LOG_MAX_ENTRIES = 500;
     const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
     const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
     const CALDAV_CONFIG_KEY              = 'dbmrpp.caldavConfig.v1';
@@ -132,12 +134,17 @@
             onlyIssues:        '⚠ Issues only',
             tabUpcoming:       'Upcoming',
             tabPast:           'Past',
+            tabChanges:        'Changes',
             noTrips:           'No trips.',
             noTripsFilter:     'No trips for this filter.',
             changesSince:      d => `Changes since ${d}`,
             noChangesSince:    d => `No changes since ${d}`,
             changesNew:        n => `New (${n})`,
             changesRemoved:    'Removed',
+            changeLogNew:      'New',
+            changeLogEmpty:    'No tracked changes yet. Detected changes are collected here.',
+            changeLogClear:    'Clear',
+            ttChangeLogClear:  'Delete all collected changes',
             neverVisited:      'never',
             tagsLabel:         'Tags',
             panelLoading:      'Loading…',
@@ -303,6 +310,7 @@
             alertPdfError:       'PDF download failed — see console.',
             alertNoTripsExport:  'No trips to export.',
             alertResetConfirm:   'Delete snapshot? All trips will appear as new on next load.',
+            alertChangeLogClearConfirm: 'Delete all collected changes? Cannot be undone.',
             alertDeleteCachedTripConfirm: 'Delete cached details for this trip? Only affects local script cache, not the website data. Cannot be undone.',
             alertImportMergeConfirm: 'Import snapshot and merge with local snapshot/settings (newest wins)?',
             alertImportInvalid:  'Invalid import file. Expected snapshot + settings export JSON.',
@@ -391,12 +399,17 @@
             onlyIssues:        '⚠ Mit Problem',
             tabUpcoming:       'Bevorstehend',
             tabPast:           'Vergangen',
+            tabChanges:        'Änderungen',
             noTrips:           'Keine Reisen.',
             noTripsFilter:     'Keine Reisen für diesen Filter.',
             changesSince:      d => `Änderungen seit ${d}`,
             noChangesSince:    d => `Keine Änderungen seit ${d}`,
             changesNew:        n => `Neu (${n})`,
             changesRemoved:    'Entfernt',
+            changeLogNew:      'Neu',
+            changeLogEmpty:    'Noch keine gesammelten Änderungen. Erkannte Änderungen werden hier gesammelt.',
+            changeLogClear:    'Leeren',
+            ttChangeLogClear:  'Alle gesammelten Änderungen löschen',
             neverVisited:      'noch nie',
             tagsLabel:         'Tags',
             panelLoading:      'Lade…',
@@ -560,6 +573,7 @@
             alertPdfError:       'PDF-Download fehlgeschlagen – siehe Konsole.',
             alertNoTripsExport:  'Keine Reisen zum Exportieren.',
             alertResetConfirm:   'Snapshot löschen? Beim nächsten Laden gelten alle Reisen als neu.',
+            alertChangeLogClearConfirm: 'Alle gesammelten Änderungen löschen? Kann nicht rückgängig gemacht werden.',
             alertDeleteCachedTripConfirm: 'Zwischengespeicherte Details für diese Reise löschen? Betrifft nur den lokalen Skript-Cache, nicht die Daten der Webseite. Kann nicht rückgängig gemacht werden.',
             alertImportMergeConfirm: 'Snapshot importieren und mit lokalem Snapshot/Einstellungen zusammenfuehren (neuester Stand gewinnt)?',
             alertImportInvalid:  'Ungültige Import-Datei. Erwartet wird ein Snapshot+Settings-Export-JSON.',
@@ -707,7 +721,7 @@
                 onlyProblems: !!parsed.onlyProblems,
                 tags: Array.isArray(parsed.tags) ? parsed.tags.slice() : []
             };
-            if (parsed.activeView === 'past' || parsed.activeView === 'current') {
+            if (['past', 'current', 'changes'].includes(parsed.activeView)) {
                 activeView = parsed.activeView;
             }
         } catch (_) {}
@@ -750,6 +764,15 @@
             localStorage.setItem(FGR_CLAIMS_KEY, JSON.stringify(fgrClaims));
             localStorage.setItem(FGR_CLAIMS_UPDATED_AT_KEY, new Date().toISOString());
         } catch (_) {}
+    }
+    function loadChangeLog() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(CHANGE_LOG_KEY) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) { return []; }
+    }
+    function saveChangeLog(log) {
+        try { localStorage.setItem(CHANGE_LOG_KEY, JSON.stringify(log)); } catch (_) {}
     }
 
     loadFilterStateIfEnabled();
@@ -1213,6 +1236,10 @@
             // Skip diff on first run — no previous snapshot means nothing meaningful to compare.
             const previous = lastVisit ? JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') : null;
             const changes = previous ? diffSnapshots(previous, current) : { neu: [], entfernt: [], geaendert: [] };
+            // Archive before renderUI so the "Changes" tab already includes
+            // this run's findings; gated on the same condition as the baseline
+            // write below to log each change exactly once.
+            if (shouldUpdateBaseline) appendToChangeLog(changes);
 
             dataIsStale = false;
             staleCachedAt = null;
@@ -1380,7 +1407,10 @@
         return { entries: {} };
     }
 
-    function makeHistoryEntryShape(src, ids, cachedAt) {
+    // cachedAt records when the trip was first cached and stays fixed across
+    // updates; updatedAt bumps whenever the entry content changes and is the
+    // timestamp sync conflict resolution has to use.
+    function makeHistoryEntryShape(src, ids, cachedAt, updatedAt) {
         return {
             uuid: src.uuid || ids.reisekettenUuid || null,
             typ: src.typ || null,
@@ -1409,7 +1439,8 @@
             umreserviert: !!src.umreserviert,
             letzterReiseplanBearbeiter: src.letzterReiseplanBearbeiter || null,
             notifications: normalizeNotificationEntries(src.notifications || []),
-            cachedAt
+            cachedAt,
+            updatedAt: updatedAt || null
         };
     }
 
@@ -1417,7 +1448,7 @@
         if (!entry || typeof entry !== 'object') return null;
         const ids = getTripIds(entry);
         if (!ids.kundenwunschId && !ids.reisekettenUuid && !ids.auftragsnummer) return null;
-        return makeHistoryEntryShape(entry, ids, entry.cachedAt || null);
+        return makeHistoryEntryShape(entry, ids, entry.cachedAt || null, entry.updatedAt || null);
     }
 
     function normalizeTripHistory(raw) {
@@ -1485,6 +1516,28 @@
         return makeHistoryEntryShape(t, ids, cachedAtOverride || new Date().toISOString());
     }
 
+    // Compares entry payloads, ignoring the timestamps. Both sides come out of
+    // makeHistoryEntryShape, so key order is stable and JSON compare is safe.
+    function historyEntryContentEquals(a, b) {
+        if (!a || !b) return false;
+        const strip = e => {
+            const { cachedAt, updatedAt, ...rest } = e;
+            return rest;
+        };
+        return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+    }
+
+    // Preserve updatedAt while the content is unchanged; bump it on any real
+    // change so sync merges can order entry versions (cachedAt never moves).
+    function stampHistoryEntryUpdatedAt(entry, prev) {
+        if (prev && prev.updatedAt && historyEntryContentEquals(prev, entry)) {
+            entry.updatedAt = prev.updatedAt;
+        } else {
+            entry.updatedAt = new Date().toISOString();
+        }
+        return entry;
+    }
+
     function historyEntryPrimaryKey(entry) {
         if (!entry || !entry.ids) return null;
         if (entry.ids.kundenwunschId) return `kw:${entry.ids.kundenwunschId}`;
@@ -1537,6 +1590,8 @@
             const prev = tripHistory.entries[key] || null;
             const entry = buildTripHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
             if (!entry) return;
+            stampHistoryEntryUpdatedAt(entry, prev);
+            if (prev && prev.updatedAt === entry.updatedAt && historyEntryContentEquals(prev, entry)) return;
             tripHistory.entries[key] = entry;
             changed = true;
         });
@@ -1574,7 +1629,10 @@
                     departure: fahrt.abfahrt  || null,
                     arrival:   fahrt.ankunft  || null,
                 };
-                tripHistory.entries[key] = makeHistoryEntryShape(src, ids, (prev && prev.cachedAt) || new Date().toISOString());
+                const entry = makeHistoryEntryShape(src, ids, (prev && prev.cachedAt) || new Date().toISOString());
+                stampHistoryEntryUpdatedAt(entry, prev);
+                if (prev && prev.updatedAt === entry.updatedAt && historyEntryContentEquals(prev, entry)) return;
+                tripHistory.entries[key] = entry;
                 changed = true;
             });
         });
@@ -2427,6 +2485,13 @@
         Object.assign(t, info);
     }
 
+    // Realtime timestamps appear on travel day even when the train is on plan.
+    // Keep them only when they actually differ from the schedule (mirrors the
+    // rtTrack handling) so the mere arrival of realtime data is not a change.
+    function normalizeRtTime(soll, rt) {
+        return (rt && rt !== soll) ? rt : null;
+    }
+
     function simplify(r) {
         const wiederholung = r.ueberwachung && r.ueberwachung.wiederholung;
         const notifications = collectNotificationsFromTripShape(r);
@@ -2458,8 +2523,10 @@
             status:                  r.status,
             relevanteAbweichung:     !!r.relevanteAbweichung,
             alternativensuche:       r.alternativensuche,
-            departureRt:             r.origin      && r.origin.rtDateTime      && r.origin.rtDateTime.local,
-            arrivalRt:               r.destination && r.destination.rtDateTime && r.destination.rtDateTime.local,
+            departureRt:             normalizeRtTime(r.origin && r.origin.dateTime && r.origin.dateTime.local,
+                                                     r.origin && r.origin.rtDateTime && r.origin.rtDateTime.local),
+            arrivalRt:               normalizeRtTime(r.destination && r.destination.dateTime && r.destination.dateTime.local,
+                                                     r.destination && r.destination.rtDateTime && r.destination.rtDateTime.local),
             klasse:                  (r.einstiegsInformationen || []).some(e => e.leistungsKlasse === 'KLASSE_1') ? 1 : 2,
             zuege:                   (r.einstiegsInformationen || []).map(e => e.name).join(' → '),
             seats:                   collectSeats(r.einstiegsInformationen || []),
@@ -2492,6 +2559,16 @@
         return seats.join('; ');
     }
 
+    // Plan-equal rt times are stored as null (see normalizeRtTime), but older
+    // snapshots and history-cache fills may still carry rt values identical to
+    // the plan — normalize both sides here so those don't diff as changes.
+    const DIFF_RT_PLAN_FIELD = { departureRt: 'departure', arrivalRt: 'arrival' };
+    function diffFieldValue(t, f) {
+        const v = t[f] ?? null;
+        if (v && DIFF_RT_PLAN_FIELD[f] && v === t[DIFF_RT_PLAN_FIELD[f]]) return null;
+        return v;
+    }
+
     // All three categories share the { trip, changes? } shape so the change
     // block can render them through a single code path. Note that entfernt
     // trips are stale snapshot copies — they no longer exist in the current
@@ -2504,8 +2581,8 @@
             } else {
                 const c = curr[uuid], p = prev[uuid];
                 const fld = DIFF_WATCHED
-                    .filter(f => JSON.stringify(c[f] ?? null) !== JSON.stringify(p[f] ?? null))
-                    .map(f => ({ field: f, old: p[f], new: c[f] }));
+                    .filter(f => JSON.stringify(diffFieldValue(c, f)) !== JSON.stringify(diffFieldValue(p, f)))
+                    .map(f => ({ field: f, old: diffFieldValue(p, f), new: diffFieldValue(c, f) }));
                 if (fld.length) out.geaendert.push({ trip: c, changes: fld });
             }
         }
@@ -2517,6 +2594,47 @@
             }
         }
         return out;
+    }
+
+    // The change log only keeps what renderChangeLine and its action strip
+    // read: route label, detail link, departure/arrival, and the routing
+    // eligibility flags. Storing full trips (zuege, seats, …) would bloat
+    // localStorage for no benefit.
+    function slimTripForChangeLog(t) {
+        return {
+            uuid: t.uuid,
+            auftragsnummer: t.auftragsnummer,
+            ids: t.ids && t.ids.reisekettenUuid ? { reisekettenUuid: t.ids.reisekettenUuid } : undefined,
+            from: t.from,
+            to: t.to,
+            fromExtId: t.fromExtId,
+            toExtId: t.toExtId,
+            leistungsname: t.leistungsname,
+            name: t.name,
+            departure: t.departure,
+            arrival: t.arrival,
+            fromReiseketten: t.fromReiseketten,
+            isOrphaned: t.isOrphaned,
+            isPastTrip: t.isPastTrip
+        };
+    }
+
+    // Archive one diff result into the persistent change log. Called only at
+    // baseline rotation: within the cooldown the same diff is recomputed
+    // against the same baseline on every load, so appending there would log
+    // duplicates — at rotation each change is captured exactly once.
+    function appendToChangeLog(changes) {
+        const detectedAt = new Date().toISOString();
+        const entries = [
+            ...changes.geaendert.map(c => ({ detectedAt, kind: 'geaendert', trip: slimTripForChangeLog(c.trip), changes: c.changes })),
+            ...changes.neu.map(c => ({ detectedAt, kind: 'neu', trip: slimTripForChangeLog(c.trip) })),
+            ...changes.entfernt.map(c => ({ detectedAt, kind: 'entfernt', trip: slimTripForChangeLog(c.trip) }))
+        ];
+        if (!entries.length) return;
+        const log = loadChangeLog();
+        log.push(...entries);
+        if (log.length > CHANGE_LOG_MAX_ENTRIES) log.splice(0, log.length - CHANGE_LOG_MAX_ENTRIES);
+        saveChangeLog(log);
     }
 
     // =========================================================
@@ -2855,17 +2973,20 @@
             : { ...importedSafe, ...localSafe };
     }
 
+    // Resolves by updatedAt (cachedAt is fixed at first-cache time and says
+    // nothing about content freshness; legacy entries without updatedAt fall
+    // back to it). Ties keep the local entry — it is refreshed from live data
+    // on every run, so a remote copy with the same timestamp is never newer.
     function mergeHistoryEntriesNewestWins(localEntries, importedEntries) {
         const merged = { ...(isPlainObject(localEntries) ? localEntries : {}) };
+        const entryTs = e => Date.parse((e && (e.updatedAt || e.cachedAt)) || 0) || 0;
         Object.entries(isPlainObject(importedEntries) ? importedEntries : {}).forEach(([key, importedEntry]) => {
             const localEntry = merged[key];
             if (!localEntry) {
                 merged[key] = importedEntry;
                 return;
             }
-            const localTs = Date.parse(localEntry.cachedAt || 0) || 0;
-            const importedTs = Date.parse((importedEntry && importedEntry.cachedAt) || 0) || 0;
-            if (importedTs >= localTs) merged[key] = importedEntry;
+            if (entryTs(importedEntry) > entryTs(localEntry)) merged[key] = importedEntry;
         });
         return merged;
     }
@@ -2885,6 +3006,7 @@
             if (!entry) return;
             const key = historyEntryPrimaryKey(entry);
             if (!key) return;
+            entry.updatedAt = entry.cachedAt;
             entries[key] = entry;
         });
         return entries;
@@ -3782,7 +3904,7 @@
                     .dbmrpp-tag-ok   { background: #d6f3d6; color: #265c26; }
                     .dbmrpp-tag-info { background: #dde8ff; color: var(--dbmrpp-navy); }
 
-                    .dbmrpp-diff { margin: 2px 0 2px 12px; font-size: 11.5px; color: #333; }
+                    .dbmrpp-diff { margin: 0 0 0 12px; font-size: 11.5px; line-height: 1.4; color: #333; }
                     .dbmrpp-diff-old { color: #888; text-decoration: line-through; }
                     .dbmrpp-diff-new, .dbmrpp-delay { color: var(--dbmrpp-accent); font-weight: 600; }
                     .dbmrpp-early { color: #265c26; font-weight: 600; }
@@ -3956,6 +4078,18 @@
                         color: var(--dbmrpp-accent);
                         padding-right: 2px;
                     }
+                    .dbmrpp-changelog-clear {
+                        margin-left: auto;
+                        background: transparent;
+                        border: 1px solid var(--dbmrpp-divider);
+                        border-radius: 3px;
+                        padding: 2px 8px;
+                        margin-bottom: 3px;
+                        font-size: 11px;
+                        color: var(--dbmrpp-text-muted);
+                        cursor: pointer;
+                    }
+                    .dbmrpp-changelog-clear:hover { color: var(--dbmrpp-accent); border-color: var(--dbmrpp-accent); }
                     .dbmrpp-orphan { opacity: 0.55; }
                     .dbmrpp-orphan .dbmrpp-route-link { text-decoration: line-through; color: #888; }
 
@@ -4700,6 +4834,12 @@
         );
         const changesToggle = root.querySelector('.dbmrpp-changes-toggle');
         if (changesToggle) changesToggle.addEventListener('click', () => { filterState.onlyProblems = !filterState.onlyProblems; rememberUiState(); reRender(); });
+        const changeLogClear = root.querySelector('.dbmrpp-changelog-clear');
+        if (changeLogClear) changeLogClear.addEventListener('click', () => {
+            if (!confirm(T.alertChangeLogClearConfirm)) return;
+            try { localStorage.removeItem(CHANGE_LOG_KEY); } catch (_) {}
+            reRender();
+        });
         root.querySelectorAll('.dbmrpp-view-tab').forEach(tab =>
             tab.addEventListener('click', () => {
                 activeView = tab.getAttribute('data-view');
@@ -4719,6 +4859,7 @@
     // =========================================================
     function buildHTML(trips, orphans, changes, lastVisit) {
         const isPast = activeView === 'past';
+        const isChanges = activeView === 'changes';
         const rawPool    = isPast ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
         const sourcePool = uiSettings.showCancelledTrips ? rawPool : rawPool.filter(t => t.storniertStatus !== 'STORNIERT');
         const filtered    = filterTrips(sourcePool, filterState, isPast);
@@ -4932,9 +5073,9 @@
                 </div>
             </details>
         </div>
-        ${buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
-        ${buildChangeBlock(changes, lastVisitTxt)}
-        ${buildTripSection(filtered, sourcePool, isPast)}`;
+        ${isChanges ? '' : buildFilterBar(fromOptions, toOptions, availableTags, isPast)}
+        ${isChanges ? '' : buildChangeBlock(changes, lastVisitTxt)}
+        ${isChanges ? buildChangeLogSection() : buildTripSection(filtered, sourcePool, isPast)}`;
     }
 
     function buildFilterBar(fromOptions, toOptions, availableTags, isPast) {
@@ -4981,17 +5122,55 @@
         </div>`;
     }
 
+    // Shared tab bar for the trip and change-log sections; rightHtml lands
+    // right-aligned next to the tabs (trip count, clear button).
+    function buildViewTabs(rightHtml = '') {
+        return `
+            <div class="dbmrpp-view-tabs">
+                <button class="dbmrpp-view-tab${activeView === 'current' ? ' active' : ''}" data-view="current">${T.tabUpcoming}</button>
+                <button class="dbmrpp-view-tab${activeView === 'past'    ? ' active' : ''}" data-view="past">${T.tabPast}</button>
+                <button class="dbmrpp-view-tab${activeView === 'changes' ? ' active' : ''}" data-view="changes">${T.tabChanges}</button>
+                ${rightHtml}
+            </div>`;
+    }
+
     function buildTripSection(filtered, sourcePool, isPast) {
         const count = `${filtered.length}/${sourcePool.length}`;
         const empty = filtered.length !== sourcePool.length ? T.noTripsFilter : T.noTrips;
         return `
         <div class="dbmrpp-section">
-            <div class="dbmrpp-view-tabs">
-                <button class="dbmrpp-view-tab${!isPast ? ' active' : ''}" data-view="current">${T.tabUpcoming}</button>
-                <button class="dbmrpp-view-tab${isPast  ? ' active' : ''}" data-view="past">${T.tabPast}</button>
-                <span class="dbmrpp-view-count">${count}</span>
-            </div>
+            ${buildViewTabs(`<span class="dbmrpp-view-count">${count}</span>`)}
             ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
+        </div>`;
+    }
+
+    // Persistent "Changes" tab: the archived change log, newest run first,
+    // grouped by detection time (all entries of one run share detectedAt).
+    function buildChangeLogSection() {
+        const log = loadChangeLog();
+        if (!log.length) {
+            return `
+        <div class="dbmrpp-section">
+            ${buildViewTabs()}
+            <div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>
+        </div>`;
+        }
+        const groups = [];
+        for (const e of log) {
+            const last = groups[groups.length - 1];
+            if (last && last.detectedAt === e.detectedAt) last.entries.push(e);
+            else groups.push({ detectedAt: e.detectedAt, entries: [e] });
+        }
+        groups.reverse();
+        const kindBadge = k =>
+            k === 'neu'      ? `<span class="dbmrpp-tag dbmrpp-tag-ok">${T.changeLogNew}</span> ` :
+            k === 'entfernt' ? `<span class="dbmrpp-tag dbmrpp-tag-bad">${T.changesRemoved}</span> ` : '';
+        return `
+        <div class="dbmrpp-section dbmrpp-changes">
+            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
+            ${groups.map(g => `
+            <h4>${esc(formatDateTime(g.detectedAt))}</h4>
+            ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}`).join('')}
         </div>`;
     }
 
@@ -5639,14 +5818,14 @@
     // One row in the change block, shared by all three categories. Removed
     // trips no longer exist in the account, so their route is rendered as
     // plain text instead of a link to a dead detail page.
-    function renderChangeLine(c, removed = false) {
+    function renderChangeLine(c, removed = false, badge = '') {
         const t = c.trip;
         const route = removed
             ? `<span class="dbmrpp-route-link dbmrpp-route-cached">${esc(tripRouteLabel(t))}</span>`
             : renderRouteLink(t);
         return `
         <div class="dbmrpp-trip" data-uuid="${esc(t.uuid)}">
-            <div class="dbmrpp-route">${route}${renderChangeActions(t, removed)}
+            <div class="dbmrpp-route">${badge}${route}${renderChangeActions(t, removed)}
                 <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
             </div>
             ${(c.changes || []).map(d => `

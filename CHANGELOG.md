@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.  
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
+## [0.11.0] - "Beschädigung einer Brücke"
 
+### Added
+- **tracked changes pane** - moved from ephemeral change info to preserving it in a separate pane
+
+### Changed 
+
+### Fixed
+- **no more phantom rt changes on travel day** - the API populates rtDateTime with plan-equal values once a trip enters the realtime horizon; rt times are now only stored (and diffed) when they actually differ from the schedule, matching the existing rtTrack handling
+- **trip history no longer overwritten by stale sync data** - history entries get an updatedAt that bumps on content change and drives the webdav merge; previously the merge compared cachedAt (fixed at first cache), so a remote copy with the same timestamp could replace a freshly updated local entry
 
 ---
 ## [0.10.0] - "Erdrutsch"
@@ -12,7 +21,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **Caldav sync** - push trips and tickets to a caldav calendar
 - **Webdav sync** - synchronize script data (settings, trip history, tags, notes) to webdav
 
-## Changed
+### Changed
 - **grant GM_xmlhttpRequest instead of none** - necessary for caldav/webdav
 - **instant panel on page load** - the render cache moved from sessionStorage (60s TTL) to localStorage (no TTL, guarded by kundenprofilId) and now renders at navigation time instead of after token capture, so the FAB and panel are usable seconds before bahn.de's own JS has booted; a ⏳ "refreshing…" hint in the panel header marks the data as cached (tooltip shows its timestamp) until the background refresh lands
 - **indicate passenger rights claim, if filed** - we already allowed to check for it; once a claim is known, the claim (date + claim ids) is now rendered permanently as a highlighted notice below the trip info (same styling as the "no claim filed" answer) and the § query button disappears
@@ -20,7 +29,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **consistent change block rendering** - new, changed and removed trips now share one compact row renderer (route, departure time, diff lines) with a slim action strip of routing, tag and note buttons instead of a mix of the full trip line and a minimal changed-trip layout
 - **readable diff values** - the change block now shows user-facing labels instead of raw API enums (e.g. "Verbindung wird umgeplant" instead of VORLAEUFIG_NICHT_REKONSTRUIERBAR), with proper English labels on int.bahn.de; unmapped values still fall back to the raw string
 
-## Fixed
+### Fixed
 - **reset filter when switching tabs** - now also works for the date filter
 - **disruption button on orphaned trips** - the ⚠ handler only searched regular trips, so it silently did nothing on orphaned/past entries
 - **dead buttons on removed trips** - removed trips in the change block rendered the full action strip, but their snapshot data can't be resolved by the click handlers, so most buttons silently did nothing; the route also linked to a no-longer-existing detail page and is now plain text
