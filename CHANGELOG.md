@@ -7,10 +7,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **tracked changes pane** - moved from ephemeral change info to preserving it in a separate pane
-- **per-stop deviations in disruption details** - the ⚠ button now also reports realtime delays and cancelled stops at intermediate stations (e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)"), which the bulk response can't see; the result is shown on the trip card, cached in the trip history, and kept across refreshes while DB still flags the deviation; delay figures are highlighted like realtime changes, and the verbose RIS/HIM messages are collapsed behind a toggle — both on current trip cards and in the past-trip cache block
+- **per-stop deviations in disruption details** - the ⚠ button now also reports realtime delays and cancelled stops at boarding, transfer and arrival stations (e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)"), which the bulk response can't see; intermediate halts are skipped to keep the output readable, except the single worst intermediate delay per segment; the result is shown on the trip card, cached in the trip history, and kept across refreshes while DB still flags the deviation; delay figures are highlighted like realtime changes, and the verbose RIS/HIM messages are collapsed behind a toggle — both on current trip cards and in the past-trip cache block
 - **CalDAV calendar discovery** - a "Find calendars" button resolves the calendar list from a bare server address via PROPFIND (current-user-principal → calendar-home-set → calendar collections), so iCloud (caldav.icloud.com + app-specific password) and other servers can be set up without knowing the collection URL
+- **"Zugbindung" tag** - trips with an active train binding (`zugbindung: BESTEHT`) now get a yellow tag, complementing the existing "Zugbindung aufgehoben" tag
+- **trip info in share text** - the ⤴️ share button now copies the connection summary (date, origin/destination with planned times, tracks and trains) alongside the link, matching bahn.de's own share format; falls back to the bare link for trips without connection data
 
-### Changed 
+### Changed
+- **criteria for showing changes now seek to exclude past trips that merely get stale/are dropped from the api response** - to reduce noise in the change tracking
 
 ### Fixed
 - **no more phantom rt changes on travel day** - the API populates rtDateTime with plan-equal values once a trip enters the realtime horizon; rt times are now only stored (and diffed) when they actually differ from the schedule, matching the existing rtTrack handling

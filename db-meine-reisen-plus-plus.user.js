@@ -137,9 +137,7 @@
             tabChanges:        'Changes',
             noTrips:           'No trips.',
             noTripsFilter:     'No trips for this filter.',
-            changesSince:      d => `Changes since ${d}`,
             noChangesSince:    d => `No changes since ${d}`,
-            changesNew:        n => `New (${n})`,
             changesRemoved:    'Removed',
             changeLogNew:      'New',
             changeLogEmpty:    'No tracked changes yet. Detected changes are collected here.',
@@ -153,6 +151,7 @@
             tagTeilweiseStorniert:'Partially cancelled',
             tagAuftragStatusLabel: 'Order',
             tagZugbindung:     'Train binding lifted',
+            tagZugbindungBesteht: 'Train binding',
             tagNotRecon:       'Not reconstructable',
             tagGebrochen:      'Connection broken',
             tagBeingReplanned: 'Connection is being replanned',
@@ -206,6 +205,10 @@
             geojsonTooltip:    'Download GeoJSON track',
             deleteCachedTripTooltip: 'Delete trip from script cache',
             shareCopied:       '✓ Copied!',
+            shareText:         p => `Connection on ${p.date}\n`
+                + `• from ${p.from}, departure ${p.dep}${p.depTrack ? ` platform ${p.depTrack}` : ''}${p.depTrain ? ` with ${p.depTrain}` : ''}\n`
+                + `• to ${p.to}, arrival ${p.arr}${p.arrTrack ? ` platform ${p.arrTrack}` : ''}${p.arrTrain ? ` with ${p.arrTrain}` : ''}\n`
+                + `View connection: ${p.url}`,
             shareError:        'Share failed — see console.',
             routeError:        'External route link failed — see console.',
             rawJsonError:      'Raw JSON download failed — see console.',
@@ -410,9 +413,7 @@
             tabChanges:        'Änderungen',
             noTrips:           'Keine Reisen.',
             noTripsFilter:     'Keine Reisen für diesen Filter.',
-            changesSince:      d => `Änderungen seit ${d}`,
             noChangesSince:    d => `Keine Änderungen seit ${d}`,
-            changesNew:        n => `Neu (${n})`,
             changesRemoved:    'Entfernt',
             changeLogNew:      'Neu',
             changeLogEmpty:    'Noch keine gesammelten Änderungen. Erkannte Änderungen werden hier gesammelt.',
@@ -426,6 +427,7 @@
             tagTeilweiseStorniert:'Teilweise storniert',
             tagAuftragStatusLabel: 'Auftrag',
             tagZugbindung:     'Zugbindung aufgehoben',
+            tagZugbindungBesteht: 'Zugbindung',
             tagNotRecon:       'Nicht rekonstruierbar',
             tagGebrochen:      'Verbindung gebrochen',
             tagBeingReplanned: 'Verbindung wird umgeplant',
@@ -479,6 +481,10 @@
             geojsonTooltip:    'GeoJSON-Track herunterladen',
             deleteCachedTripTooltip:     'Reise aus Skript-Cache löschen',
             shareCopied:       '✓ Link kopiert!',
+            shareText:         p => `Verbindung am ${p.date}\n`
+                + `• von ${p.from}, Abfahrt ${p.dep} Uhr${p.depTrack ? ` Gl. ${p.depTrack}` : ''}${p.depTrain ? ` mit ${p.depTrain}` : ''}\n`
+                + `• nach ${p.to}, Ankunft ${p.arr} Uhr${p.arrTrack ? ` Gl. ${p.arrTrack}` : ''}${p.arrTrain ? ` mit ${p.arrTrain}` : ''}\n`
+                + `Verbindung ansehen: ${p.url}`,
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
             routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
             rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
@@ -1254,10 +1260,8 @@
             // Skip diff on first run — no previous snapshot means nothing meaningful to compare.
             const previous = lastVisit ? JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') : null;
             const changes = previous ? diffSnapshots(previous, current) : { neu: [], entfernt: [], geaendert: [] };
-            // Archive before renderUI so the "Changes" tab already includes
-            // this run's findings; gated on the same condition as the baseline
-            // write below to log each change exactly once.
-            if (shouldUpdateBaseline) appendToChangeLog(changes);
+            // Mirror before renderUI — the Changes pane renders straight from the log.
+            syncChangeLog(changes, lastVisit);
 
             dataIsStale = false;
             staleCachedAt = null;
@@ -2484,14 +2488,33 @@
         return `https://www.bahn.de/buchung/start?vbid=${encodeURIComponent(shareData.vbid)}`;
     }
 
+    // Emulates bahn.de's own share text (planned times/tracks; the link shows
+    // realtime anyway). Bare link when connection data is missing (synthetic trips).
+    function buildShareText(t, url) {
+        if (!t.from || !t.to || !t.departure || !t.arrival) return url;
+        const d = new Date(t.departure);
+        const trains = (t.zuege || '').split(' → ').filter(Boolean);
+        return T.shareText({
+            date: isNaN(d.getTime()) ? t.departure
+                : d.toLocaleDateString(DATE_LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }),
+            from: t.from, to: t.to,
+            dep: formatTime(t.departure), arr: formatTime(t.arrival),
+            depTrack: t.departureTrack, arrTrack: t.arrivalTrack,
+            depTrain: trains[0] || null, arrTrain: trains[trains.length - 1] || null,
+            url
+        });
+    }
+
     // =========================================================
     // 12) Disruption detail — uses fetchDetail cache
     // =========================================================
-    // Synthesizes per-stop realtime deviations (delays, cancelled stops) from
-    // the detail response. The bulk reiseketten response only carries rt data
+    // Synthesizes realtime deviations (delays, cancelled stops) from the
+    // detail response. The bulk reiseketten response only carries rt data
     // for the first departure and final arrival, so a relevante Abweichung at
-    // an intermediate stop is only visible here. One line per affected train,
-    // e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)".
+    // a transfer stop is only visible here. Only segment endpoints (boarding,
+    // transfer, arrival stops) plus the single worst intermediate delay are
+    // reported; listing every halt would drown the relevant data in noise.
+    // One line per affected train, e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)".
     function collectDetailDeviationEntries(trip0) {
         const abschnitte = Array.isArray(trip0 && trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
         const out = [];
@@ -2500,17 +2523,24 @@
             const vm = a.verkehrsmittel || {};
             const label = vm.mittelText || vm.name || vm.langText || '';
             const parts = [];
-            const halte = Array.isArray(a.halte) && a.halte.length ? a.halte : [a.startHalt, a.zielHalt];
-            halte.forEach(h => {
-                if (!h || !h.name) return;
+            const haltParts = h => {
+                const res = [];
+                if (!h || !h.name) return res;
                 [['ankunft', T.deviationArr], ['abfahrt', T.deviationDep]].forEach(([k, word]) => {
                     const ev = h[k];
                     const min = ev ? delayMinutes(ev.sollzeit, ev.echtzeit) : null;
                     if (min === null) return;
                     const sign = min > 0 ? '+' : '';
-                    parts.push(`${h.name} ${word} ${sign}${min}' (${formatTime(ev.echtzeit)})`);
+                    res.push({ min, text: `${h.name} ${word} ${sign}${min}' (${formatTime(ev.echtzeit)})` });
                 });
-            });
+                return res;
+            };
+            const halte = Array.isArray(a.halte) && a.halte.length ? a.halte : [a.startHalt, a.zielHalt];
+            haltParts(halte[0]).forEach(p => parts.push(p.text));
+            const worst = halte.slice(1, -1).flatMap(haltParts)
+                .reduce((w, p) => (!w || Math.abs(p.min) > Math.abs(w.min)) ? p : w, null);
+            if (worst) parts.push(worst.text);
+            if (halte.length > 1) haltParts(halte[halte.length - 1]).forEach(p => parts.push(p.text));
             if (a.originCancelled && a.abfahrtsOrt) parts.push(`${a.abfahrtsOrt}: ${T.deviationStopCancelled}`);
             if (a.destinationCancelled && a.ankunftsOrt) parts.push(`${a.ankunftsOrt}: ${T.deviationStopCancelled}`);
             if (!parts.length) return;
@@ -2624,28 +2654,33 @@
         return v;
     }
 
-    // All three categories share the { trip, changes? } shape so the change
-    // block can render them through a single code path. Note that entfernt
+    // All three categories share the { trip, changes? } shape so the changes
+    // pane can render them through a single code path. Note that entfernt
     // trips are stale snapshot copies — they no longer exist in the current
     // trip pool, so uuid-based action handlers cannot resolve them.
     function diffSnapshots(prev, curr) {
         const out = { neu: [], entfernt: [], geaendert: [] };
+        const now = Date.now();
         for (const uuid of Object.keys(curr)) {
             if (!prev[uuid]) {
                 out.neu.push({ trip: curr[uuid] });
             } else {
                 const c = curr[uuid], p = prev[uuid];
+                // Ended trips only lose data as the API ages them out (rt values
+                // reset, relevanteAbweichung clears) — suppress their diffs. A
+                // still-flagged disruption keeps the trip live past its end.
+                if (!c.relevanteAbweichung && tripEndTime(c) < now) continue;
                 const fld = DIFF_WATCHED
                     .filter(f => JSON.stringify(diffFieldValue(c, f)) !== JSON.stringify(diffFieldValue(p, f)))
                     .map(f => ({ field: f, old: diffFieldValue(p, f), new: diffFieldValue(c, f) }));
                 if (fld.length) out.geaendert.push({ trip: c, changes: fld });
             }
         }
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
         for (const uuid of Object.keys(prev)) {
             if (!curr[uuid]) {
-                const dep = prev[uuid].departure ? new Date(prev[uuid].departure).getTime() : 0;
-                if (dep > cutoff) out.entfernt.push({ trip: prev[uuid] });
+                // Disappearing before the journey ended is a signal (cancelled/
+                // rebooked); aging out of the feed afterwards is not.
+                if (tripEndTime(prev[uuid]) > now) out.entfernt.push({ trip: prev[uuid] });
             }
         }
         return out;
@@ -2674,19 +2709,23 @@
         };
     }
 
-    // Archive one diff result into the persistent change log. Called only at
-    // baseline rotation: within the cooldown the same diff is recomputed
-    // against the same baseline on every load, so appending there would log
-    // duplicates — at rotation each change is captured exactly once.
-    function appendToChangeLog(changes) {
+    // Mirror the current diff into the persistent change log on every run.
+    // Entries newer than lastVisit are pending — re-diffed against the same
+    // baseline until it rotates — and are replaced wholesale each run; the
+    // lastVisit write at rotation freezes them, so each change is captured
+    // exactly once per baseline window.
+    function syncChangeLog(changes, lastVisit) {
+        if (!lastVisit) return; // no baseline yet — nothing diffed, keep an imported log intact
         const detectedAt = new Date().toISOString();
         const entries = [
             ...changes.geaendert.map(c => ({ detectedAt, kind: 'geaendert', trip: slimTripForChangeLog(c.trip), changes: c.changes })),
             ...changes.neu.map(c => ({ detectedAt, kind: 'neu', trip: slimTripForChangeLog(c.trip) })),
             ...changes.entfernt.map(c => ({ detectedAt, kind: 'entfernt', trip: slimTripForChangeLog(c.trip) }))
         ];
-        if (!entries.length) return;
-        const log = loadChangeLog();
+        const cutoff = Date.parse(lastVisit);
+        const prev = loadChangeLog();
+        const log = prev.filter(e => !(Date.parse(e.detectedAt) > cutoff));
+        if (!entries.length && log.length === prev.length) return;
         log.push(...entries);
         if (log.length > CHANGE_LOG_MAX_ENTRIES) log.splice(0, log.length - CHANGE_LOG_MAX_ENTRIES);
         saveChangeLog(log);
@@ -2702,6 +2741,8 @@
           label: t  => `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}` },
         { id: 'tagZugbindung',     cls: 'warn', cond: t => t.zugbindung === 'AUFGEHOBEN',
           label: ()  => T.tagZugbindung },
+        { id: 'tagZugbindungBesteht', cls: 'warn', cond: t => t.zugbindung === 'BESTEHT',
+          label: ()  => T.tagZugbindungBesteht },
         { id: 'tagNotRecon',       cls: 'bad',  cond: t => t.status === 'NICHT_REKONSTRUIERBAR',
           label: ()  => T.tagNotRecon },
         { id: 'tagGebrochen',      cls: 'bad',  cond: t => t.status === 'GEBROCHEN',
@@ -2763,6 +2804,7 @@
             tagClass1: T.tagClass1,
             tagRegionalTicket: T.tagRegionalTicket,
             tagZugbindung: T.tagZugbindung,
+            tagZugbindungBesteht: T.tagZugbindungBesteht,
             tagNotRecon: T.tagNotRecon,
             tagGebrochen: T.tagGebrochen,
             tagBeingReplanned: T.tagBeingReplanned,
@@ -2827,14 +2869,19 @@
         return uiSettings.showCancelledTrips ? raw : raw.filter(t => t.storniertStatus !== 'STORNIERT');
     }
 
+    // Realtime-aware end of a trip: a delayed trip lives until its rt arrival
+    // + 2h, not the planned one. 0 when the trip has no usable timestamps.
+    function tripEndTime(t) {
+        const arr = t.arrivalRt || t.arrival;
+        if (arr) return new Date(arr).getTime() + 2 * 3600 * 1000;
+        const dep = t.departureRt || t.departure;
+        if (dep) return new Date(dep).getTime() + 12 * 3600 * 1000;
+        return 0;
+    }
+
     function filterUpcomingTrips(trips) {
         const now = Date.now();
-        return trips.filter(t => {
-            const end = t.arrival   ? new Date(t.arrival).getTime()   + 2  * 3600 * 1000
-                      : t.departure ? new Date(t.departure).getTime() + 12 * 3600 * 1000
-                      : 0;
-            return end > now;
-        });
+        return trips.filter(t => tripEndTime(t) > now);
     }
 
     function reRender() {
@@ -3938,7 +3985,7 @@
                     #dbmrpp-root h4 { margin: 10px 0 4px; font-family: inherit; font-size: 11.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
 
                     .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); }
-                    .dbmrpp-changes { background: #fff5f5; }
+                    .dbmrpp-changes-new { background: #fff5f5; border-radius: 4px; padding: 2px 8px 6px; margin: 0 -8px; }
                     .dbmrpp-changes-none { color: var(--dbmrpp-text-muted); font-style: italic; }
                     .dbmrpp-trip { padding: 6px 0; border-bottom: 1px dotted #e0e0e0; }
                     .dbmrpp-trip:last-child { border-bottom: none; }
@@ -4224,8 +4271,6 @@
                     .dbmrpp-view-tab.active { color: var(--dbmrpp-accent); border-bottom-color: var(--dbmrpp-accent); }
                     .dbmrpp-view-tab:hover:not(.active) { color: #444; }
                     .dbmrpp-tab-badge { color: var(--dbmrpp-accent); font-weight: 700; font-size: 9.5px; margin-left: 1px; }
-                    .dbmrpp-changes-current { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--dbmrpp-divider); }
-                    .dbmrpp-changes-current.dbmrpp-changes { padding: 6px 10px 8px; border-radius: 4px; border-bottom: none; }
                     .dbmrpp-view-count {
                         margin-left: auto;
                         font-size: 12px;
@@ -4790,7 +4835,7 @@
         const origTitle = btn.title;
         try {
             await withLoadingIcon(btn, async () => {
-                await navigator.clipboard.writeText(await getShareLink(trip));
+                await navigator.clipboard.writeText(buildShareText(trip, await getShareLink(trip)));
             });
             btn.textContent = '✓'; btn.title = T.shareCopied; btn.style.opacity = '1';
             setTimeout(() => { btn.textContent = '⤴️'; btn.title = origTitle; btn.style.opacity = ''; }, 2000);
@@ -5230,7 +5275,7 @@
         const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
         if (activeView === 'changes') {
             changesBadgeSeen = true;
-            return buildChangeLogSection(changes, lastVisitTxt);
+            return buildChangeLogSection(changes, lastVisit, lastVisitTxt);
         }
         const changeCount = changes.neu.length + changes.geaendert.length + changes.entfernt.length;
         const badgeCount  = changesBadgeSeen ? 0 : changeCount;
@@ -5278,18 +5323,6 @@
         </div>`;
     }
 
-    // Current-session diff, rendered above the archived log in the Änderungen pane.
-    function buildChangeBlock(changes, lastVisitTxt) {
-        const hasChanges = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
-        const inner = hasChanges
-            ? `<h3>${T.changesSince(esc(lastVisitTxt))}</h3>
-            ${changes.geaendert.map(c => renderChangeLine(c)).join('')}
-            ${changes.neu.length    ? `<h4>${T.changesNew(changes.neu.length)}</h4>${changes.neu.map(c => renderChangeLine(c)).join('')}` : ''}
-            ${changes.entfernt.length ? `<h4>${T.changesRemoved}</h4>${changes.entfernt.map(c => renderChangeLine(c, true)).join('')}` : ''}`
-            : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
-        return `<div class="dbmrpp-changes-current${hasChanges ? ' dbmrpp-changes' : ''}">${inner}</div>`;
-    }
-
     // rightHtml lands right-aligned next to the tabs (trip count, clear
     // button); changeCount renders the red badge on the Änderungen tab.
     function buildViewTabs(rightHtml = '', changeCount = 0) {
@@ -5314,16 +5347,19 @@
         </div>`;
     }
 
-    // Current diff on top, then the archived log, newest run first, grouped
-    // by detectedAt (shared by all entries of one detection run).
-    function buildChangeLogSection(changes, lastVisitTxt) {
-        const currentBlock = buildChangeBlock(changes, lastVisitTxt);
+    // Archived log, newest run first, grouped by detectedAt (shared by all
+    // entries of one detection run). The current diff is already mirrored in
+    // by syncChangeLog; groups newer than lastVisit are this visit's findings
+    // and get the highlight background.
+    function buildChangeLogSection(changes, lastVisit, lastVisitTxt) {
+        const hasChanges = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
+        const noChangesLine = hasChanges ? '' : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
         const log = loadChangeLog();
         if (!log.length) {
             return `
         <div class="dbmrpp-section">
             ${buildViewTabs()}
-            ${currentBlock}
+            ${noChangesLine}
             <div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>
         </div>`;
         }
@@ -5334,16 +5370,19 @@
             else groups.push({ detectedAt: e.detectedAt, entries: [e] });
         }
         groups.reverse();
+        const newCutoff = lastVisit ? Date.parse(lastVisit) : Infinity;
         const kindBadge = k =>
             k === 'neu'      ? `<span class="dbmrpp-tag dbmrpp-tag-ok">${T.changeLogNew}</span> ` :
             k === 'entfernt' ? `<span class="dbmrpp-tag dbmrpp-tag-bad">${T.changesRemoved}</span> ` : '';
         return `
         <div class="dbmrpp-section">
             ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
-            ${currentBlock}
+            ${noChangesLine}
             ${groups.map(g => `
-            <h4>${esc(formatDateTime(g.detectedAt))}</h4>
-            ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}`).join('')}
+            <div${Date.parse(g.detectedAt) > newCutoff ? ' class="dbmrpp-changes-new"' : ''}>
+                <h4>${esc(formatDateTime(g.detectedAt))}</h4>
+                ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}
+            </div>`).join('')}
         </div>`;
     }
 
@@ -5391,11 +5430,7 @@
 
     function isRoutingEligibleTrip(t) {
         if (!t || !t.fromReiseketten || t.isOrphaned || t.isPastTrip) return false;
-        const now = Date.now();
-        const end = t.arrival
-            ? new Date(t.arrival).getTime() + 2 * 3600 * 1000
-            : (t.departure ? new Date(t.departure).getTime() + 12 * 3600 * 1000 : NaN);
-        return Number.isFinite(end) && end > now;
+        return tripEndTime(t) > Date.now();
     }
 
     function renderExternalRouteLink(t) {
