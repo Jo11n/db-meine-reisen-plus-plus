@@ -30,7 +30,7 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 **Synchronisierung**
 - Verlauf, Tags und Notizen per WebDAV (z. B. Nextcloud) zwischen Browsern synchronisieren
-- Reisen als Kalendereinträge per CalDAV-Push in einen beliebigen Kalender übertragen (z. B. Nextcloud, Fastmail, Radicale) — nur einseitig, Änderungen im Kalender werden nicht zurückgelesen
+- Reisen als Kalendereinträge per CalDAV-Push in einen CalDAV-Kalender übertragen (z. B. Nextcloud, iCloud) — nur einseitig, Änderungen im Kalender werden nicht zurückgelesen
 
 **Filtern**
 - Nach Abfahrts- oder Zielbahnhof filtern
@@ -61,7 +61,7 @@ Ein Userscript, das die Deutsche-Bahn-Seite „Meine Reisen" mit einer besseren 
 
 2. **Script installieren:** [DB Meine Reisen++ installieren](https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js) — der Userscript-Manager fragt zur Bestätigung
 
-3. **Öffnen:** [bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) aufrufen und auf den schwebenden 🚆++-Button unten rechts klicken
+3. **Öffnen:** [bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) aufrufen und auf den schwebenden ++-Button unten rechts klicken
 
 ---
 

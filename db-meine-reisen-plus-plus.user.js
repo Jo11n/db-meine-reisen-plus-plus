@@ -15,6 +15,7 @@
 // @author       Jo11n
 // @license      MIT
 // @run-at       document-start
+// @noframes
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // ==/UserScript==

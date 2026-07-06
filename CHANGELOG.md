@@ -16,6 +16,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **criteria for showing changes now seek to exclude past trips that merely get stale/are dropped from the api response** - to reduce noise in the change tracking
 
 ### Fixed
+- **@noframes** - the script ran a second instance in bahn.de's same-origin iframes (e.g. the auth token frame), patching fetch/XHR there for no benefit; now top window only
 - **no more phantom rt changes on travel day** - the API populates rtDateTime with plan-equal values once a trip enters the realtime horizon; rt times are now only stored (and diffed) when they actually differ from the schedule, matching the existing rtTrack handling
 - **trip history no longer overwritten by stale sync data** - history entries get an updatedAt that bumps on content change and drives the webdav merge; previously the merge compared cachedAt (fixed at first cache), so a remote copy with the same timestamp could replace a freshly updated local entry
 

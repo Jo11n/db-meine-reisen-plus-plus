@@ -30,7 +30,7 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 
 **Sync**
 - Sync your history, tags, and notes across browsers via WebDAV (e.g. Nextcloud, any WebDAV server)
-- Push trips as calendar events to any CalDAV calendar (e.g. Nextcloud, Fastmail, Radicale) — push only, changes in the calendar are not read back
+- Push trips as calendar events to any CalDAV calendar (e.g. Nextcloud, iCloud) — push only, changes in the calendar are not read back
 
 **Filtering**
 - Filter by origin or destination station
@@ -61,7 +61,7 @@ A userscript that improves Deutsche Bahn's "Meine Reisen" ("My Trips") page with
 
 2. **Install the script:** [Install DB Meine Reisen++](https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js) — your userscript manager will ask you to confirm
 
-3. **Open it:** go to [bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) and click the floating 🚆++ button in the lower right corner
+3. **Open it:** go to [bahn.de/meine-reisen](https://www.bahn.de/meine-reisen) and click the floating ++ button in the lower right corner
 
 ---
 
