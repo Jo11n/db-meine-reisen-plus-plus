@@ -3,8 +3,8 @@
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
 // @version      0.11.0
-// @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, and more. Works on both the German and international versions of the site. 
-// @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
+// @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
+// @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgNDAwIj4NCiAgPHJlY3Qgd2lkdGg9IjQwMCIgaGVpZ2h0PSI0MDAiIHJ4PSI3MiIgZmlsbD0iI0VDMDAxNiIvPg0KICA8ZyBmaWxsPSJ3aGl0ZSI+DQogICAgPHBhdGggZD0iTTI3NCAyNDhsLTMgMzBoNjBjMCAwIDU1IDEgNDktOWMtNS03LTI5LTIwLTM5LTIxeiIvPg0KICAgIDxyZWN0IHg9Ii04MCIgeT0iLTEyIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjMwIiB0cmFuc2Zvcm09Im1hdHJpeCgxLDAsLTAuMzY0LDEsMTEzLDI2MCkiLz4NCiAgICA8cmVjdCB4PSItMTIiIHk9Ii04MCIgd2lkdGg9IjMwIiBoZWlnaHQ9IjE2MCIgdHJhbnNmb3JtPSJtYXRyaXgoMSwwLC0wLjM2NCwxLDExNCwyNjMpIi8+DQogICAgPHJlY3QgeD0iLTU0IiB5PSItMTIiIHdpZHRoPSIxMDgiIGhlaWdodD0iMzAiIHRyYW5zZm9ybT0ibWF0cml4KDEsMCwtMC4zNjQsMSwyNjIsMjYwKSIvPg0KICAgIDxyZWN0IHg9Ii0xMiIgeT0iLTgwIiB3aWR0aD0iMzAiIGhlaWdodD0iMTYwIiB0cmFuc2Zvcm09Im1hdHJpeCgxLDAsLTAuMzY0LDEsMjg1LDI2MykiLz4NCiAgPC9nPg0KPC9zdmc+
@@ -62,11 +62,12 @@
     const TAG_ASSIGNMENTS_UPDATED_AT_KEY = 'dbmrpp.tagAssignmentsUpdatedAt';
     const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
     const FGR_CLAIMS_UPDATED_AT_KEY      = 'dbmrpp.fgrClaimsUpdatedAt';
-    // Plan/booking state only. Realtime values (rt times/tracks, relevante
-    // Abweichung) are shown live on the trip cards and are erased per stop
-    // from the bulk feed as the journey progresses — diffing them only churns.
+    // Plan/booking state only. Realtime-derived values (rt times/tracks,
+    // relevanteAbweichung) are shown live on the trip cards and flip back when
+    // a disruption resolves or ends — diffing them churns. alternativensuche
+    // is special-cased in diffSnapshots (escalations only), not listed here.
     // Values must stay primitive: diffSnapshots compares them with !==.
-    const DIFF_WATCHED     = ['zugbindung','status','alternativensuche',
+    const DIFF_WATCHED     = ['zugbindung','status',
                               'departure','arrival','departureTrack','arrivalTrack','zuege','seats',
                               'leistungsname','storniertStatus','auftragStatus',
                               'sitzplatzStorniert','stellplatzStorniert'];
@@ -131,6 +132,8 @@
             settingsDebugLogEntries:    n => `${n} entr${n === 1 ? 'y' : 'ies'} stored`,
             settingsUsePastCacheLabel:  'Enhance past view from cache 🗄️',
             settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
+            settingsAutoDetailLabel:    'Auto-load details during disruptions ⚠️',
+            settingsAutoDetailDesc:     'For live trips with a relevant deviation (from 2 h before departure until arrival), automatically fetches the detail information with per-stop delays and messages — same as clicking ⚠️.',
             fromAll:           'From (all)',
             toAll:             'To (all)',
             dayAll:            'All',
@@ -188,9 +191,7 @@
             notePlaceholder:          'Add a note…',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Notifications',
-            cacheDelayDeparture: 'Departure delay',
-            cacheDelayArrival:   'Arrival delay',
-            cacheCapturedAt:   d => `🕒 Captured on ${d}`,
+            cacheUpdatedAt:    d => `As of ${d}`,
             cacheMissing:      'ℹ️ No cached trip details available.',
             planChangedFrom:   'was',
             metaValidLabel:    'Valid:',
@@ -407,6 +408,8 @@
             settingsDebugLogEntries:    n => `${n} Eintr${n === 1 ? 'ag' : 'äge'} gespeichert`,
             settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern 🗄️',
             settingsUsePastCacheDesc:   'Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
+            settingsAutoDetailLabel:    'Bei Störung Details automatisch laden ⚠️',
+            settingsAutoDetailDesc:     'Lädt für laufende Reisen mit relevanter Abweichung (ab 2 Std. vor Abfahrt bis zur Ankunft) automatisch die Detailinformationen mit Verspätungen und Meldungen — wie ein Klick auf ⚠️.',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
             dayAll:            'Alle',
@@ -464,9 +467,7 @@
             notePlaceholder:          'Notiz hinzufügen…',
             cacheLabel:        '🗄️ Cache',
             cacheNotificationsLabel: 'Benachrichtigungen',
-            cacheDelayDeparture: 'Verspaetung Abfahrt',
-            cacheDelayArrival:   'Verspaetung Ankunft',
-            cacheCapturedAt:   d => `Erfasst am ${d}`,
+            cacheUpdatedAt:    d => `Stand ${d}`,
             cacheMissing:      'Keine zwischengespeicherten Reisedetails verfügbar.',
             planChangedFrom:   'war',
             metaValidLabel:    'Gültig:',
@@ -674,6 +675,7 @@
             rememberFilter: false,
             openOnLoad: false,
             usePastCache: false,
+            autoLoadDisruptionDetails: true,
             showJsonButton: false,
             trainLinksEnabled: false,
             'traininfo-provider': 'bahn.expert',
@@ -696,6 +698,7 @@
                 rememberFilter: !!parsed.rememberFilter,
                 openOnLoad: !!parsed.openOnLoad,
                 usePastCache: parsed.usePastCache === true,
+                autoLoadDisruptionDetails: parsed.autoLoadDisruptionDetails !== false,
                 showJsonButton: parsed.showJsonButton !== false,
                 trainLinksEnabled: !!parsed.trainLinksEnabled,
                 'traininfo-provider': provider,
@@ -1272,6 +1275,9 @@
             await renderUI(trips, orphans, changes, lastVisit);
             saveRenderCache(trips, orphans, changes, lastVisit);
             dbLog('run: done (' + trips.length + ' trips)');
+            // Fire-and-forget: the panel is already rendered, fresh details
+            // land via reRenderContent when the fetches settle.
+            autoLoadDisruptionDetails(trips).catch(err => dbLog('auto-detail error: ' + err.message));
 
             if (shouldUpdateBaseline) {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
@@ -1433,9 +1439,7 @@
         return { entries: {} };
     }
 
-    // cachedAt records when the trip was first cached and stays fixed across
-    // updates; updatedAt bumps whenever the entry content changes and is the
-    // timestamp sync conflict resolution has to use.
+    // cachedAt: first cached, never moves. updatedAt: bumps on content change, orders sync merges.
     function makeHistoryEntryShape(src, ids, cachedAt, updatedAt) {
         return {
             uuid: src.uuid || ids.reisekettenUuid || null,
@@ -1516,8 +1520,7 @@
             const text = toNotificationText(m);
             if (!text || seen.has(text)) return;
             seen.add(text);
-            // kind marks synthesized entries (e.g. 'deviation') so renderers
-            // can treat them differently from verbose RIS/HIM messages.
+            // kind marks synthesized entries (e.g. 'deviation') for renderers
             out.push(m && m.kind ? { text, kind: m.kind } : { text });
         });
         return out;
@@ -1557,8 +1560,7 @@
         return makeHistoryEntryShape(t, ids, cachedAtOverride || new Date().toISOString());
     }
 
-    // Compares entry payloads, ignoring the timestamps. Both sides come out of
-    // makeHistoryEntryShape, so key order is stable and JSON compare is safe.
+    // Timestamp-agnostic; both sides come from makeHistoryEntryShape, so JSON compare is safe.
     function historyEntryContentEquals(a, b) {
         if (!a || !b) return false;
         const strip = e => {
@@ -1568,11 +1570,26 @@
         return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
     }
 
-    // Writes an entry into tripHistory, preserving updatedAt while the content
-    // is unchanged and bumping it on any real change so sync merges can order
-    // entry versions (cachedAt never moves). Skips the write when the stored
-    // entry would be identical; returns whether anything was written.
+    // Once a stop's time has passed, its rt values can no longer change — the
+    // bulk feed erases them per stop, so an incoming null then means "aged
+    // out", not "back to plan": keep the last known value. Only while the plan
+    // time is unchanged; after a plan change the old rt is meaningless.
+    function preservePastRt(entry, prev) {
+        const passed = iso => iso && new Date(iso).getTime() < Date.now();
+        if (entry.departure === prev.departure && passed(entry.departure)) {
+            entry.departureRt      = entry.departureRt      || prev.departureRt      || null;
+            entry.departureTrackRt = entry.departureTrackRt || prev.departureTrackRt || null;
+        }
+        if (entry.arrival === prev.arrival && passed(entry.arrival)) {
+            entry.arrivalRt      = entry.arrivalRt      || prev.arrivalRt      || null;
+            entry.arrivalTrackRt = entry.arrivalTrackRt || prev.arrivalTrackRt || null;
+        }
+    }
+
+    // Preserves updatedAt while content is unchanged, bumps it on change;
+    // skips identical writes. Returns whether anything was written.
     function commitHistoryEntry(key, entry, prev) {
+        if (prev) preservePastRt(entry, prev);
         const unchanged = prev && historyEntryContentEquals(prev, entry);
         entry.updatedAt = (unchanged && prev.updatedAt) ? prev.updatedAt : new Date().toISOString();
         if (unchanged && prev.updatedAt === entry.updatedAt) return false;
@@ -1639,11 +1656,8 @@
         saveTripHistory();
     }
 
-    // The bulk response rarely carries messages (they live in the detail
-    // endpoint), so a plain refresh would wipe notifications captured via the
-    // ⚠ button from the history entry. While DB still reports a relevante
-    // Abweichung, adopt the cached ones onto the fresh trip — must run before
-    // the upsert rebuilds the entry. Once the flag clears they are dropped.
+    // Keeps ⚠-fetched notifications alive across refreshes (bulk carries none)
+    // while relevanteAbweichung holds; must run before the upsert.
     function adoptCachedNotifications(t) {
         if (!t || !t.fromReiseketten || !t.relevanteAbweichung) return;
         if (Array.isArray(t.notifications) && t.notifications.length) return;
@@ -1784,7 +1798,8 @@
             zuege: entry.zuege || '',
             seats: entry.seats || '',
             notifications: normalizeNotificationEntries(entry.notifications || []),
-            cachedAt: entry.cachedAt || null
+            cachedAt: entry.cachedAt || null,
+            updatedAt: entry.updatedAt || null
         };
         trip.hasTripHistoryEntry = true;
         trip.source = 'merged';
@@ -2028,7 +2043,8 @@
                             zuege: t.zuege || '',
                             seats: t.seats || '',
                             notifications: normalizeNotificationEntries(t.notifications || []),
-                            cachedAt: t.cachedAt || null
+                            cachedAt: t.cachedAt || null,
+                            updatedAt: t.updatedAt || null
                         }
                     };
                     if (rkUuid) existingIds.add(rkUuid);
@@ -2512,13 +2528,9 @@
     // =========================================================
     // 12) Disruption detail — uses fetchDetail cache
     // =========================================================
-    // Synthesizes realtime deviations (delays, cancelled stops) from the
-    // detail response. The bulk reiseketten response only carries rt data
-    // for the first departure and final arrival, so a relevante Abweichung at
-    // a transfer stop is only visible here. Only segment endpoints (boarding,
-    // transfer, arrival stops) plus the single worst intermediate delay are
-    // reported; listing every halt would drown the relevant data in noise.
-    // One line per affected train, e.g. "TGV 9571: Karlsruhe Hbf an +15' (09:41)".
+    // Per-stop rt deviations exist only in the detail response (bulk covers
+    // just first departure / final arrival). Reports segment endpoints plus
+    // the single worst intermediate delay to keep the noise down.
     function collectDetailDeviationEntries(trip0) {
         const abschnitte = Array.isArray(trip0 && trip0.verbindungsAbschnitte) ? trip0.verbindungsAbschnitte : [];
         const out = [];
@@ -2566,6 +2578,25 @@
         return normalized;
     }
 
+    // Auto-pull the ⚠ details for disrupted live trips (2h before departure
+    // until trip end). Fires per run(); qualifying trips are rare (0–2), so
+    // this never iterates the whole trip list against the detail endpoint.
+    async function autoLoadDisruptionDetails(trips) {
+        if (!uiSettings.autoLoadDisruptionDetails) return;
+        const now = Date.now();
+        const live = trips.filter(t =>
+            t.fromReiseketten && t.relevanteAbweichung && t.departure &&
+            new Date(t.departure).getTime() - 2 * 3600 * 1000 <= now &&
+            tripEndTime(t) > now);
+        if (!live.length) return;
+        dbLog('auto-detail: ' + live.length + ' live disrupted trip(s)');
+        const results = await Promise.allSettled(live.map(t => loadAbweichungMessages(t)));
+        results.forEach((r, i) => {
+            if (r.status === 'rejected') dbLog('auto-detail failed for ' + live[i].uuid + ': ' + (r.reason && r.reason.message || r.reason));
+        });
+        if (results.some(r => r.status === 'fulfilled' && r.value.length)) reRenderContent();
+    }
+
     // =========================================================
     // 13) Reiseketten (journey-chain) simplify / merge
     // =========================================================
@@ -2574,9 +2605,7 @@
         Object.assign(t, info);
     }
 
-    // Realtime values (timestamps, tracks) appear on travel day even when the
-    // train is on plan. Keep them only when they actually differ from the
-    // schedule so the mere arrival of realtime data is not a change.
+    // rt values (times, tracks) appear plan-equal on travel day — store only actual deviations.
     function normalizeRtValue(soll, rt) {
         return (rt && rt !== soll) ? rt : null;
     }
@@ -2669,6 +2698,14 @@
                 const fld = DIFF_WATCHED
                     .filter(f => diffFieldValue(c, f) !== diffFieldValue(p, f))
                     .map(f => ({ field: f, old: diffFieldValue(p, f), new: diffFieldValue(c, f) }));
+                // alternativensuche is diffed asymmetrically: escalating to
+                // KANN/MUSS is worth logging, resolving back to KEINE is the
+                // disruption-over churn (also fires when the trip ends).
+                const alt = diffFieldValue(c, 'alternativensuche');
+                if (alt !== diffFieldValue(p, 'alternativensuche') &&
+                    (alt === 'ALTERNATIVEN_KANN' || alt === 'ALTERNATIVEN_MUSS')) {
+                    fld.push({ field: 'alternativensuche', old: diffFieldValue(p, 'alternativensuche'), new: alt });
+                }
                 if (fld.length) out.geaendert.push({ trip: c, changes: fld });
             }
         }
@@ -3084,10 +3121,8 @@
             : { ...importedSafe, ...localSafe };
     }
 
-    // Resolves by updatedAt (cachedAt is fixed at first-cache time and says
-    // nothing about content freshness; legacy entries without updatedAt fall
-    // back to it). Ties keep the local entry — it is refreshed from live data
-    // on every run, so a remote copy with the same timestamp is never newer.
+    // Orders by updatedAt (legacy fallback: cachedAt); ties keep local, which
+    // is refreshed from live data every run.
     function mergeHistoryEntriesNewestWins(localEntries, importedEntries) {
         const merged = { ...(isPlainObject(localEntries) ? localEntries : {}) };
         const entryTs = e => Date.parse((e && (e.updatedAt || e.cachedAt)) || 0) || 0;
@@ -4017,6 +4052,7 @@
                         line-height: 1;
                         opacity: 0.7;
                         text-decoration: none;
+                        user-select: none;
                     }
 
                     .dbmrpp-action-icon:hover { opacity: 1; }
@@ -4528,6 +4564,12 @@
             pastTrips = null;
             rememberUiState();
             reRender();
+        });
+
+        const autoDetailCb = root.querySelector('#dbmrpp-setting-auto-detail');
+        if (autoDetailCb) autoDetailCb.addEventListener('change', e => {
+            uiSettings.autoLoadDisruptionDetails = !!e.target.checked;
+            saveUiSettings();
         });
 
         const showJsonButtonCb = root.querySelector('#dbmrpp-setting-show-json-button');
@@ -5169,6 +5211,7 @@
                     ${settingsToggle('dbmrpp-setting-open-on-load', uiSettings.openOnLoad, T.settingsOpenOnLoad)}
                     ${settingsToggle('dbmrpp-setting-show-cancelled-trips', uiSettings.showCancelledTrips, T.settingsShowCancelledTrips, { desc: T.settingsShowCancelledTripsDesc })}
                     ${settingsToggle('dbmrpp-setting-use-past-cache', uiSettings.usePastCache, T.settingsUsePastCacheLabel, { desc: T.settingsUsePastCacheDesc })}
+                    ${settingsToggle('dbmrpp-setting-auto-detail', uiSettings.autoLoadDisruptionDetails, T.settingsAutoDetailLabel, { desc: T.settingsAutoDetailDesc })}
                 </div>
             </details>
             <details class="dbmrpp-settings-group" open>
@@ -5425,6 +5468,7 @@
     }
 
     function renderShareLink(t) {
+        if (t.isPastTrip) return '';
         if (t.fromReiseketten ? t.isOrphaned : (!t.auftragsnummer || !t.kundenwunschId)) return '';
         return actionButton('dbmrpp-share-btn', t, T.shareTooltip, '⤴️');
     }
@@ -5441,7 +5485,7 @@
     }
 
     function renderAbweichungBtn(t) {
-        if (!t.relevanteAbweichung || !t.fromReiseketten) return '';
+        if (!t.relevanteAbweichung || !t.fromReiseketten || t.isPastTrip) return '';
         return actionButton('dbmrpp-abweichung-btn', t, T.abweichungTooltip, '⚠️');
     }
 
@@ -5452,6 +5496,8 @@
 
     function isIcsSupportedTrip(t) {
         if (!t || t.isVerbundticket) return false;
+        // kalender API needs a booking that still exists in the account
+        if (t.isFromHistoryCache) return false;
         // LEISTUNG-only products (for example many bike tickets) cannot be exported via kalender API.
         if (t.isLeistungTicket || t.positionTyp === 'LEISTUNG') return false;
         return (t.typ === 'AUFTRAG' && t.auftragsnummer && t.nachname)
@@ -5844,13 +5890,6 @@
         return '';
     }
 
-    function formatDelaySummary(label, soll, ist) {
-        const min = delayMinutes(soll, ist);
-        if (min === null) return '';
-        const sign = min > 0 ? '+' : '';
-        return `${label} ${sign}${min}'`;
-    }
-
     function buildTripTags(t) {
         const tag = (cls, text) => `<span class="dbmrpp-tag ${cls}">${text}</span>`;
         const tags = TRIP_TAG_DEFS
@@ -5977,10 +6016,7 @@
         </div>`;
     }
 
-    // Deviation entries are marked with kind: 'deviation' when synthesized,
-    // but entries cached before that flag existed don't carry it — recognize
-    // those by their shape ("+15' (09:41)" delay token or cancelled-stop note)
-    // so they keep rendering as visible focal lines instead of collapsed ones.
+    // kind flag, or shape match for entries cached before the flag existed.
     function isDeviationEntry(e) {
         if (!e) return false;
         if (e.kind === 'deviation') return true;
@@ -5988,9 +6024,7 @@
         return /[+-]\d+'\s*\(/.test(text) || text.includes(T.deviationStopCancelled);
     }
 
-    // Delay figures ("+15'") and cancelled-stop notes are the focal points of
-    // a deviation line — tint them like realtime diff values. Works on escaped
-    // text, hence the &#39; apostrophe in the pattern.
+    // Tints delay figures / cancelled-stop notes; runs on escaped text, hence &#39;.
     function deviationTextHtml(text) {
         const cancelled = esc(T.deviationStopCancelled);
         return esc(text)
@@ -5999,8 +6033,7 @@
             .split(cancelled).join(`<span class="dbmrpp-delay">${cancelled}</span>`);
     }
 
-    // Deviation lines stay visible, verbose RIS/HIM messages collapse behind
-    // a toggle. Callers provide the wrapper (trip card vs. blue cache block).
+    // Deviations stay visible, RIS/HIM messages collapse; caller provides the wrapper.
     function notificationListHtml(entries) {
         if (!entries || !entries.length) return '';
         const deviations = entries.filter(isDeviationEntry);
@@ -6012,9 +6045,7 @@
         return devLines + msgBlock;
     }
 
-    // Notifications on current trip cards (bulk messages, or detail-fetch
-    // results adopted from the history cache). Past trips render theirs via
-    // the cache block instead, so skip them here to avoid duplication.
+    // Past trips render notifications via the cache block — skip to avoid duplication.
     function renderTripNotifications(t) {
         if (!t || !t.fromReiseketten || t.isPastTrip || t.isFromHistoryCache) return '';
         const body = notificationListHtml(normalizeNotificationEntries(t.notifications || []));
@@ -6044,19 +6075,9 @@
         }
         const c = t.cacheInfo;
         const facts = [];
-        if (c.cachedAt) {
-            const ts = formatDateTime(c.cachedAt);
-            facts.push(esc(T.cacheCapturedAt(ts)));
-        }
-        if (c.departureRt || c.arrivalRt) {
-            const dep = c.departureRt ? formatDateTime(c.departureRt) : '?';
-            const arr = c.arrivalRt ? formatDateTime(c.arrivalRt) : '?';
-            facts.push(`RT ${esc(dep)} → ${esc(arr)}`);
-        }
-        const depDelay = formatDelaySummary(T.cacheDelayDeparture, t.departure, c.departureRt);
-        const arrDelay = formatDelaySummary(T.cacheDelayArrival, t.arrival, c.arrivalRt);
-        if (depDelay) facts.push(esc(depDelay));
-        if (arrDelay) facts.push(esc(arrDelay));
+        // legacy entries without updatedAt: first capture is the last known content change
+        const stand = c.updatedAt || c.cachedAt;
+        if (stand) facts.push(esc(T.cacheUpdatedAt(formatDateTime(stand))));
 
         const lines = [];
         if (facts.length) lines.push(facts.join(' · '));
