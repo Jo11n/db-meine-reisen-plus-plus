@@ -5,8 +5,7 @@ API.md
 memory/
 
 # Environment
-.venv/
-.playwright-mcp/
+.*/
 
 
 # Generated data captures

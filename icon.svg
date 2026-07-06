@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <rect width="400" height="400" rx="72" fill="#EC0016"/>
+  <g fill="white">
+    <path d="M274 248l-3 30h60c0 0 55 1 49-9c-5-7-29-20-39-21z"/>
+    <rect x="-80" y="-12" width="160" height="30" transform="matrix(1,0,-0.364,1,113,260)"/>
+    <rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,114,263)"/>
+    <rect x="-54" y="-12" width="108" height="30" transform="matrix(1,0,-0.364,1,262,260)"/>
+    <rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,285,263)"/>
+  </g>
+</svg>

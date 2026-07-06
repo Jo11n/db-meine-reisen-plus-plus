@@ -7,6 +7,7 @@
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, Ticket-PDF-Download und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
 // @match        https://int.bahn.de/*
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgNDAwIj4NCiAgPHJlY3Qgd2lkdGg9IjQwMCIgaGVpZ2h0PSI0MDAiIHJ4PSI3MiIgZmlsbD0iI0VDMDAxNiIvPg0KICA8ZyBmaWxsPSJ3aGl0ZSI+DQogICAgPHBhdGggZD0iTTI3NCAyNDhsLTMgMzBoNjBjMCAwIDU1IDEgNDktOWMtNS03LTI5LTIwLTM5LTIxeiIvPg0KICAgIDxyZWN0IHg9Ii04MCIgeT0iLTEyIiB3aWR0aD0iMTYwIiBoZWlnaHQ9IjMwIiB0cmFuc2Zvcm09Im1hdHJpeCgxLDAsLTAuMzY0LDEsMTEzLDI2MCkiLz4NCiAgICA8cmVjdCB4PSItMTIiIHk9Ii04MCIgd2lkdGg9IjMwIiBoZWlnaHQ9IjE2MCIgdHJhbnNmb3JtPSJtYXRyaXgoMSwwLC0wLjM2NCwxLDExNCwyNjMpIi8+DQogICAgPHJlY3QgeD0iLTU0IiB5PSItMTIiIHdpZHRoPSIxMDgiIGhlaWdodD0iMzAiIHRyYW5zZm9ybT0ibWF0cml4KDEsMCwtMC4zNjQsMSwyNjIsMjYwKSIvPg0KICAgIDxyZWN0IHg9Ii0xMiIgeT0iLTgwIiB3aWR0aD0iMzAiIGhlaWdodD0iMTYwIiB0cmFuc2Zvcm09Im1hdHJpeCgxLDAsLTAuMzY0LDEsMjg1LDI2MykiLz4NCiAgPC9nPg0KPC9zdmc+
 // @homepageURL  https://github.com/Jo11n/db-meine-reisen-plus-plus
 // @supportURL   https://github.com/Jo11n/db-meine-reisen-plus-plus/issues
 // @downloadURL  https://raw.githubusercontent.com/Jo11n/db-meine-reisen-plus-plus/main/db-meine-reisen-plus-plus.user.js
@@ -61,9 +62,12 @@
     const TAG_ASSIGNMENTS_UPDATED_AT_KEY = 'dbmrpp.tagAssignmentsUpdatedAt';
     const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
     const FGR_CLAIMS_UPDATED_AT_KEY      = 'dbmrpp.fgrClaimsUpdatedAt';
-    const DIFF_WATCHED     = ['zugbindung','status','relevanteAbweichung','alternativensuche',
-                              'departure','arrival','departureRt','arrivalRt',
-                              'departureTrack','departureTrackRt','arrivalTrack','arrivalTrackRt','zuege','seats',
+    // Plan/booking state only. Realtime values (rt times/tracks, relevante
+    // Abweichung) are shown live on the trip cards and are erased per stop
+    // from the bulk feed as the journey progresses — diffing them only churns.
+    // Values must stay primitive: diffSnapshots compares them with !==.
+    const DIFF_WATCHED     = ['zugbindung','status','alternativensuche',
+                              'departure','arrival','departureTrack','arrivalTrack','zuege','seats',
                               'leistungsname','storniertStatus','auftragStatus',
                               'sitzplatzStorniert','stellplatzStorniert'];
     
@@ -2644,15 +2648,7 @@
         return seats.join('; ');
     }
 
-    // Plan-equal rt times are stored as null (see normalizeRtValue), but older
-    // snapshots and history-cache fills may still carry rt values identical to
-    // the plan — normalize both sides here so those don't diff as changes.
-    const DIFF_RT_PLAN_FIELD = { departureRt: 'departure', arrivalRt: 'arrival' };
-    function diffFieldValue(t, f) {
-        const v = t[f] ?? null;
-        if (v && DIFF_RT_PLAN_FIELD[f] && v === t[DIFF_RT_PLAN_FIELD[f]]) return null;
-        return v;
-    }
+    function diffFieldValue(t, f) { return t[f] ?? null; }
 
     // All three categories share the { trip, changes? } shape so the changes
     // pane can render them through a single code path. Note that entfernt
@@ -2666,12 +2662,12 @@
                 out.neu.push({ trip: curr[uuid] });
             } else {
                 const c = curr[uuid], p = prev[uuid];
-                // Ended trips only lose data as the API ages them out (rt values
-                // reset, relevanteAbweichung clears) — suppress their diffs. A
+                // Ended trips only lose data as the API ages them out (zuege/
+                // seats reset, status flips) — suppress their diffs. A
                 // still-flagged disruption keeps the trip live past its end.
                 if (!c.relevanteAbweichung && tripEndTime(c) < now) continue;
                 const fld = DIFF_WATCHED
-                    .filter(f => JSON.stringify(diffFieldValue(c, f)) !== JSON.stringify(diffFieldValue(p, f)))
+                    .filter(f => diffFieldValue(c, f) !== diffFieldValue(p, f))
                     .map(f => ({ field: f, old: diffFieldValue(p, f), new: diffFieldValue(c, f) }));
                 if (fld.length) out.geaendert.push({ trip: c, changes: fld });
             }
@@ -3843,7 +3839,14 @@
         fab.id = 'dbmrpp-fab';
         fab.type = 'button';
         fab.title = T.title;
-        fab.innerHTML = '<span class="dbmrpp-fab-icon" aria-hidden="true">🚆</span><span class="dbmrpp-fab-plus" aria-hidden="true">++</span>';
+        // white glyphs from icon.svg; button background supplies the DB red
+        fab.innerHTML = '<svg class="dbmrpp-fab-icon" aria-hidden="true" viewBox="26 183 355 160" fill="#fff">'
+            + '<path d="M274 248l-3 30h60c0 0 55 1 49-9c-5-7-29-20-39-21z"/>'
+            + '<rect x="-80" y="-12" width="160" height="30" transform="matrix(1,0,-0.364,1,113,260)"/>'
+            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,114,263)"/>'
+            + '<rect x="-54" y="-12" width="108" height="30" transform="matrix(1,0,-0.364,1,262,260)"/>'
+            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,285,263)"/>'
+            + '</svg>';
         fab.addEventListener('click', (ev) => {
             dbLog('FAB click');
             ev.preventDefault();
@@ -3895,8 +3898,7 @@
 
                     #dbmrpp-fab:hover { background: var(--dbmrpp-accent-hover); transform: scale(1.08); }
                     #dbmrpp-fab.active { background: var(--dbmrpp-accent-active); }
-                    .dbmrpp-fab-icon { font-size: 22px; line-height: 1; }
-                    .dbmrpp-fab-plus { font-size: 28px; line-height: 1; font-weight: 800; letter-spacing: 1px; }
+                    .dbmrpp-fab-icon { height: 30px; width: auto; display: block; }
 
                     #dbmrpp-root {
                         position: fixed;
@@ -4305,8 +4307,7 @@
                         }
 
                         #dbmrpp-fab { bottom: 16px; right: 16px; width: 80px; height: 46px; border-radius: 10px; }
-                        .dbmrpp-fab-icon { font-size: 20px; }
-                        .dbmrpp-fab-plus { font-size: 24px; }
+                        .dbmrpp-fab-icon { height: 26px; }
                         .dbmrpp-action-icon { font-size: 16px; width: 1.35em; height: 1.35em; opacity: 0.8; }
                         .dbmrpp-select { min-width: 100px; }
                         .dbmrpp-filter-row-top .dbmrpp-select { min-width: 90px; }
@@ -5271,12 +5272,12 @@
 
     // Kept out of buildHTML so reRenderContent can swap only this container.
     function buildContent(trips, orphans, changes, lastVisit) {
-        const isPast = activeView === 'past';
-        const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
         if (activeView === 'changes') {
             changesBadgeSeen = true;
+            const lastVisitTxt = lastVisit ? new Date(lastVisit).toLocaleString(DATE_LOCALE) : T.neverVisited;
             return buildChangeLogSection(changes, lastVisit, lastVisitTxt);
         }
+        const isPast = activeView === 'past';
         const changeCount = changes.neu.length + changes.geaendert.length + changes.entfernt.length;
         const badgeCount  = changesBadgeSeen ? 0 : changeCount;
 
