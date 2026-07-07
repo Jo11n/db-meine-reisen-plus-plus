@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file.  
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
+---
+## [0.12.0] - "Defektes Stellwerk"
+
+### Added
+- **tracked changes sync** - the Änderungen log joins the webdav bundle and the file export; Clear propagates across devices
+- **optional credentials in the file export** - an unchecked-by-default checkbox includes the WebDAV/CalDAV credentials (plaintext) in the export; import asks before applying them; the synced webdav bundle never carries them
+
+### Changed
+- **disruptions are permanent in the trip record** - address that DB stops flagging a deviation some time after the trip. Now a trip that was disturbed stays disturbed
+- **file import uses the sync merge** - per-domain timestamps decide conflicts (matching webdav) instead of lastVisit alone; ties keep local
+- **clearer data & backup wording** - "snapshot" now only refers to the change-tracking baseline; export/import/reset labels, alerts and the export filename (dbmrpp-backup-…) renamed accordingly, with a short description in the settings
+- **leaner empty Änderungen pane** - one empty-state line instead of two: "Keine Änderungen seit …" when a last visit exists, otherwise "Noch keine gesammelten Änderungen."; the sentence duplicating the scope line was dropped
+- **consistent panel typography and settings layout** 
+- **card look for trip entries** - grey ribbon = live API data, blue = cache-only; replaces the dotted separators
+- **reset button now wipes all script data**
+
+### Fixed
+- **remote sync data is pulled before the trip history update** - so a browser with an older trip record no longer overwrites another browser's richer one
+- **field-aware sync merge** - the newer trip record inherits rt, disruption and train/seat/platform data only the older one carried
+- **ended trips keep trains, seats and platforms** - the API blanks them as trips age out; empty no longer overwrites the record
+- **leaner webdav sync** - compact PUT payload; ETag-conditional GET/PUT skips unchanged uploads and detects concurrent writers; concurrent syncs no longer race each other
+- **webdav 412 loop behind Apache mod_deflate** - Apache rewrites the ETag of compressed responses to `"…-gzip"`, so every If-Match PUT failed; ETags are now normalized (weak prefix and encoding suffix stripped)
+
+---
 ## [0.11.0] - "Beschädigung einer Brücke"
 
 ### Added

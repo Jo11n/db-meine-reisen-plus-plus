@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.11.0
+// @version      0.12.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.11.0';
+    const SCRIPT_VERSION  = '0.12.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -54,6 +54,7 @@
     const DEBUG_LOG_MAX_ENTRIES = 500;
     const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v3';
     const CHANGE_LOG_KEY         = 'dbmrpp.changeLog.v1';
+    const CHANGE_LOG_CLEARED_AT_KEY = 'dbmrpp.changeLogClearedAt.v1';
     const CHANGE_LOG_MAX_ENTRIES = 500;
     const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
     const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
@@ -86,7 +87,7 @@
             ttReload:          'Reload',
             ttIcsBulk:         'Download all visible trips as ICS',
             ttCsv:             'Download all visible trips as CSV',
-            ttReset:           'Reset trips snapshot',
+            ttReset:           'Deletes all locally stored script data',
             ttSettings:        'Settings',
             ttClose:           'Close',
             ttReleaseLog:      'Open changelog',
@@ -103,8 +104,11 @@
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
-            settingsExportSnapshot: 'Export snapshot',
-            settingsImportSnapshot: 'Import snapshot',
+            settingsExportBackup: 'Export data',
+            settingsImportBackup: 'Import data',
+            settingsResetAll:  'Reset all data',
+            settingsExportCreds:    'Include WebDAV/CalDAV credentials (plaintext!)',
+            settingsSnapshotDataDesc: 'Exports all script data (trip cache, tracked changes, tags, notes, settings) as a JSON file — the same bundle the WebDAV sync uses. Import merges it with the local data, the newer side wins.',
             settingsTrainLinksEnabled: 'Link train numbers externally',
             settingsTrainLinksDesc: 'Makes train numbers in the trip view clickable links to an external service. Zugfinder.net has data on delays. Bahn.expert has more real-time data and shows the historical delay data for specific past trips.',
             settingsTrainLinkProvider: 'Train link provider',
@@ -122,7 +126,7 @@
             settingsGroupPast:          'Past view',
             settingsGroupTripExports:        'Trip exports',
             settingsGroupExternalLinks: 'External data links',
-            settingsGroupData:          'Snapshot Data',
+            settingsGroupData:          'Data & backup',
             settingsGroupDev:           'Developer options',
             settingsDownloadBulkJson:   'Download bulk API JSON',
             bulkJsonStillLoading:       'Data is still loading - please try again in a moment.',
@@ -148,7 +152,8 @@
             noChangesSince:    d => `No changes since ${d}`,
             changesRemoved:    'Removed',
             changeLogNew:      'New',
-            changeLogEmpty:    'No tracked changes yet. Detected changes are collected here.',
+            changeLogEmpty:    'No tracked changes yet.',
+            changeLogScope:    'Records plan and booking changes between visits. Realtime deviations appear directly on the trip overview.',
             changeLogClear:    'Clear',
             ttChangeLogClear:  'Delete all collected changes',
             neverVisited:      'never',
@@ -326,14 +331,15 @@
             alertPdfNoId:        'PDF download not possible: bundle ID missing.',
             alertPdfError:       'PDF download failed — see console.',
             alertNoTripsExport:  'No trips to export.',
-            alertResetConfirm:   'Delete snapshot? All trips will appear as new on next load.',
+            alertResetConfirm:   'Delete ALL local script data — trip cache, tracked changes, tags, notes, settings and WebDAV/CalDAV credentials? Credentials are not part of the standard export. A WebDAV backup on the server is kept. Cannot be undone.',
+            alertImportCredsConfirm: 'The file contains WebDAV/CalDAV credentials. Apply them?',
             alertChangeLogClearConfirm: 'Delete all collected changes? Cannot be undone.',
             alertDeleteCachedTripConfirm: 'Delete cached details for this trip? Only affects local script cache, not the website data. Cannot be undone.',
-            alertImportMergeConfirm: 'Import snapshot and merge with local snapshot/settings (newest wins)?',
-            alertImportInvalid:  'Invalid import file. Expected snapshot + settings export JSON.',
-            alertImportError:    'Snapshot import failed — see console.',
-            alertImportSuccess:  'Snapshot import completed.',
-            alertExportError:    'Snapshot export failed — see console.',
+            alertImportMergeConfirm: 'Import file and merge with local data (newest wins)?',
+            alertImportInvalid:  'Invalid import file. Expected a JSON export of the script data.',
+            alertImportError:    'Import failed — see console.',
+            alertImportSuccess:  'Import completed.',
+            alertExportError:    'Export failed — see console.',
             icsDescTrains:       t => `Trains: ${t}`,
             icsDescOrder:        n => `Order: ${n}`,
             icsDescSeat:         s => `Seat: ${s}`,
@@ -362,7 +368,7 @@
             ttReload:          'Neu laden',
             ttIcsBulk:         'Alle sichtbaren Reisen als ICS herunterladen',
             ttCsv:             'Alle sichtbaren Reisen als CSV herunterladen',
-            ttReset:           'Reisen-Snapshot zurücksetzen',
+            ttReset:           'Löscht alle lokal gespeicherten Skript-Daten',
             ttSettings:        'Einstellungen',
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
@@ -379,8 +385,11 @@
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
-            settingsExportSnapshot: 'Snapshot exportieren',
-            settingsImportSnapshot: 'Snapshot importieren',
+            settingsExportBackup: 'Daten exportieren',
+            settingsImportBackup: 'Daten importieren',
+            settingsResetAll:  'Alle Daten zurücksetzen',
+            settingsExportCreds:    'WebDAV/CalDAV-Zugangsdaten einschließen (Klartext!)',
+            settingsSnapshotDataDesc: 'Exportiert alle Skript-Daten (Reise-Cache, gesammelte Änderungen, Tags, Notizen, Einstellungen) als JSON-Datei — dasselbe Bundle wie beim WebDAV-Sync. Der Import führt sie mit den lokalen Daten zusammen, der neuere Stand gewinnt.',
             settingsTrainLinksEnabled: 'Zugnummern extern verlinken',
             settingsTrainLinksDesc: 'Macht Zugnummern in der Reiseansicht zu anklickbaren Links zu einem externen Dienst. Zugfinder.net hat Daten zu Verspätungen. Bahn.expert hat mehr Echtzeitdaten und zeigt auch historische Verspätungsdaten für spezifische vergangene Fahrten an.',
             settingsTrainLinkProvider: 'Anbieter für Zuglinks',
@@ -398,7 +407,7 @@
             settingsGroupPast:          'Vergangenheitsansicht',
             settingsGroupTripExports:        'Reisen-Exporte',
             settingsGroupExternalLinks: 'Externe Datenlinks',
-            settingsGroupData:          'Snapshot-Daten',
+            settingsGroupData:          'Daten & Backup',
             settingsGroupDev:           'Entwickleroptionen',
             settingsDownloadBulkJson:   'Bulk-API-JSON herunterladen',
             bulkJsonStillLoading:       'Daten werden noch geladen - bitte versuche es gleich nochmal.',
@@ -424,7 +433,8 @@
             noChangesSince:    d => `Keine Änderungen seit ${d}`,
             changesRemoved:    'Entfernt',
             changeLogNew:      'Neu',
-            changeLogEmpty:    'Noch keine gesammelten Änderungen. Erkannte Änderungen werden hier gesammelt.',
+            changeLogEmpty:    'Noch keine gesammelten Änderungen.',
+            changeLogScope:    'Erfasst Änderungen an Plan- und Buchungsdaten zwischen Besuchen. Echtzeit-Abweichungen erscheinen direkt in der Reiseübersicht.',
             changeLogClear:    'Leeren',
             ttChangeLogClear:  'Alle gesammelten Änderungen löschen',
             neverVisited:      'noch nie',
@@ -600,14 +610,15 @@
             alertPdfNoId:        'PDF-Download nicht möglich: leistungsbuendelId fehlt.',
             alertPdfError:       'PDF-Download fehlgeschlagen – siehe Konsole.',
             alertNoTripsExport:  'Keine Reisen zum Exportieren.',
-            alertResetConfirm:   'Snapshot löschen? Beim nächsten Laden gelten alle Reisen als neu.',
+            alertResetConfirm:   'ALLE lokalen Skript-Daten löschen – Reise-Cache, gesammelte Änderungen, Tags, Notizen, Einstellungen und WebDAV/CalDAV-Zugangsdaten? Zugangsdaten sind nicht im Standard-Export enthalten. Eine WebDAV-Sicherung auf dem Server bleibt bestehen. Kann nicht rückgängig gemacht werden.',
+            alertImportCredsConfirm: 'Die Datei enthält WebDAV/CalDAV-Zugangsdaten. Übernehmen?',
             alertChangeLogClearConfirm: 'Alle gesammelten Änderungen löschen? Kann nicht rückgängig gemacht werden.',
             alertDeleteCachedTripConfirm: 'Zwischengespeicherte Details für diese Reise löschen? Betrifft nur den lokalen Skript-Cache, nicht die Daten der Webseite. Kann nicht rückgängig gemacht werden.',
-            alertImportMergeConfirm: 'Snapshot importieren und mit lokalem Snapshot/Einstellungen zusammenfuehren (neuester Stand gewinnt)?',
-            alertImportInvalid:  'Ungültige Import-Datei. Erwartet wird ein Snapshot+Settings-Export-JSON.',
-            alertImportError:    'Snapshot-Import fehlgeschlagen — siehe Konsole.',
-            alertImportSuccess:  'Snapshot-Import abgeschlossen.',
-            alertExportError:    'Snapshot-Export fehlgeschlagen — siehe Konsole.',
+            alertImportMergeConfirm: 'Datei importieren und mit den lokalen Daten zusammenführen (neuester Stand gewinnt)?',
+            alertImportInvalid:  'Ungültige Import-Datei. Erwartet wird ein JSON-Export der Skript-Daten.',
+            alertImportError:    'Import fehlgeschlagen — siehe Konsole.',
+            alertImportSuccess:  'Import abgeschlossen.',
+            alertExportError:    'Export fehlgeschlagen — siehe Konsole.',
             icsDescTrains:       t => `Züge: ${t}`,
             icsDescOrder:        n => `Auftrag: ${n}`,
             icsDescSeat:         s => `Sitzplatz: ${s}`,
@@ -647,6 +658,7 @@
     let filterState     = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
     let uiSettings      = loadUiSettings();
     let settingsOpen    = false;
+    let exportCredsChecked = false; // session-only, deliberately not persisted
     let activeView      = 'current';
     let changesBadgeSeen = false;   // once the Änderungen pane was opened, the tab badge stays hidden
     let pastTrips       = null;
@@ -667,6 +679,8 @@
     let webdavConfig    = loadWebDavConfig();
     let webdavSyncState = loadWebDavSyncState();
     let webdavSyncTimer = null;
+    let webdavSyncInProgress = false;
+    let webdavRemoteCache = { etag: null, text: null }; // last GET/PUT body, keyed by ETag
     let caldavConfig    = loadCalDavConfig();
     let caldavSyncState = loadCalDavSyncState();
     let caldavSyncTimer = null;
@@ -978,12 +992,10 @@
         }
     }
 
-    // Attempt to synchronize the token from the website's current state.
-    // The website may store the token in localStorage/sessionStorage or have it in memory.
-    // This function observes incoming requests to capture any updated token.
+    // After a 401: give request capture 500ms to deliver a fresh token before
+    // the recovery flag clears.
     function startTokenSync() {
         if (tokenSyncTimer !== null) clearTimeout(tokenSyncTimer);
-        // Wait 500ms then check if a new token has been captured from requests
         tokenSyncTimer = setTimeout(() => {
             tokenSyncTimer = null;
             is401Recovering = false;
@@ -1032,10 +1044,8 @@
         if (fab) fab.remove();
     }
 
-    // Render the panel from the persistent cache as soon as we land on the target
-    // page — needs no token, so the FAB is available long before the site's own JS
-    // has booted and run() can refresh. The panel shows a "refreshing" hint until
-    // run() replaces it with fresh data.
+    // Panel from the persistent cache at navigation time — token-free, so the
+    // FAB exists long before the site's JS boots and run() delivers fresh data.
     function renderFromCacheEarly() {
         if (document.getElementById('dbmrpp-root')) return;
         const cache = loadRenderCache();
@@ -1124,9 +1134,7 @@
         return cache.get(key);
     }
 
-    // Cached detail fetch — share link and abweichung call the same endpoint;
-    // cache avoids a redundant round-trip when both are used on the same trip.
-    // Cache is cleared on each full refresh so stale data is never shown.
+    // Detail fetch shared by share link + ⚠; cached until the next full refresh.
     function fetchDetail(uuid) {
         return cachedJsonFetch(detailCache, uuid, `/web/api/reisebegleitung/reiseketten/${encodeURIComponent(uuid)}`);
     }
@@ -1213,10 +1221,8 @@
         if (runInProgress) return;
         runInProgress = true;
         dbLog('run: start');
-        // Instant render from cache only while no panel exists yet (fallback — normally
-        // renderFromCacheEarly() has already done this at navigation time); re-rendering
-        // an already visible panel would just rebuild identical content and destroy
-        // transient button states (e.g. the ⏳ on the refresh button).
+        // Cache-render fallback when renderFromCacheEarly() hasn't fired; never
+        // over an existing panel — that would destroy transient button states (⏳).
         const cache = document.getElementById('dbmrpp-root') ? null : loadRenderCache();
         if (cache) {
             dbLog('run: instant render from cache (' + cache.trips.length + ' trips)');
@@ -1233,7 +1239,8 @@
             rawReisekettenMap = new Map();
             const [reisekettenData, auftraege] = await Promise.all([
                 fetchReiseketten(),
-                fetchAllAuftraege()
+                fetchAllAuftraege(),
+                webdavPullMerge()
             ]);
             if (!reisekettenData) return;
 
@@ -1369,7 +1376,6 @@
     // 7) Auftrag helpers + trip history
     // =========================================================
 
-    // Extract all trip-like items from an auftrag entry.
     // Besides regular hin/rueckfahrt legs, some products are exposed only as
     // katalogwunsch LEISTUNG entries (for example bike day tickets).
     function extractAuftragItems(a) {
@@ -1571,26 +1577,43 @@
         return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
     }
 
-    // Once a stop's time has passed, its rt values can no longer change — the
-    // bulk feed erases them per stop, so an incoming null then means "aged
-    // out", not "back to plan": keep the last known value. Only while the plan
-    // time is unchanged; after a plan change the old rt is meaningless.
-    function preservePastRt(entry, prev) {
+    // The API erases rt values and blanks zuege/seats/tracks as trips age out:
+    // once the stop's time passed, empty means "aged out", not "removed" —
+    // keep the last known value while the plan time is unchanged.
+    function preservePastData(entry, prev) {
         const passed = iso => iso && new Date(iso).getTime() < Date.now();
         if (entry.departure === prev.departure && passed(entry.departure)) {
             entry.departureRt      = entry.departureRt      || prev.departureRt      || null;
             entry.departureTrackRt = entry.departureTrackRt || prev.departureTrackRt || null;
+            entry.departureTrack   = entry.departureTrack   || prev.departureTrack   || null;
+            entry.zuege            = entry.zuege || prev.zuege || '';
+            entry.seats            = entry.seats || prev.seats || '';
         }
         if (entry.arrival === prev.arrival && passed(entry.arrival)) {
             entry.arrivalRt      = entry.arrivalRt      || prev.arrivalRt      || null;
             entry.arrivalTrackRt = entry.arrivalTrackRt || prev.arrivalTrackRt || null;
+            entry.arrivalTrack   = entry.arrivalTrack   || prev.arrivalTrack   || null;
+        }
+    }
+
+    // A disturbed trip stays disturbed (DB unflags aged trips): keep flag +
+    // deviation lines while the plan departure is unchanged.
+    function preserveDisruption(entry, prev) {
+        if (entry.departure !== prev.departure) return;
+        if (prev.relevanteAbweichung) entry.relevanteAbweichung = true;
+        const prevDevs = (prev.notifications || []).filter(isDeviationEntry);
+        if (prevDevs.length && !(entry.notifications || []).some(isDeviationEntry)) {
+            entry.notifications = normalizeNotificationEntries([...prevDevs, ...(entry.notifications || [])]);
         }
     }
 
     // Preserves updatedAt while content is unchanged, bumps it on change;
     // skips identical writes. Returns whether anything was written.
     function commitHistoryEntry(key, entry, prev) {
-        if (prev) preservePastRt(entry, prev);
+        if (prev) {
+            preservePastData(entry, prev);
+            preserveDisruption(entry, prev);
+        }
         const unchanged = prev && historyEntryContentEquals(prev, entry);
         entry.updatedAt = (unchanged && prev.updatedAt) ? prev.updatedAt : new Date().toISOString();
         if (unchanged && prev.updatedAt === entry.updatedAt) return false;
@@ -1631,8 +1654,8 @@
         const entries = Object.entries(tripHistory.entries || {});
         if (entries.length <= REISEKETTEN_HISTORY_MAX_ENTRIES) return;
         entries.sort((a, b) => {
-            const ta = Date.parse((a[1] && a[1].cachedAt) || 0) || 0;
-            const tb = Date.parse((b[1] && b[1].cachedAt) || 0) || 0;
+            const ta = parseTs(a[1] && a[1].cachedAt);
+            const tb = parseTs(b[1] && b[1].cachedAt);
             return tb - ta;
         });
         tripHistory.entries = Object.fromEntries(entries.slice(0, REISEKETTEN_HISTORY_MAX_ENTRIES));
@@ -1657,13 +1680,16 @@
         saveTripHistory();
     }
 
-    // Keeps ⚠-fetched notifications alive across refreshes (bulk carries none)
-    // while relevanteAbweichung holds; must run before the upsert.
+    // Keeps ⚠-fetched notifications alive across refreshes (bulk carries none);
+    // the entry's sticky ⚠ flag feeds back into the live trip. Runs before the upsert.
     function adoptCachedNotifications(t) {
-        if (!t || !t.fromReiseketten || !t.relevanteAbweichung) return;
-        if (Array.isArray(t.notifications) && t.notifications.length) return;
+        if (!t || !t.fromReiseketten) return;
         const entry = findTripHistoryEntry(t);
-        if (entry && Array.isArray(entry.notifications) && entry.notifications.length) {
+        if (!entry) return;
+        if (entry.relevanteAbweichung && entry.departure === t.departure) t.relevanteAbweichung = true;
+        if (!t.relevanteAbweichung) return;
+        if (Array.isArray(t.notifications) && t.notifications.length) return;
+        if (Array.isArray(entry.notifications) && entry.notifications.length) {
             t.notifications = normalizeNotificationEntries(entry.notifications);
         }
     }
@@ -2721,9 +2747,7 @@
     }
 
     // The change log only keeps what renderChangeLine and its action strip
-    // read: route label, detail link, departure/arrival, and the routing
-    // eligibility flags. Storing full trips (zuege, seats, …) would bloat
-    // localStorage for no benefit.
+    // read: route label, detail link, departure/arrival, routing eligibility.
     function slimTripForChangeLog(t) {
         return {
             uuid: t.uuid,
@@ -3081,35 +3105,20 @@
         return !!v && typeof v === 'object' && !Array.isArray(v);
     }
 
-    function exportSnapshotBundle() {
+    // '' not 0: Date.parse(0) parses as year 2000
+    const parseTs = v => Date.parse(v || '') || 0;
+
+    function exportBackupFile() {
         try {
-            const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-            const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-            const history = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
-            const payload = {
-                format: 'dbmrpp-snapshot-export-v1',
-                exportedAt: new Date().toISOString(),
-                snapshot: isPlainObject(snapshot) ? snapshot : {},
-                lastVisit: localStorage.getItem(LAST_VISIT_KEY),
-                settings: isPlainObject(settings) ? settings : {},
-                tripHistory: isPlainObject(history) && isPlainObject(history.entries)
-                    ? { entries: history.entries }
-                    : { entries: {} },
-                customTagDefs: customTagDefs.slice(),
-                customTagAssignments: { ...customTagAssignments },
-                customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
-                tripNotes: { ...tripNotes },
-                tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null,
-                fgrClaims: { ...fgrClaims },
-                fgrClaimsUpdatedAt: localStorage.getItem(FGR_CLAIMS_UPDATED_AT_KEY) || null,
-                settingsUpdatedAt: localStorage.getItem(SETTINGS_UPDATED_AT_KEY) || null
-            };
+            const bundle = buildSyncBundle();
+            // Credentials go on the file-export bundle only, never into buildSyncBundle — it feeds the WebDAV upload.
+            if (exportCredsChecked) bundle.syncConfigs = { webdav: { ...webdavConfig }, caldav: { ...caldavConfig } };
             triggerDownload(
-                new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }),
-                `dbmrpp-snapshot-${new Date().toISOString().slice(0, 10)}.json`
+                new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' }),
+                `dbmrpp-backup-${new Date().toISOString().slice(0, 10)}.json`
             );
         } catch (err) {
-            console.error('[DBMRPP] Snapshot-Export-Fehler', err);
+            console.error('[DBMRPP] Backup-Export-Fehler', err);
             alert(T.alertExportError);
         }
     }
@@ -3122,19 +3131,51 @@
             : { ...importedSafe, ...localSafe };
     }
 
-    // Orders by updatedAt (legacy fallback: cachedAt); ties keep local, which
-    // is refreshed from live data every run.
+    // Orders by updatedAt (legacy fallback: cachedAt); ties keep local. The
+    // losing entry feeds the preserve helpers, so newer-but-thinner drops nothing.
     function mergeHistoryEntriesNewestWins(localEntries, importedEntries) {
         const merged = { ...(isPlainObject(localEntries) ? localEntries : {}) };
-        const entryTs = e => Date.parse((e && (e.updatedAt || e.cachedAt)) || 0) || 0;
+        const entryTs = e => parseTs(e && (e.updatedAt || e.cachedAt));
         Object.entries(isPlainObject(importedEntries) ? importedEntries : {}).forEach(([key, importedEntry]) => {
             const localEntry = merged[key];
             if (!localEntry) {
                 merged[key] = importedEntry;
                 return;
             }
-            if (entryTs(importedEntry) > entryTs(localEntry)) merged[key] = importedEntry;
+            const importedNewer = entryTs(importedEntry) > entryTs(localEntry);
+            const winner = { ...(importedNewer ? importedEntry : localEntry) };
+            const loser  = importedNewer ? localEntry : importedEntry;
+            preservePastData(winner, loser);
+            preserveDisruption(winner, loser);
+            merged[key] = winner;
         });
+        return merged;
+    }
+
+    // Only entries frozen by a baseline rotation (≤ the owning side's lastVisit)
+    // sync; pending ones stay local — they get re-diffed each run, and a newer
+    // remote baseline's frozen log covers their window. clearedAt propagates Clear.
+    function mergeChangeLogs(localLog, remoteLog, localLastVisit, remoteLastVisit, clearedAt) {
+        const entryTs   = e => parseTs(e && e.detectedAt);
+        const localTs   = parseTs(localLastVisit);
+        const remoteTs  = parseTs(remoteLastVisit);
+        const clearedTs = parseTs(clearedAt);
+        const maxTs     = Math.max(localTs, remoteTs);
+        const keepLocal  = e => !localTs  || entryTs(e) <= localTs || entryTs(e) > maxTs;
+        const keepRemote = e => !remoteTs || entryTs(e) <= remoteTs;
+        const seen = new Set();
+        const merged = [
+            ...(Array.isArray(localLog)  ? localLog  : []).filter(keepLocal),
+            ...(Array.isArray(remoteLog) ? remoteLog : []).filter(keepRemote)
+        ].filter(e => {
+            if (!e || !e.detectedAt || entryTs(e) <= clearedTs) return false;
+            const key = `${e.detectedAt}|${e.kind}|${(e.trip && e.trip.uuid) || ''}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        merged.sort((a, b) => entryTs(a) - entryTs(b));
+        if (merged.length > CHANGE_LOG_MAX_ENTRIES) merged.splice(0, merged.length - CHANGE_LOG_MAX_ENTRIES);
         return merged;
     }
 
@@ -3159,7 +3200,17 @@
         return entries;
     }
 
-    async function importSnapshotBundle(file) {
+    // Maps legacy export shapes (reisekettenHistory key, bundles predating
+    // tripHistory) onto the current bundle fields.
+    function normalizeImportedBundle(data) {
+        const history = data.tripHistory || data.reisekettenHistory;
+        data.tripHistory = isPlainObject(history) && isPlainObject(history.entries)
+            ? history
+            : { entries: buildHistoryEntriesFromSnapshot(data.snapshot, typeof data.lastVisit === 'string' ? data.lastVisit : null) };
+        return data;
+    }
+
+    async function importBackupFile(file) {
         try {
             const text = await file.text();
             const data = JSON.parse(text);
@@ -3171,74 +3222,21 @@
             }
             if (!confirm(T.alertImportMergeConfirm)) return;
 
-            const localSnapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-            const localSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-            const localHistory = normalizeTripHistory(JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}'));
+            applyBundle(mergeBundles(buildSyncBundle(), normalizeImportedBundle(data)));
 
-            const localLastVisit = localStorage.getItem(LAST_VISIT_KEY);
-            const importedLastVisit = (typeof data.lastVisit === 'string' && data.lastVisit) ? data.lastVisit : null;
-            const localTs = Date.parse(localLastVisit || 0) || 0;
-            const importedTs = Date.parse(importedLastVisit || 0) || 0;
-            const preferImported = importedTs >= localTs;
-
-            const mergedSnapshot = mergeObjects(localSnapshot, data.snapshot, preferImported);
-            const mergedSettings = mergeObjects(localSettings, data.settings, preferImported);
-
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedSnapshot));
-            localStorage.setItem(SETTINGS_KEY, JSON.stringify(mergedSettings));
-
-            const chosenLastVisit = localTs >= importedTs ? localLastVisit : importedLastVisit;
-            if (typeof chosenLastVisit === 'string' && chosenLastVisit) {
-                localStorage.setItem(LAST_VISIT_KEY, chosenLastVisit);
-            } else {
-                localStorage.removeItem(LAST_VISIT_KEY);
+            // mergeBundles emits only known fields, so syncConfigs never reaches the sync path.
+            const creds = data.syncConfigs;
+            if (isPlainObject(creds) && (isPlainObject(creds.webdav) || isPlainObject(creds.caldav)) && confirm(T.alertImportCredsConfirm)) {
+                try {
+                    if (isPlainObject(creds.webdav)) localStorage.setItem(WEBDAV_CONFIG_KEY, JSON.stringify(creds.webdav));
+                    if (isPlainObject(creds.caldav)) localStorage.setItem(CALDAV_CONFIG_KEY, JSON.stringify(creds.caldav));
+                } catch (_) {}
+                // Round-trip through the sanitizing loaders so storage holds the clean shape.
+                webdavConfig = loadWebDavConfig(); saveWebDavConfig();
+                caldavConfig = loadCalDavConfig(); saveCalDavConfig();
+                webdavRemoteCache = { etag: null, text: null }; // parity with manual save — the old server's ETag must not leak
             }
 
-            const importedHistory = data && (data.tripHistory || data.reisekettenHistory);
-            const hasHistoryShape = isPlainObject(importedHistory) && isPlainObject(importedHistory.entries);
-            const normalizedImportedHistory = hasHistoryShape
-                ? normalizeTripHistory(importedHistory)
-                : normalizeTripHistory({
-                    entries: buildHistoryEntriesFromSnapshot(data.snapshot, importedLastVisit)
-                });
-            const mergedHistory = normalizeTripHistory({
-                entries: mergeHistoryEntriesNewestWins(localHistory.entries, normalizedImportedHistory.entries)
-            });
-            localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(mergedHistory));
-            tripHistory = mergedHistory;
-
-            if (Array.isArray(data.customTagDefs)) {
-                const mergedDefs = [...customTagDefs];
-                const localIds = new Map(mergedDefs.map((d, i) => [d.id, i]));
-                data.customTagDefs.forEach(def => {
-                    if (!def || !def.id || !def.label) return;
-                    const idx = localIds.get(def.id);
-                    if (idx === undefined) { mergedDefs.push(def); localIds.set(def.id, mergedDefs.length - 1); }
-                    else if (preferImported) mergedDefs[idx] = def;
-                });
-                customTagDefs = mergedDefs;
-                saveCustomTagDefs();
-            }
-            if (isPlainObject(data.customTagAssignments)) {
-                customTagAssignments = preferImported
-                    ? { ...customTagAssignments, ...data.customTagAssignments }
-                    : { ...data.customTagAssignments, ...customTagAssignments };
-                saveCustomTagAssignments();
-            }
-            if (isPlainObject(data.tripNotes)) {
-                tripNotes = preferImported
-                    ? { ...tripNotes, ...data.tripNotes }
-                    : { ...data.tripNotes, ...tripNotes };
-                saveTripNotes();
-            }
-            if (isPlainObject(data.fgrClaims)) {
-                fgrClaims = preferImported
-                    ? { ...fgrClaims, ...data.fgrClaims }
-                    : { ...data.fgrClaims, ...fgrClaims };
-                saveFgrClaims();
-            }
-
-            uiSettings = loadUiSettings();
             filterState = { from: '', to: '', days: 0, onlyProblems: false, tags: [] };
             activeView = 'current';
             loadFilterStateIfEnabled();
@@ -3246,7 +3244,7 @@
             alert(T.alertImportSuccess);
             run();
         } catch (err) {
-            console.error('[DBMRPP] Snapshot-Import-Fehler', err);
+            console.error('[DBMRPP] Backup-Import-Fehler', err);
             alert(T.alertImportError);
         }
     }
@@ -3316,6 +3314,12 @@
         });
     }
 
+    function responseEtag(r) {
+        const m = /^etag:\s*(.+?)\s*$/im.exec((r && r.responseHeaders) || '');
+        // Apache mod_deflate appends -gzip inside the quotes; SabreDAV stores the bare value
+        return m ? m[1].replace(/^W\//, '').replace(/-(gzip|br)(?=")/, '') : null;
+    }
+
     function buildSyncBundle() {
         const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
         const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -3330,6 +3334,8 @@
             tripHistory: isPlainObject(history) && isPlainObject(history.entries)
                 ? { entries: history.entries }
                 : { entries: {} },
+            changeLog: loadChangeLog(),
+            changeLogClearedAt: localStorage.getItem(CHANGE_LOG_CLEARED_AT_KEY) || null,
             customTagDefs: customTagDefs.slice(),
             customTagAssignments: { ...customTagAssignments },
             customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
@@ -3341,25 +3347,11 @@
     }
 
     function mergeBundles(local, remote) {
-        const localVisitTs  = Date.parse(local.lastVisit  || 0) || 0;
-        const remoteVisitTs = Date.parse(remote.lastVisit || 0) || 0;
-        const preferRemoteSnapshot = remoteVisitTs > localVisitTs;
-
-        const localSettingsTs  = Date.parse(local.settingsUpdatedAt  || 0) || 0;
-        const remoteSettingsTs = Date.parse(remote.settingsUpdatedAt || 0) || 0;
-        const preferRemoteSettings = remoteSettingsTs > localSettingsTs;
-
-        const localTagTs  = Date.parse(local.customTagAssignmentsUpdatedAt  || 0) || 0;
-        const remoteTagTs = Date.parse(remote.customTagAssignmentsUpdatedAt || 0) || 0;
-        const preferRemoteTags = remoteTagTs > localTagTs;
-
-        const localNotesTs  = Date.parse(local.tripNotesUpdatedAt  || 0) || 0;
-        const remoteNotesTs = Date.parse(remote.tripNotesUpdatedAt || 0) || 0;
-        const preferRemoteNotes = remoteNotesTs > localNotesTs;
-
-        const localFgrTs  = Date.parse(local.fgrClaimsUpdatedAt  || 0) || 0;
-        const remoteFgrTs = Date.parse(remote.fgrClaimsUpdatedAt || 0) || 0;
-        const preferRemoteFgr = remoteFgrTs > localFgrTs;
+        const preferRemoteSnapshot = parseTs(remote.lastVisit) > parseTs(local.lastVisit);
+        const preferRemoteSettings = parseTs(remote.settingsUpdatedAt) > parseTs(local.settingsUpdatedAt);
+        const preferRemoteTags     = parseTs(remote.customTagAssignmentsUpdatedAt) > parseTs(local.customTagAssignmentsUpdatedAt);
+        const preferRemoteNotes    = parseTs(remote.tripNotesUpdatedAt) > parseTs(local.tripNotesUpdatedAt);
+        const preferRemoteFgr      = parseTs(remote.fgrClaimsUpdatedAt) > parseTs(local.fgrClaimsUpdatedAt);
 
         const mergedHistory = normalizeTripHistory({
             entries: mergeHistoryEntriesNewestWins(
@@ -3367,6 +3359,11 @@
                 (remote.tripHistory && remote.tripHistory.entries) || {}
             )
         });
+
+        // ISO strings compare chronologically
+        const mergedClearedAt = [local.changeLogClearedAt, remote.changeLogClearedAt]
+            .filter(Boolean).sort().pop() || null;
+        const mergedChangeLog = mergeChangeLogs(local.changeLog, remote.changeLog, local.lastVisit, remote.lastVisit, mergedClearedAt);
 
         const mergedDefs = [...(local.customTagDefs || [])];
         const localDefIds = new Map(mergedDefs.map((d, i) => [d.id, i]));
@@ -3377,64 +3374,51 @@
             else if (preferRemoteSettings) mergedDefs[idx] = def;
         });
 
-        const localSnap  = isPlainObject(local.snapshot)  ? local.snapshot  : {};
-        const remoteSnap = isPlainObject(remote.snapshot) ? remote.snapshot : {};
-        const localSett  = isPlainObject(local.settings)  ? local.settings  : {};
-        const remoteSett = isPlainObject(remote.settings) ? remote.settings : {};
+        const pick = (l, r, preferRemote) => preferRemote ? (r || l) : (l || r);
 
         return {
             format:     'dbmrpp-snapshot-export-v1',
             exportedAt: new Date().toISOString(),
-            snapshot:   preferRemoteSnapshot ? { ...localSnap,  ...remoteSnap  } : { ...remoteSnap,  ...localSnap  },
-            lastVisit:  preferRemoteSnapshot
-                ? (remote.lastVisit || local.lastVisit)
-                : (local.lastVisit  || remote.lastVisit),
-            settings:   preferRemoteSettings ? { ...localSett,  ...remoteSett  } : { ...remoteSett,  ...localSett  },
-            settingsUpdatedAt: preferRemoteSettings
-                ? (remote.settingsUpdatedAt || local.settingsUpdatedAt)
-                : (local.settingsUpdatedAt  || remote.settingsUpdatedAt),
+            snapshot:   mergeObjects(local.snapshot, remote.snapshot, preferRemoteSnapshot),
+            lastVisit:  pick(local.lastVisit, remote.lastVisit, preferRemoteSnapshot),
+            settings:   mergeObjects(local.settings, remote.settings, preferRemoteSettings),
+            settingsUpdatedAt: pick(local.settingsUpdatedAt, remote.settingsUpdatedAt, preferRemoteSettings),
             tripHistory: mergedHistory,
+            changeLog: mergedChangeLog,
+            changeLogClearedAt: mergedClearedAt,
             customTagDefs: mergedDefs,
-            customTagAssignments: preferRemoteTags
-                ? { ...(local.customTagAssignments  || {}), ...(remote.customTagAssignments || {}) }
-                : { ...(remote.customTagAssignments || {}), ...(local.customTagAssignments  || {}) },
-            customTagAssignmentsUpdatedAt: preferRemoteTags
-                ? (remote.customTagAssignmentsUpdatedAt || local.customTagAssignmentsUpdatedAt)
-                : (local.customTagAssignmentsUpdatedAt  || remote.customTagAssignmentsUpdatedAt),
-            tripNotes: preferRemoteNotes
-                ? { ...(local.tripNotes  || {}), ...(remote.tripNotes || {}) }
-                : { ...(remote.tripNotes || {}), ...(local.tripNotes  || {}) },
-            tripNotesUpdatedAt: preferRemoteNotes
-                ? (remote.tripNotesUpdatedAt || local.tripNotesUpdatedAt)
-                : (local.tripNotesUpdatedAt  || remote.tripNotesUpdatedAt),
-            fgrClaims: preferRemoteFgr
-                ? { ...(local.fgrClaims  || {}), ...(remote.fgrClaims || {}) }
-                : { ...(remote.fgrClaims || {}), ...(local.fgrClaims  || {}) },
-            fgrClaimsUpdatedAt: preferRemoteFgr
-                ? (remote.fgrClaimsUpdatedAt || local.fgrClaimsUpdatedAt)
-                : (local.fgrClaimsUpdatedAt  || remote.fgrClaimsUpdatedAt)
+            customTagAssignments: mergeObjects(local.customTagAssignments, remote.customTagAssignments, preferRemoteTags),
+            customTagAssignmentsUpdatedAt: pick(local.customTagAssignmentsUpdatedAt, remote.customTagAssignmentsUpdatedAt, preferRemoteTags),
+            tripNotes: mergeObjects(local.tripNotes, remote.tripNotes, preferRemoteNotes),
+            tripNotesUpdatedAt: pick(local.tripNotesUpdatedAt, remote.tripNotesUpdatedAt, preferRemoteNotes),
+            fgrClaims: mergeObjects(local.fgrClaims, remote.fgrClaims, preferRemoteFgr),
+            fgrClaimsUpdatedAt: pick(local.fgrClaimsUpdatedAt, remote.fgrClaimsUpdatedAt, preferRemoteFgr)
         };
     }
 
     function applyBundle(bundle) {
         if (!isPlainObject(bundle)) return;
-        if (isPlainObject(bundle.snapshot)) {
-            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle.snapshot)); } catch (_) {}
-        }
+        const store = (key, value, tsKey, tsValue) => {
+            try {
+                localStorage.setItem(key, JSON.stringify(value));
+                if (tsKey && tsValue) localStorage.setItem(tsKey, tsValue);
+            } catch (_) {}
+        };
+        if (isPlainObject(bundle.snapshot)) store(STORAGE_KEY, bundle.snapshot);
         if (typeof bundle.lastVisit === 'string' && bundle.lastVisit) {
             try { localStorage.setItem(LAST_VISIT_KEY, bundle.lastVisit); } catch (_) {}
         }
         if (isPlainObject(bundle.settings)) {
-            try {
-                localStorage.setItem(SETTINGS_KEY, JSON.stringify(bundle.settings));
-                if (bundle.settingsUpdatedAt) localStorage.setItem(SETTINGS_UPDATED_AT_KEY, bundle.settingsUpdatedAt);
-            } catch (_) {}
+            store(SETTINGS_KEY, bundle.settings, SETTINGS_UPDATED_AT_KEY, bundle.settingsUpdatedAt);
             uiSettings = loadUiSettings();
         }
         if (isPlainObject(bundle.tripHistory) && isPlainObject(bundle.tripHistory.entries)) {
-            const normalized = normalizeTripHistory(bundle.tripHistory);
-            try { localStorage.setItem(REISEKETTEN_HISTORY_KEY, JSON.stringify(normalized)); } catch (_) {}
-            tripHistory = normalized;
+            tripHistory = normalizeTripHistory(bundle.tripHistory);
+            store(REISEKETTEN_HISTORY_KEY, tripHistory);
+        }
+        if (Array.isArray(bundle.changeLog)) saveChangeLog(bundle.changeLog);
+        if (bundle.changeLogClearedAt) {
+            try { localStorage.setItem(CHANGE_LOG_CLEARED_AT_KEY, bundle.changeLogClearedAt); } catch (_) {}
         }
         if (Array.isArray(bundle.customTagDefs)) {
             customTagDefs = bundle.customTagDefs;
@@ -3442,70 +3426,108 @@
         }
         if (isPlainObject(bundle.customTagAssignments)) {
             customTagAssignments = bundle.customTagAssignments;
-            try {
-                localStorage.setItem(CUSTOM_TAG_ASSIGNMENTS_KEY, JSON.stringify(customTagAssignments));
-                if (bundle.customTagAssignmentsUpdatedAt) {
-                    localStorage.setItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY, bundle.customTagAssignmentsUpdatedAt);
-                }
-            } catch (_) {}
+            store(CUSTOM_TAG_ASSIGNMENTS_KEY, customTagAssignments, TAG_ASSIGNMENTS_UPDATED_AT_KEY, bundle.customTagAssignmentsUpdatedAt);
         }
         if (isPlainObject(bundle.tripNotes)) {
             tripNotes = bundle.tripNotes;
-            try {
-                localStorage.setItem(NOTES_KEY, JSON.stringify(tripNotes));
-                if (bundle.tripNotesUpdatedAt) {
-                    localStorage.setItem(TRIP_NOTES_UPDATED_AT_KEY, bundle.tripNotesUpdatedAt);
-                }
-            } catch (_) {}
+            store(NOTES_KEY, tripNotes, TRIP_NOTES_UPDATED_AT_KEY, bundle.tripNotesUpdatedAt);
         }
         if (isPlainObject(bundle.fgrClaims)) {
             fgrClaims = bundle.fgrClaims;
+            store(FGR_CLAIMS_KEY, fgrClaims, FGR_CLAIMS_UPDATED_AT_KEY, bundle.fgrClaimsUpdatedAt);
+        }
+    }
+
+    function webdavAuthHeaders() {
+        return { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(webdavConfig.username + ':' + webdavConfig.password))) };
+    }
+
+    // bundle is null on 404/invalid body; 304 reuses the cached body.
+    // Throws on other HTTP errors.
+    async function fetchRemoteBundle(headers) {
+        const getHeaders = { ...headers };
+        if (webdavRemoteCache.etag && webdavRemoteCache.text) getHeaders['If-None-Match'] = webdavRemoteCache.etag;
+        const getRes = await gmXhr('GET', webdavConfig.url, getHeaders, undefined);
+        dbLog('webdav: GET ' + getRes.status);
+        let text = null;
+        let etag = null;
+        if (getRes.status === 304) {
+            ({ etag, text } = webdavRemoteCache);
+        } else if (getRes.status === 200) {
+            text = getRes.responseText || null;
+            etag = responseEtag(getRes);
+            webdavRemoteCache = { etag, text };
+        } else if (getRes.status === 404) {
+            webdavRemoteCache = { etag: null, text: null };
+        } else {
+            dbLog('webdav: GET resp-hdrs: ' + (getRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
+            throw new Error(`HTTP ${getRes.status}`);
+        }
+        let bundle = null;
+        if (text) {
             try {
-                localStorage.setItem(FGR_CLAIMS_KEY, JSON.stringify(fgrClaims));
-                if (bundle.fgrClaimsUpdatedAt) {
-                    localStorage.setItem(FGR_CLAIMS_UPDATED_AT_KEY, bundle.fgrClaimsUpdatedAt);
-                }
+                const parsed = JSON.parse(text);
+                if (parsed && parsed.format === 'dbmrpp-snapshot-export-v1') bundle = parsed;
             } catch (_) {}
+        }
+        return { bundle, etag, missing: getRes.status === 404 };
+    }
+
+    // Pull-before-upsert: remote entries must be local before run() commits
+    // live data. Best effort, no PUT — the scheduled full sync pushes.
+    async function webdavPullMerge() {
+        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        try {
+            const { bundle } = await fetchRemoteBundle(webdavAuthHeaders());
+            if (bundle) applyBundle(mergeBundles(buildSyncBundle(), bundle));
+            dbLog('webdav: pull-merge done (remote=' + !!bundle + ')');
+        } catch (err) {
+            dbLog('webdav: pull-merge error ' + (err.message || err));
         }
     }
 
     async function webdavSync() {
         if (!webdavConfig.enabled || !webdavConfig.url) return;
-        const authHeader = 'Basic ' + btoa(unescape(encodeURIComponent(webdavConfig.username + ':' + webdavConfig.password)));
-        const headers = { 'Authorization': authHeader };
+        // re-schedule instead of racing an in-flight GET/merge/PUT cycle
+        if (webdavSyncInProgress) { scheduleWebDavSync(); return; }
+        webdavSyncInProgress = true;
+        const headers = webdavAuthHeaders();
 
         const statusEl = document.getElementById('dbmrpp-webdav-status');
         if (statusEl) statusEl.textContent = T.webDavStatusSyncing;
         dbLog('webdav: sync start → ' + webdavConfig.url);
 
         try {
-            let remoteBundle = null;
-            const getRes = await gmXhr('GET', webdavConfig.url, headers, undefined);
-            dbLog('webdav: GET ' + getRes.status);
-            if (getRes.status === 200 && getRes.responseText) {
-                try {
-                    const parsed = JSON.parse(getRes.responseText);
-                    if (parsed && parsed.format === 'dbmrpp-snapshot-export-v1') remoteBundle = parsed;
-                } catch (_) {}
-            } else if (getRes.status !== 404) {
-                dbLog('webdav: GET resp-hdrs: ' + (getRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
-                throw new Error(`HTTP ${getRes.status}`);
-            }
+            // one retry: 412 means another device PUT between our GET and PUT
+            for (let attempt = 0; ; attempt++) {
+                const { bundle: remoteBundle, etag, missing } = await fetchRemoteBundle(headers);
+                const merged = remoteBundle ? mergeBundles(buildSyncBundle(), remoteBundle) : buildSyncBundle();
+                dbLog('webdav: merged (remote=' + !!remoteBundle + ')');
+                applyBundle(merged);
 
-            const localBundle = buildSyncBundle();
-            const merged = remoteBundle ? mergeBundles(localBundle, remoteBundle) : localBundle;
-            dbLog('webdav: merged (remote=' + !!remoteBundle + ')');
-            applyBundle(merged);
-
-            const putRes = await gmXhr('PUT', webdavConfig.url,
-                { ...headers, 'Content-Type': 'application/json' },
-                JSON.stringify(merged, null, 2)
-            );
-            dbLog('webdav: PUT ' + putRes.status);
-            if (putRes.status < 200 || putRes.status >= 300) {
-                dbLog('webdav: PUT resp-hdrs: ' + (putRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
-                dbLog('webdav: PUT resp-body: ' + (putRes.responseText || '(empty)').slice(0, 400));
-                throw new Error(`HTTP ${putRes.status}`);
+                const stable = b => JSON.stringify({ ...b, exportedAt: null });
+                if (remoteBundle && stable(merged) === stable(remoteBundle)) {
+                    dbLog('webdav: unchanged, PUT skipped');
+                    break;
+                }
+                const putHeaders = { ...headers, 'Content-Type': 'application/json' };
+                if (etag) putHeaders['If-Match'] = etag;
+                else if (missing) putHeaders['If-None-Match'] = '*';
+                const body = JSON.stringify(merged);
+                const putRes = await gmXhr('PUT', webdavConfig.url, putHeaders, body);
+                dbLog('webdav: PUT ' + putRes.status);
+                if (putRes.status === 412 && attempt === 0) {
+                    webdavRemoteCache = { etag: null, text: null };
+                    continue;
+                }
+                if (putRes.status < 200 || putRes.status >= 300) {
+                    dbLog('webdav: PUT resp-hdrs: ' + (putRes.responseHeaders || '(none)').replace(/\r?\n/g, ' | '));
+                    dbLog('webdav: PUT resp-body: ' + (putRes.responseText || '(empty)').slice(0, 400));
+                    throw new Error(`HTTP ${putRes.status}`);
+                }
+                const putEtag = responseEtag(putRes);
+                webdavRemoteCache = putEtag ? { etag: putEtag, text: body } : { etag: null, text: null };
+                break;
             }
 
             webdavSyncState = { lastSyncedAt: new Date().toISOString(), lastError: null };
@@ -3519,6 +3541,8 @@
             saveWebDavSyncState();
             reRenderSyncStatus();
             console.error('[DBMRPP] WebDAV sync error:', err);
+        } finally {
+            webdavSyncInProgress = false;
         }
     }
 
@@ -3846,7 +3870,7 @@
             injectStyles();
             root = document.createElement('div');
             root.id = 'dbmrpp-root';
-            root.innerHTML = `<h2 style="margin:0;padding:10px 14px;background:#ec0016;color:#fff;font-size:14px"><span style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><span>${esc(T.title)} <a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" style="color:rgba(255,255,255,.92);font-weight:normal;font-size:11px;text-decoration:underline;margin-left:8px" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span style="font-weight:normal;font-size:12px;margin-left:8px">${esc(T.panelLoading)}</span></span><button type="button" style="background:transparent;border:1px solid rgba(255,255,255,.6);color:#fff;padding:2px 8px;cursor:pointer;border-radius:3px;font-size:12px">×</button></span></h2>`;
+            root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap">${esc(T.title)} <a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
             document.body.appendChild(root);
             const stubClose = root.querySelector('button');
             if (stubClose) stubClose.addEventListener('click', hidePanel);
@@ -3906,10 +3930,24 @@
                         --dbmrpp-accent-active: #880010;
                         --dbmrpp-text: #222;
                         --dbmrpp-text-muted: #666;
+                        --dbmrpp-text-soft: #555;
+                        --dbmrpp-text-faint: #888;
                         --dbmrpp-border: #ccc;
                         --dbmrpp-navy: #1a3a8a;
                         --dbmrpp-blue: #4a7cdc;
                         --dbmrpp-divider: #eee;
+                        --dbmrpp-ok-text: #265c26;
+                        --dbmrpp-warn-bg: #ffe9b3;
+                        --dbmrpp-warn-text: #8a5a00;
+                        --dbmrpp-info-bg: #dde8ff;
+                        --dbmrpp-marked: #6600cc;
+                        --dbmrpp-surface: #f0f3f5; /* bahn.de page background tone: cards, filter/settings bars */
+                        /* type scale — the only font sizes in the panel */
+                        --dbmrpp-fs-lg:  14px;  /* panel title */
+                        --dbmrpp-fs-md:  13px;  /* trip content, h3 */
+                        --dbmrpp-fs-sm:  12px;  /* controls, buttons, inputs */
+                        --dbmrpp-fs-xs:  11px;  /* meta, notes, statuses */
+                        --dbmrpp-fs-xxs: 10px;  /* chips, badges, markers */
                     }
 
                     #dbmrpp-fab {
@@ -3921,7 +3959,6 @@
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        gap: 0;
                         border: none;
                         border-radius: 12px;
                         background: var(--dbmrpp-accent);
@@ -3949,7 +3986,7 @@
                         box-shadow: 0 4px 24px rgba(0,0,0,.18);
                         z-index: 99999;
                         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-                        font-size: 13px;
+                        font-size: var(--dbmrpp-fs-md);
                         color: var(--dbmrpp-text);
                     }
 
@@ -3958,7 +3995,7 @@
                         padding: 10px 14px;
                         background: var(--dbmrpp-accent);
                         color: #fff;
-                        font-size: 14px;
+                        font-size: var(--dbmrpp-fs-lg);
                         font-weight: 600;
                         display: flex;
                         flex-direction: column;
@@ -3975,7 +4012,6 @@
 
                     .dbmrpp-header-actions {
                         display: flex;
-                        justify-content: flex-start;
                         align-items: center;
                         gap: 4px;
                         flex-wrap: wrap;
@@ -3990,7 +4026,7 @@
 
                     .dbmrpp-version-link {
                         color: rgba(255,255,255,.92);
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-xs);
                         font-weight: 400;
                         text-decoration: underline;
                         text-underline-offset: 2px;
@@ -4001,7 +4037,7 @@
 
                     .dbmrpp-stale-hint {
                         color: rgba(255,255,255,.85);
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-xs);
                         font-weight: 400;
                         white-space: nowrap;
                     }
@@ -4013,20 +4049,27 @@
                         padding: 2px 8px;
                         cursor: pointer;
                         border-radius: 3px;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                     }
 
                     #dbmrpp-root h2 button:hover { background: rgba(255,255,255,.15); }
                     /* font-family must be set directly: the host page styles h3/h4
                        by element, which beats inheritance from #dbmrpp-root. */
-                    #dbmrpp-root h3 { margin: 0 0 8px; font-family: inherit; font-size: 13px; color: var(--dbmrpp-accent); }
-                    #dbmrpp-root h4 { margin: 10px 0 4px; font-family: inherit; font-size: 11.5px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+                    #dbmrpp-root h3 { margin: 0 0 8px; font-family: inherit; font-size: var(--dbmrpp-fs-md); color: var(--dbmrpp-accent); }
+                    #dbmrpp-root h4 { margin: 10px 0 4px; font-family: inherit; font-size: var(--dbmrpp-fs-xs); font-weight: 600; color: var(--dbmrpp-text-soft); text-transform: uppercase; letter-spacing: .04em; }
 
                     .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); }
                     .dbmrpp-changes-new { background: #fff5f5; border-radius: 4px; padding: 2px 8px 6px; margin: 0 -8px; }
-                    .dbmrpp-changes-none { color: var(--dbmrpp-text-muted); font-style: italic; }
-                    .dbmrpp-trip { padding: 6px 0; border-bottom: 1px dotted #e0e0e0; }
-                    .dbmrpp-trip:last-child { border-bottom: none; }
+                    .dbmrpp-changes-none, .dbmrpp-changes-scope { color: var(--dbmrpp-text-muted); font-size: var(--dbmrpp-fs-xs); }
+                    .dbmrpp-changes-scope { margin: 2px 0 6px; }
+                    /* card look for every trip; the ribbon color marks the data source */
+                    .dbmrpp-trip {
+                        padding: 6px 8px;
+                        background: var(--dbmrpp-surface);
+                        border-left: 4px solid var(--dbmrpp-border);
+                        border-radius: 4px;
+                    }
+                    .dbmrpp-trip + .dbmrpp-trip { margin-top: 8px; }
 
                     .dbmrpp-route {
                         font-weight: 600;
@@ -4049,7 +4092,7 @@
                         justify-content: center;
                         width: 1.25em;
                         height: 1.25em;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         line-height: 1;
                         opacity: 0.7;
                         text-decoration: none;
@@ -4060,43 +4103,31 @@
                     a.dbmrpp-action-icon { cursor: pointer; }
                     button.dbmrpp-action-icon { background: transparent; border: none; cursor: pointer; padding: 0; }
 
-                    .dbmrpp-abweichung-detail {
-                        margin-top: 5px;
+                    /* attachment blocks: small uniform indent ties them to their trip */
+                    .dbmrpp-abweichung-detail, .dbmrpp-fgr-detail, .dbmrpp-cache-block {
+                        margin: 4px 0 2px 10px;
                         padding: 5px 10px;
-                        background: #fff9e6;
-                        border-left: 3px solid #f5a623;
+                        border-left: 3px solid;
                         border-radius: 2px;
-                        font-size: 11.5px;
-                        color: #555;
+                        color: var(--dbmrpp-text-soft);
                     }
+                    .dbmrpp-abweichung-detail { margin-top: 5px; background: #fff9e6; border-left-color: #f5a623; font-size: var(--dbmrpp-fs-xs); }
 
                     .dbmrpp-abweichung-msg, .dbmrpp-fgr-claim { margin: 2px 0; line-height: 1.4; }
 
-                    .dbmrpp-fgr-detail, .dbmrpp-cache-block {
-                        margin: 4px 0 2px 14px;
-                        padding: 5px 10px;
-                        background: #f0f4ff;
-                        border-left: 3px solid var(--dbmrpp-blue);
-                        border-radius: 2px;
-                        color: #555;
-                    }
-                    .dbmrpp-fgr-detail { font-size: 11.5px; }
-                    .dbmrpp-cache-block { font-size: 11px; line-height: 1.35; }
+                    .dbmrpp-fgr-detail, .dbmrpp-cache-block { border-left-color: var(--dbmrpp-blue); }
+                    .dbmrpp-fgr-detail { font-size: var(--dbmrpp-fs-xs); }
+                    .dbmrpp-cache-block { font-size: var(--dbmrpp-fs-xs); line-height: 1.35; }
 
-                    .dbmrpp-meta { color: var(--dbmrpp-text-muted); font-size: 11.5px; line-height: 1.4; }
-                    .dbmrpp-meta-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #999; }
+                    .dbmrpp-meta { color: var(--dbmrpp-text-muted); font-size: var(--dbmrpp-fs-xs); line-height: 1.4; }
+                    .dbmrpp-meta-label { font-size: var(--dbmrpp-fs-xxs); text-transform: uppercase; letter-spacing: .04em; color: #999; }
                     .dbmrpp-cache-inline {
-                        margin: 4px 0 2px 14px;
+                        margin: 4px 0 2px;
                         color: var(--dbmrpp-text-muted);
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-xs);
                         line-height: 1.35;
                     }
-                    .dbmrpp-cached-trip {
-                        background: #f5f9ff;
-                        border-left: 4px solid var(--dbmrpp-blue);
-                        padding-left: 8px;
-                        border-radius: 4px;
-                    }
+                    .dbmrpp-cached-trip { border-left-color: var(--dbmrpp-blue); }
                     .dbmrpp-cache-badge {
                         background: #e8f0ff;
                         color: var(--dbmrpp-navy);
@@ -4104,41 +4135,41 @@
                         margin-right: 6px;
                         border-radius: 4px;
                         font-weight: 700;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                     }
-                    .dbmrpp-cache-label { font-weight: 600; color: #222; }
+                    .dbmrpp-cache-label { font-weight: 600; color: var(--dbmrpp-text); }
                     .dbmrpp-cache-msg { margin-top: 3px; padding-left: 2px; }
                     .dbmrpp-trip-notifications {
                         margin: 2px 0;
                         color: var(--dbmrpp-text-muted);
-                        font-size: 11.5px;
+                        font-size: var(--dbmrpp-fs-xs);
                         line-height: 1.4;
                     }
                     .dbmrpp-notif-collapse summary { cursor: pointer; }
                     .dbmrpp-notif-collapse[open] summary { margin-bottom: 2px; }
                     .dbmrpp-notif-msg { margin: 2px 0 2px 16px; }
-                    .dbmrpp-cache-missing { background: #f7f7f7; border-left-color: #9ca3af; color: #666; }
+                    .dbmrpp-cache-missing { border-left-color: #9ca3af; color: var(--dbmrpp-text-muted); }
                     .dbmrpp-cache-tags { margin-top: 4px; }
 
                     .dbmrpp-tag {
                         display: inline-block;
                         padding: 1px 6px;
                         border-radius: 3px;
-                        font-size: 10.5px;
+                        font-size: var(--dbmrpp-fs-xxs);
                         margin: 2px 4px 0 0;
                         font-weight: 600;
                     }
 
-                    .dbmrpp-tag-warn { background: #ffe9b3; color: #8a5a00; }
+                    .dbmrpp-tag-warn { background: var(--dbmrpp-warn-bg); color: var(--dbmrpp-warn-text); }
                     .dbmrpp-tag-bad  { background: #ffd0d0; color: #8a0000; }
-                    .dbmrpp-tag-ok   { background: #d6f3d6; color: #265c26; }
-                    .dbmrpp-tag-info { background: #dde8ff; color: var(--dbmrpp-navy); }
+                    .dbmrpp-tag-ok   { background: #d6f3d6; color: var(--dbmrpp-ok-text); }
+                    .dbmrpp-tag-info { background: var(--dbmrpp-info-bg); color: var(--dbmrpp-navy); }
 
-                    .dbmrpp-diff { margin: 0 0 0 12px; font-size: 11.5px; line-height: 1.4; color: #333; }
-                    .dbmrpp-diff-old { color: #888; text-decoration: line-through; }
+                    .dbmrpp-diff { margin: 0; font-size: var(--dbmrpp-fs-xs); line-height: 1.4; color: #333; }
+                    .dbmrpp-diff-old { color: var(--dbmrpp-text-faint); text-decoration: line-through; }
                     .dbmrpp-diff-new, .dbmrpp-delay { color: var(--dbmrpp-accent); font-weight: 600; }
-                    .dbmrpp-early { color: #265c26; font-weight: 600; }
-                    .dbmrpp-plan-change { color: #7a5c00; font-size: 11px; font-weight: 500; }
+                    .dbmrpp-early { color: var(--dbmrpp-ok-text); font-weight: 600; }
+                    .dbmrpp-plan-change { color: #7a5c00; font-size: var(--dbmrpp-fs-xs); font-weight: 500; }
 
                     /* Sits inside .dbmrpp-section below the view tabs; negative
                        margins bleed it to the section edges and pull it flush
@@ -4148,7 +4179,7 @@
                         gap: 6px;
                         padding: 6px 14px;
                         border-bottom: 1px solid var(--dbmrpp-divider);
-                        background: #fafafa;
+                        background: var(--dbmrpp-surface);
                         margin: -8px -14px 10px;
                     }
 
@@ -4164,17 +4195,17 @@
                         gap: 8px;
                         padding: 8px 14px;
                         border-bottom: 1px solid var(--dbmrpp-divider);
-                        background: #f7f9ff;
+                        background: var(--dbmrpp-surface);
                     }
 
                     .dbmrpp-settings-title {
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         font-weight: 700;
                         color: #27408a;
                     }
 
-                    .dbmrpp-settings-btn-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
-                    .dbmrpp-settings-status { font-size: 11px; color: var(--dbmrpp-text-muted); }
+                    .dbmrpp-settings-btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+                    .dbmrpp-settings-status { font-size: var(--dbmrpp-fs-xs); color: var(--dbmrpp-text-muted); }
                     .dbmrpp-settings-hr { margin: 10px 0; border: none; border-top: 1px solid var(--dbmrpp-border); }
 
                     .dbmrpp-settings-group {
@@ -4183,41 +4214,44 @@
                         padding: 0;
                     }
                     .dbmrpp-settings-group > summary {
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-sm);
                         font-weight: 700;
                         color: #27408a;
                         letter-spacing: .04em;
                         cursor: pointer;
-                        padding: 5px 2px;
+                        padding: 5px 0;
                         user-select: none;
                         list-style: none;
                     }
                     .dbmrpp-settings-group > summary::-webkit-details-marker { display: none; }
-                    .dbmrpp-settings-group > summary::before { content: '▸ '; }
-                    .dbmrpp-settings-group[open] > summary::before { content: '▾ '; }
+                    /* fixed-width marker so heading text and body content share one left edge */
+                    .dbmrpp-settings-group > summary::before { content: '▸'; display: inline-block; width: 14px; }
+                    .dbmrpp-settings-group[open] > summary::before { content: '▾'; }
                     .dbmrpp-settings-group-body {
                         display: grid;
                         gap: 6px;
-                        padding: 2px 0 8px 0;
+                        padding: 2px 0 8px 14px;
                         justify-items: start;
                     }
-                    .dbmrpp-settings-sub { padding-left: 18px; }
+                    .dbmrpp-settings-sub { padding-left: 20px; }
                     .dbmrpp-settings-info-text {
-                        font-size: 11px;
-                        color: #666;
-                        padding-left: 18px;
+                        font-size: var(--dbmrpp-fs-xs);
+                        color: var(--dbmrpp-text-muted);
+                        padding-left: 20px; /* = checkbox 14px + gap 6px, so it aligns with the option text */
                         line-height: 1.4;
                     }
+                    /* hug the option above; the group gap then separates whole settings */
+                    .dbmrpp-settings-toggle + .dbmrpp-settings-info-text { margin-top: -4px; }
 
                     .dbmrpp-settings-toggle, .dbmrpp-settings-provider {
                         display: inline-flex;
                         align-items: center;
                         gap: 6px;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         color: #333;
                     }
                     .dbmrpp-settings-toggle { cursor: pointer; user-select: none; }
-                    .dbmrpp-settings-toggle input { margin: 0; }
+                    .dbmrpp-settings-toggle input { margin: 0; width: 14px; height: 14px; flex: none; }
 
                     .dbmrpp-settings-provider select {
                         min-width: 140px;
@@ -4225,12 +4259,7 @@
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
                         background: #fff;
-                        font-size: 12px;
-                    }
-
-                    .dbmrpp-settings-provider select:disabled {
-                        background: #f0f0f0;
-                        color: #888;
+                        font-size: var(--dbmrpp-fs-sm);
                     }
 
                     .dbmrpp-webdav-row {
@@ -4239,28 +4268,29 @@
                         align-items: center;
                         gap: 6px;
                         width: 100%;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         color: #333;
                     }
                     .dbmrpp-webdav-input {
                         padding: 2px 5px;
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         width: 100%;
                         box-sizing: border-box;
                     }
-                    .dbmrpp-webdav-input:disabled { background: #f0f0f0; color: #888; }
+                    .dbmrpp-settings-provider select:disabled,
+                    .dbmrpp-webdav-input:disabled { background: #f0f0f0; color: var(--dbmrpp-text-faint); }
 
-                    .dbmrpp-day-btn, .dbmrpp-changes-toggle, .dbmrpp-settings-reset {
+                    .dbmrpp-day-btn, .dbmrpp-changes-toggle, .dbmrpp-settings-action {
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
                         cursor: pointer;
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-xs);
                         background: #fff;
                     }
                     .dbmrpp-day-btn { padding: 2px 7px; }
-                    .dbmrpp-changes-toggle, .dbmrpp-settings-reset { padding: 2px 8px; }
+                    .dbmrpp-changes-toggle, .dbmrpp-settings-action { padding: 2px 8px; }
                     .dbmrpp-changes-toggle { white-space: nowrap; }
 
                     .dbmrpp-settings-hidden { display: none; }
@@ -4270,49 +4300,48 @@
                         min-width: 80px;
                     }
 
-                    .dbmrpp-filter-row-bottom { justify-content: flex-start; }
-
                     .dbmrpp-select {
                         min-width: 90px;
                         padding: 3px 6px;
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         background: #fff;
                         cursor: pointer;
                     }
 
                     .dbmrpp-day-btns { display: flex; gap: 3px; }
                     .dbmrpp-day-btn.active { background: var(--dbmrpp-accent); color: #fff; border-color: var(--dbmrpp-accent); }
-                    .dbmrpp-changes-toggle.active { background: #ffe9b3; border-color: #8a5a00; color: #8a5a00; }
+                    .dbmrpp-changes-toggle.active { background: var(--dbmrpp-warn-bg); border-color: var(--dbmrpp-warn-text); color: var(--dbmrpp-warn-text); }
 
                     .dbmrpp-selected-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
-                    .dbmrpp-tag-filter { display: inline-flex; align-items: center; gap: 4px; background: #dde8ff; color: var(--dbmrpp-navy); padding: 2px 6px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
+                    .dbmrpp-tag-filter { display: inline-flex; align-items: center; gap: 4px; background: var(--dbmrpp-info-bg); color: var(--dbmrpp-navy); padding: 2px 6px; border-radius: 3px; font-size: var(--dbmrpp-fs-xs); white-space: nowrap; }
 
-                    .dbmrpp-tag-remove { border: none; background: none; color: inherit; cursor: pointer; padding: 0; margin: 0; font-size: 14px; line-height: 1; }
+                    .dbmrpp-tag-remove { border: none; background: none; color: inherit; cursor: pointer; padding: 0; margin: 0; font-size: var(--dbmrpp-fs-lg); line-height: 1; }
                     .dbmrpp-tag-remove:hover { opacity: 0.7; }
 
-                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin-bottom: 8px; border-bottom: 2px solid var(--dbmrpp-divider); }
+                    /* bleeds to the section edges (padding 10px 14px); tabs' own padding restores the 14px text inset */
+                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin: -10px -14px 8px; padding-right: 12px; background: var(--dbmrpp-surface); border-bottom: 2px solid var(--dbmrpp-divider); }
 
                     .dbmrpp-view-tab {
                         background: transparent;
                         border: none;
                         padding: 5px 14px;
                         cursor: pointer;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         font-weight: 600;
-                        color: #888;
+                        color: var(--dbmrpp-text-faint);
                         border-bottom: 2px solid transparent;
                         margin-bottom: -2px;
                     }
 
                     .dbmrpp-view-tab.active { color: var(--dbmrpp-accent); border-bottom-color: var(--dbmrpp-accent); }
                     .dbmrpp-view-tab:hover:not(.active) { color: #444; }
-                    .dbmrpp-tab-badge { color: var(--dbmrpp-accent); font-weight: 700; font-size: 9.5px; margin-left: 1px; }
+                    .dbmrpp-tab-badge { color: var(--dbmrpp-accent); font-weight: 700; font-size: var(--dbmrpp-fs-xxs); margin-left: 1px; }
                     .dbmrpp-view-count {
                         margin-left: auto;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         font-weight: 700;
                         color: var(--dbmrpp-accent);
                         padding-right: 2px;
@@ -4324,13 +4353,13 @@
                         border-radius: 3px;
                         padding: 2px 8px;
                         margin-bottom: 3px;
-                        font-size: 11px;
+                        font-size: var(--dbmrpp-fs-xs);
                         color: var(--dbmrpp-text-muted);
                         cursor: pointer;
                     }
                     .dbmrpp-changelog-clear:hover { color: var(--dbmrpp-accent); border-color: var(--dbmrpp-accent); }
                     .dbmrpp-orphan { opacity: 0.55; }
-                    .dbmrpp-orphan .dbmrpp-route-link { text-decoration: line-through; color: #888; }
+                    .dbmrpp-orphan .dbmrpp-route-link { text-decoration: line-through; color: var(--dbmrpp-text-faint); }
 
                     @media (max-width: 640px) {
                         #dbmrpp-root {
@@ -4359,7 +4388,7 @@
                         cursor: pointer;
                     }
                     .dbmrpp-custom-tag-details > summary::-webkit-details-marker { display: none; }
-                    .dbmrpp-custom-tag-assigned { color: #6600cc !important; opacity: 1 !important; }
+                    .dbmrpp-custom-tag-assigned { color: var(--dbmrpp-marked) !important; opacity: 1 !important; }
                     .dbmrpp-custom-tag-picker {
                         position: absolute;
                         top: calc(100% + 2px);
@@ -4400,18 +4429,18 @@
                     .dbmrpp-custom-tag-create select {
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                     }
                     .dbmrpp-custom-tag-create input { padding: 2px 6px; min-width: 100px; max-width: 160px; }
                     .dbmrpp-custom-tag-create select { padding: 2px 4px; }
 
                     .dbmrpp-note, .dbmrpp-note-summary {
                         margin: 3px 0 0;
-                        font-size: 11.5px;
-                        color: #555;
+                        font-size: var(--dbmrpp-fs-xs);
+                        color: var(--dbmrpp-text-soft);
                         font-style: italic;
                         padding: 0 0 0 6px;
-                        border-left: 2px solid #ccc;
+                        border-left: 2px solid var(--dbmrpp-border);
                         white-space: nowrap;
                         overflow: hidden;
                         text-overflow: ellipsis;
@@ -4423,14 +4452,14 @@
                         list-style: none;
                     }
                     .dbmrpp-note-details > .dbmrpp-note-summary::-webkit-details-marker { display: none; }
-                    .dbmrpp-note-details > .dbmrpp-note-summary::before { content: '▸ '; font-style: normal; font-size: 10px; }
+                    .dbmrpp-note-details > .dbmrpp-note-summary::before { content: '▸ '; font-style: normal; font-size: var(--dbmrpp-fs-xxs); }
                     .dbmrpp-note-details[open] > .dbmrpp-note-summary::before { content: '▾ '; }
                     .dbmrpp-note-body {
-                        font-size: 11.5px;
-                        color: #555;
+                        font-size: var(--dbmrpp-fs-xs);
+                        color: var(--dbmrpp-text-soft);
                         font-style: italic;
                         padding: 2px 0 0 6px;
-                        border-left: 2px solid #ccc;
+                        border-left: 2px solid var(--dbmrpp-border);
                         white-space: pre-wrap;
                         word-break: break-word;
                         margin-top: 1px;
@@ -4439,7 +4468,7 @@
                     .dbmrpp-note-edit {
                         display: block;
                         width: 100%;
-                        font-size: 12px;
+                        font-size: var(--dbmrpp-fs-sm);
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 3px;
                         padding: 4px 6px;
@@ -4448,7 +4477,7 @@
                         min-height: 38px;
                         box-sizing: border-box;
                     }
-                    .dbmrpp-note-btn-active { opacity: 1 !important; color: #6600cc; }
+                    .dbmrpp-note-btn-active { opacity: 1 !important; color: var(--dbmrpp-marked); }
                 `;
         document.head.appendChild(s);
     }
@@ -4505,17 +4534,21 @@
             reRender();
         });
 
-        const exportSnapshotBtn = root.querySelector('.dbmrpp-settings-export-snapshot');
-        if (exportSnapshotBtn) exportSnapshotBtn.addEventListener('click', () => exportSnapshotBundle());
+        const exportBackupBtn = root.querySelector('.dbmrpp-export-backup');
+        if (exportBackupBtn) exportBackupBtn.addEventListener('click', () => exportBackupFile());
 
-        const importSnapshotBtn = root.querySelector('.dbmrpp-settings-import-snapshot');
-        if (importSnapshotBtn) importSnapshotBtn.addEventListener('click', () => {
+        // Held in a module var: sync completions call reRender(), which would silently drop DOM-only state.
+        const exportCredsCb = root.querySelector('#dbmrpp-setting-export-creds');
+        if (exportCredsCb) exportCredsCb.addEventListener('change', e => { exportCredsChecked = !!e.target.checked; });
+
+        const importBackupBtn = root.querySelector('.dbmrpp-import-backup');
+        if (importBackupBtn) importBackupBtn.addEventListener('click', () => {
             const picker = document.createElement('input');
             picker.type = 'file';
             picker.accept = '.json,application/json';
             picker.addEventListener('change', async () => {
                 const file = picker.files && picker.files[0];
-                if (file) await importSnapshotBundle(file);
+                if (file) await importBackupFile(file);
             }, { once: true });
             picker.click();
         });
@@ -4523,13 +4556,16 @@
         const bulkJsonBtn = root.querySelector('.dbmrpp-settings-bulk-json');
         if (bulkJsonBtn) bulkJsonBtn.addEventListener('click', () => downloadBulkRawJson());
 
-        root.querySelector('.dbmrpp-settings-reset-snapshot').addEventListener('click', () => {
+        root.querySelector('.dbmrpp-reset-all').addEventListener('click', () => {
             if (confirm(T.alertResetConfirm)) {
-                localStorage.removeItem(STORAGE_KEY);
-                localStorage.removeItem(LAST_VISIT_KEY);
-                clearRenderCache(); // don't resurrect pre-reset changes on next visit
-                hidePanel();
-                run(); // re-fetch with clean snapshot so diff starts fresh
+                // Kill pending syncs first — a debounced merge firing before navigation would re-write wiped keys.
+                webdavConfig.enabled = false;
+                caldavConfig.enabled = false;
+                if (webdavSyncTimer !== null) { clearTimeout(webdavSyncTimer); webdavSyncTimer = null; }
+                if (caldavSyncTimer  !== null) { clearTimeout(caldavSyncTimer);  caldavSyncTimer  = null; }
+                // Prefix wipe so future keys are covered too; reload rebuilds all in-memory state.
+                Object.keys(localStorage).forEach(k => { if (k.startsWith('dbmrpp.')) localStorage.removeItem(k); });
+                location.reload();
             }
         });
 
@@ -4758,6 +4794,7 @@
             webdavConfig.url      = urlInput  ? urlInput.value.trim()  : webdavConfig.url;
             webdavConfig.username = userInput ? userInput.value.trim() : webdavConfig.username;
             webdavConfig.password = passInput ? passInput.value        : webdavConfig.password;
+            webdavRemoteCache = { etag: null, text: null };
             saveWebDavConfig();
             if (webdavConfig.enabled && webdavConfig.url) webdavSync();
         });
@@ -4830,7 +4867,7 @@
                 dbLog('caldav: discover found ' + cals.length);
                 if (!cals.length) { listEl.textContent = T.calDavDiscoverNone; return; }
                 listEl.innerHTML = `<div>${esc(T.calDavDiscoverPick)}</div>`
-                    + cals.map(c => `<button class="dbmrpp-settings-reset dbmrpp-caldav-cal" data-url="${esc(c.url)}">${esc(c.name)}</button>`).join(' ');
+                    + cals.map(c => `<button class="dbmrpp-settings-action dbmrpp-caldav-cal" data-url="${esc(c.url)}">${esc(c.name)}</button>`).join(' ');
                 listEl.querySelectorAll('.dbmrpp-caldav-cal').forEach(btn => btn.addEventListener('click', () => {
                     caldavConfig.url = btn.dataset.url;
                     saveCalDavConfig();
@@ -5128,7 +5165,11 @@
             }
             if (ev.target.closest('.dbmrpp-changelog-clear')) {
                 if (!confirm(T.alertChangeLogClearConfirm)) return;
-                try { localStorage.removeItem(CHANGE_LOG_KEY); } catch (_) {}
+                try {
+                    localStorage.removeItem(CHANGE_LOG_KEY);
+                    localStorage.setItem(CHANGE_LOG_CLEARED_AT_KEY, new Date().toISOString());
+                } catch (_) {}
+                scheduleWebDavSync();
                 reRenderContent();
                 return;
             }
@@ -5150,9 +5191,9 @@
     // 18) HTML builders
     // =========================================================
     // One checkbox setting, optionally with an info line below it.
-    // opts: desc (info text), disabled, style (inline style for the label).
+    // opts: desc (info text), disabled.
     function settingsToggle(id, checked, label, opts = {}) {
-        return `<label class="dbmrpp-settings-toggle"${opts.style ? ` style="${opts.style}"` : ''}>
+        return `<label class="dbmrpp-settings-toggle">
                         <input type="checkbox" id="${id}"${checked ? ' checked' : ''}${opts.disabled ? ' disabled' : ''}>
                         <span>${label}</span>
                     </label>${opts.desc ? `
@@ -5244,9 +5285,13 @@
             <details class="dbmrpp-settings-group">
                 <summary>${T.settingsGroupData}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <button class="dbmrpp-settings-export-snapshot dbmrpp-settings-reset">${T.settingsExportSnapshot}</button>
-                    <button class="dbmrpp-settings-import-snapshot dbmrpp-settings-reset">${T.settingsImportSnapshot}</button>
-                    <button class="dbmrpp-settings-reset dbmrpp-settings-reset-snapshot" title="${T.ttReset}">Reset Trips Snapshot</button>
+                    <div class="dbmrpp-settings-info-text">${esc(T.settingsSnapshotDataDesc)}</div>
+                    <div class="dbmrpp-settings-btn-row">
+                        <button class="dbmrpp-export-backup dbmrpp-settings-action">${T.settingsExportBackup}</button>
+                        ${settingsToggle('dbmrpp-setting-export-creds', exportCredsChecked, esc(T.settingsExportCreds))}
+                    </div>
+                    <button class="dbmrpp-import-backup dbmrpp-settings-action">${T.settingsImportBackup}</button>
+                    <button class="dbmrpp-settings-action dbmrpp-reset-all" title="${T.ttReset}">${T.settingsResetAll}</button>
                 </div>
             </details>
             <details class="dbmrpp-settings-group">
@@ -5257,8 +5302,8 @@
                     ${settingsInput('dbmrpp-webdav-username', esc(T.settingsWebDavUsername), webdavConfig.username, webdavConfig.enabled, { autocomplete: 'off' })}
                     ${settingsInput('dbmrpp-webdav-password', esc(T.settingsWebDavPassword), webdavConfig.password, webdavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
                     <div class="dbmrpp-settings-btn-row">
-                        <button class="dbmrpp-settings-reset dbmrpp-webdav-save">${esc(T.settingsWebDavSave)}</button>
-                        <button class="dbmrpp-settings-reset dbmrpp-webdav-sync-now"${webdavConfig.enabled && webdavConfig.url ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-webdav-save">${esc(T.settingsWebDavSave)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-webdav-sync-now"${webdavConfig.enabled && webdavConfig.url ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
                     </div>
                     <div id="dbmrpp-webdav-status" class="dbmrpp-settings-status">${esc(webdavSyncStatusText())}</div>
                     <hr class="dbmrpp-settings-hr">
@@ -5266,13 +5311,13 @@
                     ${settingsInput('dbmrpp-caldav-url', esc(T.settingsCalDavUrl), caldavConfig.url, caldavConfig.enabled, { placeholder: 'https://…/dav/calendars/user/trips/' })}
                     ${settingsInput('dbmrpp-caldav-username', esc(T.settingsCalDavUsername), caldavConfig.username, caldavConfig.enabled, { autocomplete: 'off' })}
                     ${settingsInput('dbmrpp-caldav-password', esc(T.settingsCalDavPassword), caldavConfig.password, caldavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
-                    ${settingsToggle('dbmrpp-caldav-include-past', caldavConfig.includePastTrips, esc(T.settingsCalDavIncludePast), { desc: esc(T.settingsCalDavIncludePastDesc), disabled: !caldavConfig.enabled, style: 'margin-top:4px' })}
+                    ${settingsToggle('dbmrpp-caldav-include-past', caldavConfig.includePastTrips, esc(T.settingsCalDavIncludePast), { desc: esc(T.settingsCalDavIncludePastDesc), disabled: !caldavConfig.enabled })}
                     ${settingsToggle('dbmrpp-caldav-include-cached', caldavConfig.includeCachedTrips, esc(T.settingsCalDavIncludeCached), { desc: esc(T.settingsCalDavIncludeCachedDesc), disabled: !(caldavConfig.enabled && caldavConfig.includePastTrips) })}
                     ${settingsToggle('dbmrpp-caldav-include-leistung', caldavConfig.includeLeistungTickets, esc(T.settingsCalDavIncludeLeistung), { desc: esc(T.settingsCalDavIncludeLeistungDesc), disabled: !caldavConfig.enabled })}
                     <div class="dbmrpp-settings-btn-row">
-                        <button class="dbmrpp-settings-reset dbmrpp-caldav-save">${esc(T.settingsCalDavSave)}</button>
-                        <button class="dbmrpp-settings-reset dbmrpp-caldav-discover"${caldavConfig.enabled ? '' : ' disabled'}>${esc(T.settingsCalDavDiscover)}</button>
-                        <button class="dbmrpp-settings-reset dbmrpp-caldav-push-now"${caldavConfig.enabled && caldavConfig.url ? '' : ' disabled'}>${esc(T.settingsCalDavSyncNow)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-caldav-save">${esc(T.settingsCalDavSave)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-caldav-discover"${caldavConfig.enabled ? '' : ' disabled'}>${esc(T.settingsCalDavDiscover)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-caldav-push-now"${caldavConfig.enabled && caldavConfig.url ? '' : ' disabled'}>${esc(T.settingsCalDavSyncNow)}</button>
                     </div>
                     <div id="dbmrpp-caldav-calendars" class="dbmrpp-settings-status"></div>
                     <div id="dbmrpp-caldav-status" class="dbmrpp-settings-status">${esc(calDavSyncStatusText())}</div>
@@ -5282,11 +5327,11 @@
                 <summary>${T.settingsGroupDev}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-show-json-button', uiSettings.showJsonButton, T.settingsShowJsonButton, { desc: T.settingsShowJsonButtonDesc })}
-                    <button class="dbmrpp-settings-bulk-json dbmrpp-settings-reset">${T.settingsDownloadBulkJson}</button>
-                    ${settingsToggle('dbmrpp-setting-debug-logging', uiSettings.debugLogging, T.settingsDebugLogging, { desc: T.settingsDebugLoggingDesc, style: 'margin-top:8px' })}
+                    <button class="dbmrpp-settings-bulk-json dbmrpp-settings-action">${T.settingsDownloadBulkJson}</button>
+                    ${settingsToggle('dbmrpp-setting-debug-logging', uiSettings.debugLogging, T.settingsDebugLogging, { desc: T.settingsDebugLoggingDesc })}
                     ${uiSettings.debugLogging ? `<div class="dbmrpp-settings-btn-row">
-                        <button class="dbmrpp-debug-log-copy dbmrpp-settings-reset">${esc(T.settingsDebugLogCopy)}</button>
-                        <button class="dbmrpp-debug-log-clear dbmrpp-settings-reset">${esc(T.settingsDebugLogClear)}</button>
+                        <button class="dbmrpp-debug-log-copy dbmrpp-settings-action">${esc(T.settingsDebugLogCopy)}</button>
+                        <button class="dbmrpp-debug-log-clear dbmrpp-settings-action">${esc(T.settingsDebugLogClear)}</button>
                         <span class="dbmrpp-debug-log-count dbmrpp-settings-status">${esc(T.settingsDebugLogEntries(debugLogEntryCount()))}</span>
                     </div>` : ''}
                 </div>
@@ -5296,8 +5341,8 @@
                 <div class="dbmrpp-settings-group-body">
                     ${customTagDefs.map(def => `<div class="dbmrpp-custom-tag-def-row">
                         <span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span>
-                        <button class="dbmrpp-custom-tag-edit dbmrpp-settings-reset" data-id="${esc(def.id)}" title="${esc(T.customTagEditTt)}">✎</button>
-                        <button class="dbmrpp-custom-tag-delete dbmrpp-settings-reset" data-id="${esc(def.id)}" title="${esc(T.customTagDeleteTt)}">×</button>
+                        <button class="dbmrpp-custom-tag-edit dbmrpp-settings-action" data-id="${esc(def.id)}" title="${esc(T.customTagEditTt)}">✎</button>
+                        <button class="dbmrpp-custom-tag-delete dbmrpp-settings-action" data-id="${esc(def.id)}" title="${esc(T.customTagDeleteTt)}">×</button>
                     </div>`).join('')}
                     <div class="dbmrpp-custom-tag-create">
                         <input type="text" id="dbmrpp-custom-tag-name" placeholder="${esc(T.customTagNamePlaceholder)}">
@@ -5307,7 +5352,7 @@
                             <option value="warn">${esc(T.customTagColorWarn)}</option>
                             <option value="bad">${esc(T.customTagColorBad)}</option>
                         </select>
-                        <button id="dbmrpp-custom-tag-add" class="dbmrpp-settings-reset">${esc(T.customTagAdd)}</button>
+                        <button id="dbmrpp-custom-tag-add" class="dbmrpp-settings-action">${esc(T.customTagAdd)}</button>
                     </div>
                 </div>
             </details>
@@ -5398,14 +5443,14 @@
     // and get the highlight background.
     function buildChangeLogSection(changes, lastVisit, lastVisitTxt) {
         const hasChanges = changes.neu.length || changes.geaendert.length || changes.entfernt.length;
-        const noChangesLine = hasChanges ? '' : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
+        const noChangesLine = hasChanges || !lastVisit ? '' : `<div class="dbmrpp-changes-none">${T.noChangesSince(esc(lastVisitTxt))}</div>`;
         const log = loadChangeLog();
         if (!log.length) {
             return `
         <div class="dbmrpp-section">
             ${buildViewTabs()}
-            ${noChangesLine}
-            <div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>
+            <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
+            ${noChangesLine || `<div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>`}
         </div>`;
         }
         const groups = [];
@@ -5422,6 +5467,7 @@
         return `
         <div class="dbmrpp-section">
             ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
+            <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
             ${noChangesLine}
             ${groups.map(g => `
             <div${Date.parse(g.detectedAt) > newCutoff ? ' class="dbmrpp-changes-new"' : ''}>
@@ -5724,10 +5770,8 @@
             });
             return null;
         }
-        // Always use the detail response for endpoint IDs: the bulk reiseketten
-        // response often returns a wrong toExtId (e.g. the train's ultimate
-        // terminus rather than the booked destination). fetchDetail is cached, so
-        // repeated clicks cause no extra network round-trip.
+        // Endpoint IDs from the detail response only: bulk reiseketten often
+        // returns a wrong toExtId (the train's terminus, not the booked destination).
         const detail = await fetchDetail(t.uuid);
         const detailCtxRecon = extractCtxReconFromDetail(detail);
 
@@ -5977,9 +6021,8 @@
             t.departure.slice(0, 10) === t.arrival.slice(0, 10);
         const a    = t.arrival ? (sameDay ? formatTime(t.arrival) : formatDateTime(t.arrival)) : '?';
         const showLeistungsnameMeta = !!t.leistungsname && !!(t.from || t.to);
-        // Only suppress primary platform / train info when the trip is an
-        // enriched past-trip that was merged from history — but keep original
-        // behaviour for normal tickets. Use hasTripHistoryEntry to decide that.
+        // Past trips enriched from history (hasTripHistoryEntry) show platform/
+        // train info in the cache block instead of the primary line.
         const showPrimaryPlatformInfo = !(t.isPastTrip && t.hasTripHistoryEntry && !t.isFromHistoryCache);
         const showPrimaryTrainInfo = !(t.isPastTrip && t.hasTripHistoryEntry && !t.isFromHistoryCache);
         // For reconstructed saved trips, avoid duplicate transport lines:
@@ -6105,9 +6148,8 @@
             : renderRouteLink(t);
         return `
         <div class="dbmrpp-trip" data-uuid="${esc(t.uuid)}">
-            <div class="dbmrpp-route">${badge}${route}${renderChangeActions(t, removed)}
-                <span class="dbmrpp-meta">(<strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong>)</span>
-            </div>
+            <div class="dbmrpp-route">${badge}${route}${renderChangeActions(t, removed)}</div>
+            <div class="dbmrpp-meta"><strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong></div>
             ${(c.changes || []).map(d => `
             <div class="dbmrpp-diff">
                 <strong>${esc(T.fieldLabels[d.field] || d.field)}:</strong>
