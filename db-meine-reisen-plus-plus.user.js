@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.12.0
+// @version      0.13.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.12.0';
+    const SCRIPT_VERSION  = '0.13.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -36,7 +36,10 @@
     const LAST_VISIT_KEY   = 'dbmrpp.lastVisit';
     const KUNDENPROFIL_KEY = 'dbmrpp.kundenprofilId';
     const CUSTOM_TAG_DEFS_KEY        = 'dbmrpp.customTagDefs.v1';
+    const CUSTOM_TAG_TOMBSTONES_KEY  = 'dbmrpp.customTagTombstones.v1';
     const CUSTOM_TAG_ASSIGNMENTS_KEY = 'dbmrpp.customTagAssignments.v1';
+    // Deletions resurrect on any device that stays unsynced longer than this.
+    const TAG_TOMBSTONE_TTL_MS       = 180 * 24 * 60 * 60 * 1000;
     const NOTES_KEY                  = 'dbmrpp.tripNotes.v1';
     const FGR_CLAIMS_KEY             = 'dbmrpp.fgrClaims.v1';
     const ENDPOINT_PATH    = '/web/api/reisebegleitung/reiseketten';
@@ -51,6 +54,8 @@
     const RUN_DELAY_MS     = 800;
     const SNAPSHOT_COOLDOWN_MS = 30 * 60 * 1000; // freeze baseline for 30 min against quick reloads
     const DEBUG_LOG_KEY         = 'dbmrpp.debugLog.v1';
+    const ROUTING_PROVIDERS = ['bahn.expert', 'chuuchuu', 'transitous.org', 'bleibzuhause.com'];
+    const TRAIN_PROVIDERS = ['bahn.expert', 'zugfinder'];
     const DEBUG_LOG_MAX_ENTRIES = 500;
     const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v3';
     const CHANGE_LOG_KEY         = 'dbmrpp.changeLog.v1';
@@ -62,6 +67,7 @@
     const CALDAV_SYNC_STATE_KEY          = 'dbmrpp.caldavSyncState.v1';
     const SETTINGS_UPDATED_AT_KEY        = 'dbmrpp.settingsUpdatedAt';
     const TAG_ASSIGNMENTS_UPDATED_AT_KEY = 'dbmrpp.tagAssignmentsUpdatedAt';
+    const TAG_DEFS_UPDATED_AT_KEY        = 'dbmrpp.tagDefsUpdatedAt';
     const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
     const FGR_CLAIMS_UPDATED_AT_KEY      = 'dbmrpp.fgrClaimsUpdatedAt';
     // Plan/booking state only. Realtime-derived values (rt times/tracks,
@@ -120,6 +126,7 @@
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
+            settingsRoutingProviderBleibZuHause: 'bleibzuhause.com',
             settingsShowCancelledTrips: 'Show cancelled trips',
             settingsShowCancelledTripsDesc: 'If disabled, fully cancelled trips are hidden in both the upcoming and past view and are also excluded from the ICS and CSV exports. Partially cancelled trips are always shown.',
             settingsGroupGeneral:       'General',
@@ -222,6 +229,7 @@
                 + `View connection: ${p.url}`,
             shareError:        'Share failed — see console.',
             routeError:        'External route link failed — see console.',
+            trainLinkError:    'Train link failed — see console.',
             rawJsonError:      'Raw JSON download failed — see console.',
             geoError:          'Geo data download failed — see console.',
             geoNoData:         'No route geometry available for geo data export.',
@@ -401,6 +409,7 @@
             settingsRoutingProviderBahnExpert: 'bahn.expert',
             settingsRoutingProviderChuuchuu: 'chuuchuu',
             settingsRoutingProviderTransitous: 'transitous.org',
+            settingsRoutingProviderBleibZuHause: 'bleibzuhause.com',
             settingsShowCancelledTrips: 'Stornierte Reisen anzeigen',
             settingsShowCancelledTripsDesc: 'Wenn deaktiviert, werden vollständig stornierte Reisen weder in der bevorstehenden noch in der vergangenen Ansicht angezeigt und auch vom ICS- und CSV-Export ausgenommen. Teilweise stornierte Reisen werden immer angezeigt.',
             settingsGroupGeneral:       'Allgemein',
@@ -503,6 +512,7 @@
                 + `Verbindung ansehen: ${p.url}`,
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
             routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
+            trainLinkError:    'Zug-Link fehlgeschlagen — siehe Konsole.',
             rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
             geoError:          'Geo-Daten-Download fehlgeschlagen — siehe Konsole.',
             geoNoData:         'Keine Streckengeometrie für Geo-Daten-Export verfügbar.',
@@ -665,6 +675,7 @@
     let auftraegeCache  = null;
     let tripHistory = loadTripHistory();
     let customTagDefs        = loadCustomTagDefs();
+    let customTagTombstones  = loadCustomTagTombstones();
     let customTagAssignments = loadCustomTagAssignments();
     let tripNotes            = loadTripNotes();
     let fgrClaims            = loadFgrClaims();
@@ -704,11 +715,8 @@
         try {
             const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
             const rawProvider = parsed['traininfo-provider'] || parsed.trainLinkProvider;
-            const provider = rawProvider === 'bahn.expert' || rawProvider === 'bahnexpert' ? 'bahn.expert' : 'zugfinder';
-            const rawRoutingProvider = parsed['routing-provider'];
-            const routingProvider = (rawRoutingProvider === 'chuuchuu' || rawRoutingProvider === 'transitous.org')
-                ? rawRoutingProvider
-                : 'bahn.expert';
+            const provider = normalizeTrainProvider(rawProvider);
+            const routingProvider = normalizeRoutingProvider(parsed['routing-provider']);
             return {
                 rememberFilter: !!parsed.rememberFilter,
                 openOnLoad: !!parsed.openOnLoad,
@@ -781,7 +789,17 @@
         try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_DEFS_KEY) || '[]'); } catch (_) { return []; }
     }
     function saveCustomTagDefs() {
-        try { localStorage.setItem(CUSTOM_TAG_DEFS_KEY, JSON.stringify(customTagDefs)); } catch (_) {}
+        try {
+            localStorage.setItem(CUSTOM_TAG_DEFS_KEY, JSON.stringify(customTagDefs));
+            localStorage.setItem(TAG_DEFS_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
+    }
+    // id -> deletedAt ISO; ids are never reused, so a tombstone always wins.
+    function loadCustomTagTombstones() {
+        try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_TOMBSTONES_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveCustomTagTombstones() {
+        try { localStorage.setItem(CUSTOM_TAG_TOMBSTONES_KEY, JSON.stringify(customTagTombstones)); } catch (_) {}
     }
     function loadCustomTagAssignments() {
         try { return JSON.parse(localStorage.getItem(CUSTOM_TAG_ASSIGNMENTS_KEY) || '{}'); } catch (_) { return {}; }
@@ -3283,19 +3301,24 @@
         try { localStorage.setItem(WEBDAV_SYNC_STATE_KEY, JSON.stringify(webdavSyncState)); } catch (_) {}
     }
 
+    function webdavReady() {
+        return !!(webdavConfig.enabled && webdavConfig.url);
+    }
+
     function webdavSyncStatusText() {
         if (webdavSyncState.lastError) return T.webDavStatusError(webdavSyncState.lastError);
         if (webdavSyncState.lastSyncedAt) return T.webDavStatusOk(formatDateTime(webdavSyncState.lastSyncedAt));
         return T.webDavStatusNever;
     }
 
-    function reRenderSyncStatus() {
+    // text overrides for transient states ("syncing…"); default reflects webdavSyncState
+    function reRenderSyncStatus(text) {
         const el = document.getElementById('dbmrpp-webdav-status');
-        if (el) el.textContent = webdavSyncStatusText();
+        if (el) el.textContent = text || webdavSyncStatusText();
     }
 
     function scheduleWebDavSync() {
-        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        if (!webdavReady()) return;
         if (webdavSyncTimer !== null) clearTimeout(webdavSyncTimer);
         webdavSyncTimer = setTimeout(() => { webdavSyncTimer = null; webdavSync(); }, 2000);
     }
@@ -3320,11 +3343,22 @@
         return m ? m[1].replace(/^W\//, '').replace(/-(gzip|br)(?=")/, '') : null;
     }
 
+    // Whole-map stores synced newest-wins on a single timestamp; one row drives
+    // buildSyncBundle, mergeBundles and applyBundle alike.
+    const SYNCED_MAPS = [
+        { field: 'customTagAssignments', tsField: 'customTagAssignmentsUpdatedAt', key: CUSTOM_TAG_ASSIGNMENTS_KEY, tsKey: TAG_ASSIGNMENTS_UPDATED_AT_KEY,
+          get: () => customTagAssignments, set: v => { customTagAssignments = v; } },
+        { field: 'tripNotes', tsField: 'tripNotesUpdatedAt', key: NOTES_KEY, tsKey: TRIP_NOTES_UPDATED_AT_KEY,
+          get: () => tripNotes, set: v => { tripNotes = v; } },
+        { field: 'fgrClaims', tsField: 'fgrClaimsUpdatedAt', key: FGR_CLAIMS_KEY, tsKey: FGR_CLAIMS_UPDATED_AT_KEY,
+          get: () => fgrClaims, set: v => { fgrClaims = v; } }
+    ];
+
     function buildSyncBundle() {
         const snapshot = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
         const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
         const history  = JSON.parse(localStorage.getItem(REISEKETTEN_HISTORY_KEY) || '{}');
-        return {
+        const bundle = {
             format:     'dbmrpp-snapshot-export-v1',
             exportedAt: new Date().toISOString(),
             snapshot:   isPlainObject(snapshot) ? snapshot : {},
@@ -3337,46 +3371,63 @@
             changeLog: loadChangeLog(),
             changeLogClearedAt: localStorage.getItem(CHANGE_LOG_CLEARED_AT_KEY) || null,
             customTagDefs: customTagDefs.slice(),
-            customTagAssignments: { ...customTagAssignments },
-            customTagAssignmentsUpdatedAt: localStorage.getItem(TAG_ASSIGNMENTS_UPDATED_AT_KEY) || null,
-            tripNotes: { ...tripNotes },
-            tripNotesUpdatedAt: localStorage.getItem(TRIP_NOTES_UPDATED_AT_KEY) || null,
-            fgrClaims: { ...fgrClaims },
-            fgrClaimsUpdatedAt: localStorage.getItem(FGR_CLAIMS_UPDATED_AT_KEY) || null
+            customTagDefsUpdatedAt: localStorage.getItem(TAG_DEFS_UPDATED_AT_KEY) || null,
+            customTagTombstones: { ...customTagTombstones }
         };
+        SYNCED_MAPS.forEach(s => {
+            bundle[s.field]   = { ...s.get() };
+            bundle[s.tsField] = localStorage.getItem(s.tsKey) || null;
+        });
+        return bundle;
     }
 
     function mergeBundles(local, remote) {
         const preferRemoteSnapshot = parseTs(remote.lastVisit) > parseTs(local.lastVisit);
         const preferRemoteSettings = parseTs(remote.settingsUpdatedAt) > parseTs(local.settingsUpdatedAt);
-        const preferRemoteTags     = parseTs(remote.customTagAssignmentsUpdatedAt) > parseTs(local.customTagAssignmentsUpdatedAt);
-        const preferRemoteNotes    = parseTs(remote.tripNotesUpdatedAt) > parseTs(local.tripNotesUpdatedAt);
-        const preferRemoteFgr      = parseTs(remote.fgrClaimsUpdatedAt) > parseTs(local.fgrClaimsUpdatedAt);
 
-        const mergedHistory = normalizeTripHistory({
-            entries: mergeHistoryEntriesNewestWins(
-                (local.tripHistory  && local.tripHistory.entries)  || {},
-                (remote.tripHistory && remote.tripHistory.entries) || {}
-            )
-        });
+        // bundle shape is { entries } (schemaVersion is storage-internal, and the
+        // shape must match buildSyncBundle's for the changed-detection to settle)
+        const mergedHistory = {
+            entries: normalizeTripHistory({
+                entries: mergeHistoryEntriesNewestWins(
+                    (local.tripHistory  && local.tripHistory.entries)  || {},
+                    (remote.tripHistory && remote.tripHistory.entries) || {}
+                )
+            }).entries
+        };
 
         // ISO strings compare chronologically
         const mergedClearedAt = [local.changeLogClearedAt, remote.changeLogClearedAt]
             .filter(Boolean).sort().pop() || null;
         const mergedChangeLog = mergeChangeLogs(local.changeLog, remote.changeLog, local.lastVisit, remote.lastVisit, mergedClearedAt);
 
-        const mergedDefs = [...(local.customTagDefs || [])];
+        const preferRemoteDefs = parseTs(remote.customTagDefsUpdatedAt) > parseTs(local.customTagDefsUpdatedAt);
+
+        // Union of both sides' tombstones — a def missing on one side is otherwise
+        // indistinguishable from a new def on the other, so deletions need them to
+        // survive the round-trip. Expired ones drop out here on both sides.
+        const tombstoneCutoff = Date.now() - TAG_TOMBSTONE_TTL_MS;
+        const mergedTombstones = {};
+        [local.customTagTombstones, remote.customTagTombstones].forEach(src => {
+            if (!isPlainObject(src)) return;
+            Object.entries(src).forEach(([id, ts]) => {
+                if (typeof ts !== 'string' || parseTs(ts) < tombstoneCutoff) return;
+                if (!mergedTombstones[id] || ts > mergedTombstones[id]) mergedTombstones[id] = ts;
+            });
+        });
+
+        const mergedDefs = (local.customTagDefs || []).filter(d => d && d.id && !mergedTombstones[d.id]);
         const localDefIds = new Map(mergedDefs.map((d, i) => [d.id, i]));
         (remote.customTagDefs || []).forEach(def => {
-            if (!def || !def.id || !def.label) return;
+            if (!def || !def.id || !def.label || mergedTombstones[def.id]) return;
             const idx = localDefIds.get(def.id);
             if (idx === undefined) { mergedDefs.push(def); localDefIds.set(def.id, mergedDefs.length - 1); }
-            else if (preferRemoteSettings) mergedDefs[idx] = def;
+            else if (preferRemoteDefs) mergedDefs[idx] = def;
         });
 
         const pick = (l, r, preferRemote) => preferRemote ? (r || l) : (l || r);
 
-        return {
+        const merged = {
             format:     'dbmrpp-snapshot-export-v1',
             exportedAt: new Date().toISOString(),
             snapshot:   mergeObjects(local.snapshot, remote.snapshot, preferRemoteSnapshot),
@@ -3387,13 +3438,19 @@
             changeLog: mergedChangeLog,
             changeLogClearedAt: mergedClearedAt,
             customTagDefs: mergedDefs,
-            customTagAssignments: mergeObjects(local.customTagAssignments, remote.customTagAssignments, preferRemoteTags),
-            customTagAssignmentsUpdatedAt: pick(local.customTagAssignmentsUpdatedAt, remote.customTagAssignmentsUpdatedAt, preferRemoteTags),
-            tripNotes: mergeObjects(local.tripNotes, remote.tripNotes, preferRemoteNotes),
-            tripNotesUpdatedAt: pick(local.tripNotesUpdatedAt, remote.tripNotesUpdatedAt, preferRemoteNotes),
-            fgrClaims: mergeObjects(local.fgrClaims, remote.fgrClaims, preferRemoteFgr),
-            fgrClaimsUpdatedAt: pick(local.fgrClaimsUpdatedAt, remote.fgrClaimsUpdatedAt, preferRemoteFgr)
+            customTagDefsUpdatedAt: pick(local.customTagDefsUpdatedAt, remote.customTagDefsUpdatedAt, preferRemoteDefs),
+            customTagTombstones: mergedTombstones
         };
+        SYNCED_MAPS.forEach(s => {
+            const preferRemote = parseTs(remote[s.tsField]) > parseTs(local[s.tsField]);
+            merged[s.field]   = mergeObjects(local[s.field], remote[s.field], preferRemote);
+            merged[s.tsField] = pick(local[s.tsField], remote[s.tsField], preferRemote);
+        });
+        Object.keys(merged.customTagAssignments).forEach(uuid => {
+            merged.customTagAssignments[uuid] = (Array.isArray(merged.customTagAssignments[uuid]) ? merged.customTagAssignments[uuid] : [])
+                .filter(id => !mergedTombstones[id]);
+        });
+        return merged;
     }
 
     function applyBundle(bundle) {
@@ -3422,20 +3479,18 @@
         }
         if (Array.isArray(bundle.customTagDefs)) {
             customTagDefs = bundle.customTagDefs;
-            saveCustomTagDefs();
+            // not saveCustomTagDefs(): bumping the timestamp here would make local always win
+            store(CUSTOM_TAG_DEFS_KEY, customTagDefs, TAG_DEFS_UPDATED_AT_KEY, bundle.customTagDefsUpdatedAt);
         }
-        if (isPlainObject(bundle.customTagAssignments)) {
-            customTagAssignments = bundle.customTagAssignments;
-            store(CUSTOM_TAG_ASSIGNMENTS_KEY, customTagAssignments, TAG_ASSIGNMENTS_UPDATED_AT_KEY, bundle.customTagAssignmentsUpdatedAt);
+        if (isPlainObject(bundle.customTagTombstones)) {
+            customTagTombstones = bundle.customTagTombstones;
+            store(CUSTOM_TAG_TOMBSTONES_KEY, customTagTombstones);
         }
-        if (isPlainObject(bundle.tripNotes)) {
-            tripNotes = bundle.tripNotes;
-            store(NOTES_KEY, tripNotes, TRIP_NOTES_UPDATED_AT_KEY, bundle.tripNotesUpdatedAt);
-        }
-        if (isPlainObject(bundle.fgrClaims)) {
-            fgrClaims = bundle.fgrClaims;
-            store(FGR_CLAIMS_KEY, fgrClaims, FGR_CLAIMS_UPDATED_AT_KEY, bundle.fgrClaimsUpdatedAt);
-        }
+        SYNCED_MAPS.forEach(s => {
+            if (!isPlainObject(bundle[s.field])) return;
+            s.set(bundle[s.field]);
+            store(s.key, bundle[s.field], s.tsKey, bundle[s.tsField]);
+        });
     }
 
     function webdavAuthHeaders() {
@@ -3473,47 +3528,57 @@
         return { bundle, etag, missing: getRes.status === 404 };
     }
 
+    // GET-merge-apply shared by pull-merge and full sync. Applies before any
+    // PUT, so a failed upload still leaves the pulled data local. changed
+    // compares everything but exportedAt — false means local storage untouched.
+    function mergeRemoteBundle(remoteBundle) {
+        const local = buildSyncBundle();
+        if (!remoteBundle) return { merged: local, body: JSON.stringify(local), changed: false };
+        const merged = mergeBundles(local, remoteBundle);
+        const body = JSON.stringify(merged);
+        const changed = body !== JSON.stringify({ ...local, exportedAt: merged.exportedAt });
+        if (changed) applyBundle(merged);
+        return { merged, body, changed };
+    }
+
     // Pull-before-upsert: remote entries must be local before run() commits
     // live data. Best effort, no PUT — the scheduled full sync pushes.
     async function webdavPullMerge() {
-        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        if (!webdavReady()) return;
         try {
             const { bundle } = await fetchRemoteBundle(webdavAuthHeaders());
-            if (bundle) applyBundle(mergeBundles(buildSyncBundle(), bundle));
-            dbLog('webdav: pull-merge done (remote=' + !!bundle + ')');
+            const changed = !!bundle && mergeRemoteBundle(bundle).changed;
+            dbLog('webdav: pull-merge done (remote=' + !!bundle + ', changed=' + changed + ')');
         } catch (err) {
             dbLog('webdav: pull-merge error ' + (err.message || err));
         }
     }
 
     async function webdavSync() {
-        if (!webdavConfig.enabled || !webdavConfig.url) return;
+        if (!webdavReady()) return;
         // re-schedule instead of racing an in-flight GET/merge/PUT cycle
         if (webdavSyncInProgress) { scheduleWebDavSync(); return; }
         webdavSyncInProgress = true;
         const headers = webdavAuthHeaders();
-
-        const statusEl = document.getElementById('dbmrpp-webdav-status');
-        if (statusEl) statusEl.textContent = T.webDavStatusSyncing;
+        reRenderSyncStatus(T.webDavStatusSyncing);
         dbLog('webdav: sync start → ' + webdavConfig.url);
 
+        let pulledChanges = false;
         try {
             // one retry: 412 means another device PUT between our GET and PUT
             for (let attempt = 0; ; attempt++) {
                 const { bundle: remoteBundle, etag, missing } = await fetchRemoteBundle(headers);
-                const merged = remoteBundle ? mergeBundles(buildSyncBundle(), remoteBundle) : buildSyncBundle();
-                dbLog('webdav: merged (remote=' + !!remoteBundle + ')');
-                applyBundle(merged);
+                const { merged, body, changed } = mergeRemoteBundle(remoteBundle);
+                pulledChanges = pulledChanges || changed;
+                dbLog('webdav: merged (remote=' + !!remoteBundle + ', changed=' + changed + ')');
 
-                const stable = b => JSON.stringify({ ...b, exportedAt: null });
-                if (remoteBundle && stable(merged) === stable(remoteBundle)) {
+                if (remoteBundle && body === JSON.stringify({ ...remoteBundle, exportedAt: merged.exportedAt })) {
                     dbLog('webdav: unchanged, PUT skipped');
                     break;
                 }
                 const putHeaders = { ...headers, 'Content-Type': 'application/json' };
                 if (etag) putHeaders['If-Match'] = etag;
                 else if (missing) putHeaders['If-None-Match'] = '*';
-                const body = JSON.stringify(merged);
                 const putRes = await gmXhr('PUT', webdavConfig.url, putHeaders, body);
                 dbLog('webdav: PUT ' + putRes.status);
                 if (putRes.status === 412 && attempt === 0) {
@@ -3531,18 +3596,18 @@
             }
 
             webdavSyncState = { lastSyncedAt: new Date().toISOString(), lastError: null };
-            saveWebDavSyncState();
-            reRenderSyncStatus();
-            reRender();
             dbLog('webdav: sync done');
         } catch (err) {
             dbLog('webdav: sync error ' + (err.message || err));
             webdavSyncState = { ...webdavSyncState, lastError: err.message || String(err) };
-            saveWebDavSyncState();
-            reRenderSyncStatus();
             console.error('[DBMRPP] WebDAV sync error:', err);
         } finally {
             webdavSyncInProgress = false;
+            saveWebDavSyncState();
+            reRenderSyncStatus();
+            // full re-render only when the merge pulled remote data in; a
+            // push-only sync must not rebuild the DOM mid-interaction
+            if (pulledChanges) reRender();
         }
     }
 
@@ -3979,7 +4044,9 @@
                         right: 10px;
                         width: min(400px, calc(100vw - 20px));
                         max-height: min(88vh, calc(100dvh - 20px));
-                        overflow: auto;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
                         background: #fff;
                         border: 1px solid var(--dbmrpp-border);
                         border-radius: 8px;
@@ -4000,6 +4067,7 @@
                         display: flex;
                         flex-direction: column;
                         gap: 8px;
+                        flex-shrink: 0;
                     }
 
                     .dbmrpp-header-top {
@@ -4058,7 +4126,11 @@
                     #dbmrpp-root h3 { margin: 0 0 8px; font-family: inherit; font-size: var(--dbmrpp-fs-md); color: var(--dbmrpp-accent); }
                     #dbmrpp-root h4 { margin: 10px 0 4px; font-family: inherit; font-size: var(--dbmrpp-fs-xs); font-weight: 600; color: var(--dbmrpp-text-soft); text-transform: uppercase; letter-spacing: .04em; }
 
-                    .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); }
+                    /* header/settings stay put; #dbmrpp-content takes the rest of
+                       #dbmrpp-root's flex column and only .dbmrpp-scroll-area scrolls. */
+                    #dbmrpp-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+                    .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+                    .dbmrpp-scroll-area { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
                     .dbmrpp-changes-new { background: #fff5f5; border-radius: 4px; padding: 2px 8px 6px; margin: 0 -8px; }
                     .dbmrpp-changes-none, .dbmrpp-changes-scope { color: var(--dbmrpp-text-muted); font-size: var(--dbmrpp-fs-xs); }
                     .dbmrpp-changes-scope { margin: 2px 0 6px; }
@@ -4181,6 +4253,7 @@
                         border-bottom: 1px solid var(--dbmrpp-divider);
                         background: var(--dbmrpp-surface);
                         margin: -8px -14px 10px;
+                        flex-shrink: 0;
                     }
 
                     .dbmrpp-filter-row {
@@ -4196,6 +4269,9 @@
                         padding: 8px 14px;
                         border-bottom: 1px solid var(--dbmrpp-divider);
                         background: var(--dbmrpp-surface);
+                        flex-shrink: 0;
+                        max-height: 60vh;
+                        overflow-y: auto;
                     }
 
                     .dbmrpp-settings-title {
@@ -4322,12 +4398,12 @@
                     .dbmrpp-tag-remove:hover { opacity: 0.7; }
 
                     /* bleeds to the section edges (padding 10px 14px); tabs' own padding restores the 14px text inset */
-                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin: -10px -14px 8px; padding-right: 12px; background: var(--dbmrpp-surface); border-bottom: 2px solid var(--dbmrpp-divider); }
+                    .dbmrpp-view-tabs { display: flex; align-items: center; gap: 0; margin: -10px -14px 8px; padding-right: 12px; background: var(--dbmrpp-surface); border-bottom: 2px solid var(--dbmrpp-divider); flex-shrink: 0; }
 
                     .dbmrpp-view-tab {
                         background: transparent;
                         border: none;
-                        padding: 5px 14px;
+                        padding: 9px 14px;
                         cursor: pointer;
                         font-size: var(--dbmrpp-fs-sm);
                         font-weight: 600;
@@ -4352,7 +4428,6 @@
                         border: 1px solid var(--dbmrpp-divider);
                         border-radius: 3px;
                         padding: 2px 8px;
-                        margin-bottom: 3px;
                         font-size: var(--dbmrpp-fs-xs);
                         color: var(--dbmrpp-text-muted);
                         cursor: pointer;
@@ -4686,15 +4761,14 @@
 
         const trainProviderSel = root.querySelector('#dbmrpp-setting-traininfo-provider');
         if (trainProviderSel) trainProviderSel.addEventListener('change', e => {
-            uiSettings['traininfo-provider'] = e.target.value === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+            uiSettings['traininfo-provider'] = normalizeTrainProvider(e.target.value);
             rememberUiState();
             reRender();
         });
 
         const routingProviderSel = root.querySelector('#dbmrpp-setting-routing-provider');
         if (routingProviderSel) routingProviderSel.addEventListener('change', e => {
-            const v = e.target.value;
-            uiSettings['routing-provider'] = (v === 'chuuchuu' || v === 'transitous.org') ? v : 'bahn.expert';
+            uiSettings['routing-provider'] = normalizeRoutingProvider(e.target.value);
             rememberUiState();
             reRender();
         });
@@ -4710,6 +4784,7 @@
             const color = (colorSel && ['info','ok','warn','bad'].includes(colorSel.value)) ? colorSel.value : 'info';
             customTagDefs.push({ id: 'custom-' + Date.now(), label, color });
             saveCustomTagDefs();
+            scheduleWebDavSync();
             reRender();
         });
 
@@ -4724,6 +4799,7 @@
                 if (!trimmed) return;
                 def.label = trimmed;
                 saveCustomTagDefs();
+                scheduleWebDavSync();
                 reRender();
             })
         );
@@ -4732,12 +4808,15 @@
             btn.addEventListener('click', () => {
                 const id = btn.getAttribute('data-id');
                 customTagDefs = customTagDefs.filter(d => d.id !== id);
+                customTagTombstones[id] = new Date().toISOString();
                 Object.keys(customTagAssignments).forEach(uuid => {
                     customTagAssignments[uuid] = (customTagAssignments[uuid] || []).filter(tid => tid !== id);
                     if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
                 });
                 saveCustomTagDefs();
+                saveCustomTagTombstones();
                 saveCustomTagAssignments();
+                scheduleWebDavSync();
                 reRender();
             })
         );
@@ -4750,10 +4829,10 @@
             if (!uuid || !tagId) return;
             const assigned = customTagAssignments[uuid] || [];
             const isNowAssigned = !assigned.includes(tagId);
+            // keep [] — a deleted key can't win the sync merge, the empty entry can
             customTagAssignments[uuid] = isNowAssigned
                 ? [...assigned, tagId]
                 : assigned.filter(id => id !== tagId);
-            if (!customTagAssignments[uuid].length) delete customTagAssignments[uuid];
             saveCustomTagAssignments();
             scheduleWebDavSync();
             btn.classList.toggle('active', isNowAssigned);
@@ -4796,7 +4875,7 @@
             webdavConfig.password = passInput ? passInput.value        : webdavConfig.password;
             webdavRemoteCache = { etag: null, text: null };
             saveWebDavConfig();
-            if (webdavConfig.enabled && webdavConfig.url) webdavSync();
+            if (webdavReady()) webdavSync();
         });
 
         const webdavSyncNowBtn = root.querySelector('.dbmrpp-webdav-sync-now');
@@ -4899,7 +4978,7 @@
     }
 
     async function onRouteExtClick(btn, trip) {
-        const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+        const popup = window.open('about:blank', '_blank');
         try {
             await withLoadingIcon(btn, async () => {
                 const url = await getExternalRoutingUrl(trip);
@@ -4908,6 +4987,7 @@
             });
         } catch (err) {
             console.error('[DBMRPP] Routing-Link-Fehler', err);
+            if (popup && !popup.closed) popup.close();
             alert(T.routeError);
         }
     }
@@ -4975,8 +5055,8 @@
         const trainNum = btn.getAttribute('data-train-num');
         const departure = btn.getAttribute('data-departure');
         if (!uuid || !trainNum) return;
-        const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
-        const popup = window.open('about:blank', '_blank', 'noopener,noreferrer');
+        const provider = normalizeTrainProvider(uiSettings['traininfo-provider']);
+        const popup = window.open('about:blank', '_blank');
         try {
             await withLoadingIcon(btn, async () => {
                 const detail = await fetchDetail(uuid);
@@ -4986,18 +5066,14 @@
                 if (provider === 'zugfinder') {
                     url = `https://www.zugfinder.net/de/zug-${encodeURIComponent(letters)}_${encodeURIComponent(trainNum)}`;
                 } else {
-                    const dep = departure ? new Date(departure) : null;
-                    const iso = dep && !isNaN(dep.getTime()) ? dep.toISOString() : null;
-                    const trainId = encodeURIComponent(`${letters} ${trainNum}`);
-                    url = iso
-                        ? `https://bahn.expert/details/${trainId}/${encodeURIComponent(iso)}`
-                        : `https://bahn.expert/details/${trainId}/`;
+                    url = buildTrainBahnExpertUrl(`${letters} ${trainNum}`, departure);
                 }
                 openExternalUrlInNewTab(url, popup);
             });
         } catch (err) {
             console.error('[DBMRPP] Train-Name-Lookup-Fehler', err);
             if (popup && !popup.closed) popup.close();
+            alert(T.trainLinkError);
         }
     }
 
@@ -5016,11 +5092,8 @@
         ta.rows = 2;
         ta.addEventListener('input', () => {
             const val = ta.value;
-            if (val.trim()) {
-                tripNotes[uuid] = val;
-            } else {
-                delete tripNotes[uuid];
-            }
+            // keep '' — a deleted key can't win the sync merge, the empty entry can
+            tripNotes[uuid] = val.trim() ? val : '';
             saveTripNotes();
             scheduleWebDavSync();
             const existingDisplay = tripDiv.querySelector('.dbmrpp-note, .dbmrpp-note-details');
@@ -5272,13 +5345,14 @@
                     ${settingsToggle('dbmrpp-setting-show-routing-button', uiSettings.showRoutingButton, T.settingsShowRoutingButton, { desc: T.settingsShowRoutingButtonDesc })}
                     ${settingsSelect('dbmrpp-setting-routing-provider', T.settingsRoutingLinkProvider, uiSettings.showRoutingButton, uiSettings['routing-provider'], [
                         ['bahn.expert', T.settingsRoutingProviderBahnExpert],
+                        ['bleibzuhause.com', T.settingsRoutingProviderBleibZuHause],
                         ['chuuchuu', T.settingsRoutingProviderChuuchuu],
                         ['transitous.org', T.settingsRoutingProviderTransitous],
                     ])}
                     ${settingsToggle('dbmrpp-setting-train-links', uiSettings.trainLinksEnabled, T.settingsTrainLinksEnabled, { desc: T.settingsTrainLinksDesc })}
                     ${settingsSelect('dbmrpp-setting-traininfo-provider', T.settingsTrainLinkProvider, uiSettings.trainLinksEnabled, uiSettings['traininfo-provider'], [
-                        ['zugfinder', T.settingsTrainProviderZugfinder],
                         ['bahn.expert', T.settingsTrainProviderBahnExpert],
+                        ['zugfinder', T.settingsTrainProviderZugfinder],
                     ])}
                 </div>
             </details>
@@ -5303,7 +5377,7 @@
                     ${settingsInput('dbmrpp-webdav-password', esc(T.settingsWebDavPassword), webdavConfig.password, webdavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
                     <div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-settings-action dbmrpp-webdav-save">${esc(T.settingsWebDavSave)}</button>
-                        <button class="dbmrpp-settings-action dbmrpp-webdav-sync-now"${webdavConfig.enabled && webdavConfig.url ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
+                        <button class="dbmrpp-settings-action dbmrpp-webdav-sync-now"${webdavReady() ? '' : ' disabled'}>${esc(T.settingsWebDavSyncNow)}</button>
                     </div>
                     <div id="dbmrpp-webdav-status" class="dbmrpp-settings-status">${esc(webdavSyncStatusText())}</div>
                     <hr class="dbmrpp-settings-hr">
@@ -5433,7 +5507,9 @@
         <div class="dbmrpp-section">
             ${buildViewTabs(`<span class="dbmrpp-view-count">${count}</span>`, changeCount)}
             ${filterBarHtml}
-            ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
+            <div class="dbmrpp-scroll-area">
+                ${filtered.map(renderTripLine).join('') || `<em>${empty}</em>`}
+            </div>
         </div>`;
     }
 
@@ -5449,8 +5525,10 @@
             return `
         <div class="dbmrpp-section">
             ${buildViewTabs()}
-            <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
-            ${noChangesLine || `<div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>`}
+            <div class="dbmrpp-scroll-area">
+                <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
+                ${noChangesLine || `<div class="dbmrpp-changes-none">${T.changeLogEmpty}</div>`}
+            </div>
         </div>`;
         }
         const groups = [];
@@ -5467,13 +5545,15 @@
         return `
         <div class="dbmrpp-section">
             ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
-            <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
-            ${noChangesLine}
-            ${groups.map(g => `
-            <div${Date.parse(g.detectedAt) > newCutoff ? ' class="dbmrpp-changes-new"' : ''}>
-                <h4>${esc(formatDateTime(g.detectedAt))}</h4>
-                ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}
-            </div>`).join('')}
+            <div class="dbmrpp-scroll-area">
+                <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
+                ${noChangesLine}
+                ${groups.map(g => `
+                <div${Date.parse(g.detectedAt) > newCutoff ? ' class="dbmrpp-changes-new"' : ''}>
+                    <h4>${esc(formatDateTime(g.detectedAt))}</h4>
+                    ${g.entries.map(e => renderChangeLine(e, e.kind === 'entfernt', kindBadge(e.kind))).join('')}
+                </div>`).join('')}
+            </div>
         </div>`;
     }
 
@@ -5689,22 +5769,63 @@
         return new Date(utc2).toISOString().replace('.000Z', 'Z');
     }
 
+    function berlinLocalIsoToOffsetIso(localIso) {
+        const txt = String(localIso || '').trim();
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(txt);
+        if (!m) return '';
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        const h = Number(m[4]);
+        const mi = Number(m[5]);
+        const s = Number(m[6] || 0);
+
+        const guessUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+        const off1 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(guessUtc));
+        const utc1 = guessUtc - off1 * 60000;
+        const off2 = getTimeZoneOffsetMinutes('Europe/Berlin', new Date(utc1));
+
+        const pad = n => String(n).padStart(2, '0');
+        const sign = off2 < 0 ? '-' : '+';
+        const absOff = Math.abs(off2);
+        return `${m[1]}-${m[2]}-${m[3]}T${pad(h)}:${pad(mi)}:${pad(s)}${sign}${pad(Math.floor(absOff / 60))}:${pad(absOff % 60)}`;
+    }
+
     function logRoutingUrlUnavailable(reason, details = {}) {
         try {
             console.warn('[DBMRPP] routing unavailable:', reason, details);
         } catch (_) {}
     }
 
+    function logTrainUrlUnavailable(reason, details = {}) {
+        try {
+            console.warn('[DBMRPP] train link unavailable:', reason, details);
+        } catch (_) {}
+    }
+
+    function normalizeRoutingProvider(v) {
+        return ROUTING_PROVIDERS.includes(v) ? v : 'bahn.expert';
+    }
+
+    function normalizeTrainProvider(v) {
+        if (v === 'bahnexpert') return 'bahn.expert';
+        return TRAIN_PROVIDERS.includes(v) ? v : 'bahn.expert';
+    }
+
+    function tripDiagFields(t) {
+        return {
+            uuid: t.uuid,
+            typ: t.typ,
+            status: t.status,
+            isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+            departure: t.departure
+        };
+    }
+
     function buildBahnExpertUrl(endpoints, t) {
         const utcIso = berlinLocalIsoToUtcIso(t.departure || '');
         if (!utcIso) {
-            logRoutingUrlUnavailable('invalid-departure-time-bahn-expert', {
-                uuid: t.uuid,
-                typ: t.typ,
-                status: t.status,
-                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
-                departure: t.departure
-            });
+            logRoutingUrlUnavailable('invalid-departure-time-bahn-expert', tripDiagFields(t));
             return null;
         }
         return `https://bahn.expert/routing/${encodeURIComponent(endpoints.fromId)}/${encodeURIComponent(endpoints.toId)}/${encodeURIComponent(utcIso)}/`;
@@ -5714,10 +5835,7 @@
         const coords = parseCtxReconCoordinates(routingCtxRecon);
         if (!coords || !coords.from || !coords.to) {
             logRoutingUrlUnavailable('missing-coordinates-transitous', {
-                uuid: t.uuid,
-                typ: t.typ,
-                status: t.status,
-                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                ...tripDiagFields(t),
                 hasCtxRecon: !!routingCtxRecon,
                 parsedStops: parseCtxReconStops(routingCtxRecon || '').length
             });
@@ -5726,13 +5844,7 @@
 
         const utcIso = berlinLocalIsoToUtcIso(t.departure || '');
         if (!utcIso) {
-            logRoutingUrlUnavailable('invalid-departure-time-transitous', {
-                uuid: t.uuid,
-                typ: t.typ,
-                status: t.status,
-                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
-                departure: t.departure
-            });
+            logRoutingUrlUnavailable('invalid-departure-time-transitous', tripDiagFields(t));
             return null;
         }
         // We look for the connection based on the geographical coordinates, which will add some walking at the start. To compensate for that, we set the departure time a few minutes earlier than the actual train departure, so that the correct connection is more likely to be found.
@@ -5751,13 +5863,33 @@
 
     function buildChuuchuuUrl(endpoints, t) {
         const localDateTime = String(t.departure).slice(0, 16);
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(localDateTime)) {
+            logRoutingUrlUnavailable('invalid-departure-time-chuuchuu', tripDiagFields(t));
+            return null;
+        }
         const params = new URLSearchParams();
         params.set('from', endpoints.fromId);
         params.set('to', endpoints.toId);
-        params.set('fromName', encodeURIComponent(endpoints.fromName || ''));
-        params.set('toName', encodeURIComponent(endpoints.toName || ''));
+        params.set('fromName', endpoints.fromName || '');
+        params.set('toName', endpoints.toName || '');
         params.set('date', localDateTime);
         return `https://chuuchuu.com/journeys?${params.toString()}`;
+    }
+
+    function buildBleibZuHauseUrl(endpoints, t) {
+        const offsetIso = berlinLocalIsoToOffsetIso(t.departure || '');
+        if (!offsetIso) {
+            logRoutingUrlUnavailable('invalid-departure-time-bleibzuhause', tripDiagFields(t));
+            return null;
+        }
+        const params = new URLSearchParams();
+        params.set('fromId', endpoints.fromId);
+        params.set('toId', endpoints.toId);
+        if (endpoints.fromName) params.set('from', endpoints.fromName);
+        if (endpoints.toName) params.set('to', endpoints.toName);
+        params.set('when', offsetIso);
+        // URLSearchParams encodes '+' as %2B, matching the offset requirement.
+        return `https://bleibzuhause.com/fahrplan?${params.toString()}`;
     }
 
     async function getExternalRoutingUrl(t) {
@@ -5790,10 +5922,7 @@
         const endpoints = extractRoutingEndpointsFromCtxRecon(routingCtxRecon, t) || { fromId: '', toId: '', fromName: t.from || '', toName: t.to || '' };
         if (!endpoints.fromId || !endpoints.toId) {
             logRoutingUrlUnavailable('missing-routing-endpoints', {
-                uuid: t.uuid,
-                typ: t.typ,
-                status: t.status,
-                isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
+                ...tripDiagFields(t),
                 fromId: endpoints.fromId || null,
                 toId: endpoints.toId || null,
                 hasCtxReconDetail: !!detailCtxRecon,
@@ -5803,11 +5932,10 @@
             return null;
         }
 
-        const provider = (uiSettings['routing-provider'] === 'chuuchuu' || uiSettings['routing-provider'] === 'transitous.org')
-            ? uiSettings['routing-provider']
-            : 'bahn.expert';
+        const provider = normalizeRoutingProvider(uiSettings['routing-provider']);
         if (provider === 'bahn.expert') return buildBahnExpertUrl(endpoints, t);
         if (provider === 'transitous.org') return buildTransitousUrl(endpoints, routingCtxRecon, t);
+        if (provider === 'bleibzuhause.com') return buildBleibZuHauseUrl(endpoints, t);
         return buildChuuchuuUrl(endpoints, t);
     }
 
@@ -5815,6 +5943,7 @@
         if (!url) return false;
         if (popupRef && !popupRef.closed) {
             try {
+                popupRef.opener = null;
                 popupRef.location.replace(url);
                 return true;
             } catch (err) {
@@ -5867,9 +5996,20 @@
         return null;
     }
 
+    function buildTrainBahnExpertUrl(trainId, departureLocalIso) {
+        const encodedId = encodeURIComponent(trainId);
+        if (!departureLocalIso) return `https://bahn.expert/details/${encodedId}/`;
+        const utcIso = berlinLocalIsoToUtcIso(departureLocalIso);
+        if (!utcIso) {
+            logTrainUrlUnavailable('invalid-departure-time-train-bahn-expert', { trainId, departureLocalIso });
+            return `https://bahn.expert/details/${encodedId}/`;
+        }
+        return `https://bahn.expert/details/${encodedId}/${encodeURIComponent(utcIso)}`;
+    }
+
     function getTrainExternalUrl(trainName, t) {
         if (!uiSettings.trainLinksEnabled) return null;
-        const provider = uiSettings['traininfo-provider'] === 'bahn.expert' ? 'bahn.expert' : 'zugfinder';
+        const provider = normalizeTrainProvider(uiSettings['traininfo-provider']);
 
         if (provider === 'zugfinder') {
             if (isNumericOnlyTrainName(trainName)) return null;
@@ -5877,11 +6017,16 @@
             return `https://www.zugfinder.net/de/zug-${encodeURIComponent(slug)}`;
         }
 
-        if (!t || !t.departure) return null;
-        const dep = new Date(t.departure);
-        if (isNaN(dep.getTime())) return null;
-        const iso = dep.toISOString();
-        return `https://bahn.expert/details/${encodeURIComponent(String(trainName).trim())}/${encodeURIComponent(iso)}`;
+        if (!t || !t.departure) {
+            logTrainUrlUnavailable('missing-departure-bahn-expert', t ? tripDiagFields(t) : { trainName });
+            return null;
+        }
+        const utcIso = berlinLocalIsoToUtcIso(t.departure);
+        if (!utcIso) {
+            logTrainUrlUnavailable('invalid-departure-time-bahn-expert', tripDiagFields(t));
+            return null;
+        }
+        return buildTrainBahnExpertUrl(String(trainName).trim(), t.departure);
     }
 
     function renderTrainList(t, linkContext) {

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
 ---
+## [0.13.0] - "Warten auf ein verspätetes Schiff"
+### Added
+- **bleibzuhause.com routing provider** - additional option for the external routing link, alongside bahn.expert/chuuchuu/transitous.org
+
+### Changed
+- **taller view-tab row** - more vertical breathing room on "Bevorstehend"/"Änderungen"/"Vergangen"
+- **fixed panel header/tabs/filter row** - only the trip list (or Änderungen log) scrolls now, instead of the whole panel
+
+### Fixed
+- **custom tag and trip notes deletion sync**
+- **chuuchuu routing links with special characters in station names** - names were double-encoded, breaking any station with a space or other reserved character
+- **train link timestamps ignored Berlin time**
+- **"Leeren" button misaligned in Änderungen tab** - stray margin kept it off-center in the tab row
+
+
+---
 ## [0.12.0] - "Defektes Stellwerk"
 
 ### Added
