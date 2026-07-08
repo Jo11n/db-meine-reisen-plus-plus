@@ -16,7 +16,6 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **custom tag and trip notes deletion sync**
 - **chuuchuu routing links with special characters in station names** - names were double-encoded, breaking any station with a space or other reserved character
 - **train link timestamps ignored Berlin time**
-- **"Leeren" button misaligned in Änderungen tab** - stray margin kept it off-center in the tab row
 
 
 ---

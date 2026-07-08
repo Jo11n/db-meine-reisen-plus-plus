@@ -656,6 +656,9 @@
         return IS_INT ? en : de;
     })();
 
+    // Header title with the trailing "++" stripped for display; a logo icon replaces it visually.
+    const TITLE_BASE = T.title.replace(/\+\+$/, '');
+
     // =========================================================
     // 3) Module-level state
     // =========================================================
@@ -3935,7 +3938,7 @@
             injectStyles();
             root = document.createElement('div');
             root.id = 'dbmrpp-root';
-            root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap">${esc(T.title)} <a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
+            root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${esc(TITLE_BASE)}${dbLogoSvg('dbmrpp-title-icon')}</span><a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
             document.body.appendChild(root);
             const stubClose = root.querySelector('button');
             if (stubClose) stubClose.addEventListener('click', hidePanel);
@@ -3957,6 +3960,18 @@
 
     function togglePanel() { if (panelVisible) hidePanel(); else showPanel(); }
 
+    // Shared logo glyph (white paths, transparent bg); `cls` selects CSS sizing —
+    // `.dbmrpp-fab-icon` for the FAB, `.dbmrpp-title-icon` for the panel header.
+    function dbLogoSvg(cls) {
+        return `<svg class="${cls}" aria-hidden="true" viewBox="26 183 355 160" fill="#fff">`
+            + '<path d="M274 248l-3 30h60c0 0 55 1 49-9c-5-7-29-20-39-21z"/>'
+            + '<rect x="-80" y="-12" width="160" height="30" transform="matrix(1,0,-0.364,1,113,260)"/>'
+            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,114,263)"/>'
+            + '<rect x="-54" y="-12" width="108" height="30" transform="matrix(1,0,-0.364,1,262,260)"/>'
+            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,285,263)"/>'
+            + '</svg>';
+    }
+
     function injectFab() {
         if (document.getElementById('dbmrpp-fab')) return;
         injectStyles();
@@ -3965,13 +3980,7 @@
         fab.type = 'button';
         fab.title = T.title;
         // white glyphs from icon.svg; button background supplies the DB red
-        fab.innerHTML = '<svg class="dbmrpp-fab-icon" aria-hidden="true" viewBox="26 183 355 160" fill="#fff">'
-            + '<path d="M274 248l-3 30h60c0 0 55 1 49-9c-5-7-29-20-39-21z"/>'
-            + '<rect x="-80" y="-12" width="160" height="30" transform="matrix(1,0,-0.364,1,113,260)"/>'
-            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,114,263)"/>'
-            + '<rect x="-54" y="-12" width="108" height="30" transform="matrix(1,0,-0.364,1,262,260)"/>'
-            + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,285,263)"/>'
-            + '</svg>';
+        fab.innerHTML = dbLogoSvg('dbmrpp-fab-icon');
         fab.addEventListener('click', (ev) => {
             dbLog('FAB click');
             ev.preventDefault();
@@ -4042,7 +4051,7 @@
                         position: fixed;
                         top: 10px;
                         right: 10px;
-                        width: min(400px, calc(100vw - 20px));
+                        width: min(450px, calc(100vw - 20px));
                         max-height: min(88vh, calc(100dvh - 20px));
                         display: flex;
                         flex-direction: column;
@@ -4052,9 +4061,16 @@
                         border-radius: 8px;
                         box-shadow: 0 4px 24px rgba(0,0,0,.18);
                         z-index: 99999;
-                        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+                        font-family: system-ui, -apple-system, "Segoe UI", sans-serif !important;
                         font-size: var(--dbmrpp-fs-md);
                         color: var(--dbmrpp-text);
+                    }
+
+                    /* Host page rules that target tags directly (button, input, h2, ...) beat an
+                       inherited font-family regardless of !important, since inheritance carries
+                       no priority of its own — force every descendant back to the container's font. */
+                    #dbmrpp-root * {
+                        font-family: inherit !important;
                     }
 
                     #dbmrpp-root h2 {
@@ -4062,7 +4078,7 @@
                         padding: 10px 14px;
                         background: var(--dbmrpp-accent);
                         color: #fff;
-                        font-size: var(--dbmrpp-fs-lg);
+                        font-size: calc(var(--dbmrpp-fs-lg) + 2px);
                         font-weight: 600;
                         display: flex;
                         flex-direction: column;
@@ -4090,6 +4106,22 @@
                         align-items: baseline;
                         gap: 8px;
                         flex-wrap: wrap;
+                    }
+
+                    .dbmrpp-title-text {
+                        text-transform: uppercase;
+                    }
+
+                    /* Normal inline flow, not a flex item: a replaced element's default
+                       vertical-align is "baseline", which sits its bottom edge exactly on
+                       the text baseline — flush with the bottom of the all-caps title. Sizing
+                       in em keeps it flush with the top (cap-height) automatically if the
+                       header's font-size ever changes, no px retuning needed. */
+                    .dbmrpp-title-icon {
+                        height: 0.75em;
+                        width: auto;
+                        display: inline-block;
+                        vertical-align: baseline;
                     }
 
                     .dbmrpp-version-link {
@@ -4130,7 +4162,7 @@
                        #dbmrpp-root's flex column and only .dbmrpp-scroll-area scrolls. */
                     #dbmrpp-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
                     .dbmrpp-section { padding: 10px 14px; border-bottom: 1px solid var(--dbmrpp-divider); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-                    .dbmrpp-scroll-area { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+                    .dbmrpp-scroll-area { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
                     .dbmrpp-changes-new { background: #fff5f5; border-radius: 4px; padding: 2px 8px 6px; margin: 0 -8px; }
                     .dbmrpp-changes-none, .dbmrpp-changes-scope { color: var(--dbmrpp-text-muted); font-size: var(--dbmrpp-fs-xs); }
                     .dbmrpp-changes-scope { margin: 2px 0 6px; }
@@ -5301,7 +5333,7 @@
         return `
         <h2>
                     <span class="dbmrpp-header-top">
-                        <span class="dbmrpp-title-wrap"><span>${T.title}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a>${dataIsStale ? `<span class="dbmrpp-stale-hint" title="${T.ttStaleHint}${staleCachedAt ? ` (${T.staleAsOf} ${new Date(staleCachedAt).toLocaleString()})` : ''}">⏳ ${T.staleHint}</span>` : ''}</span>
+                        <span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${TITLE_BASE}${dbLogoSvg('dbmrpp-title-icon')}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a>${dataIsStale ? `<span class="dbmrpp-stale-hint" title="${T.ttStaleHint}${staleCachedAt ? ` (${T.staleAsOf} ${new Date(staleCachedAt).toLocaleString()})` : ''}">⏳ ${T.staleHint}</span>` : ''}</span>
                         <button class="dbmrpp-close" title="${T.ttClose}">×</button>
                     </span>
                     <span class="dbmrpp-header-actions">
