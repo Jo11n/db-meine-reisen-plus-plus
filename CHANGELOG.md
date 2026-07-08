@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.  
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
+
+---
+## [0.13.1]
+
+### Fixed
+- **preserved realtime/train/seat data now reaches the "Bevorstehend" tab** - once a stop's time passes, the API blanks its rt/track/train/seat info even while the trip is still live; the cached last-known value is now merged back onto the live trip, not just the past-trip cache
+- **"Vergangen" cache section going stale after a background webdav sync** - a mid-session sync could pull richer trip history from another device without refreshing the already-built past-trip list, so the tab kept showing pre-sync data until the next full reload
+
 ---
 ## [0.13.0] - "Warten auf ein verspätetes Schiff"
 ### Added

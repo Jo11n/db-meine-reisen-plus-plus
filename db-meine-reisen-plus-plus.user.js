@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.13.0
+// @version      0.13.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.13.0';
+    const SCRIPT_VERSION  = '0.13.1';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -1701,12 +1701,15 @@
         saveTripHistory();
     }
 
-    // Keeps ⚠-fetched notifications alive across refreshes (bulk carries none);
-    // the entry's sticky ⚠ flag feeds back into the live trip. Runs before the upsert.
+    // Keeps ⚠-fetched notifications and API-blanked rt/track/zuege/seats data
+    // alive on the live trip too — the bulk feed erases both once a stop's time
+    // has passed, even while the reisekette itself is still "bevorstehend".
+    // Runs before the upsert.
     function adoptCachedNotifications(t) {
         if (!t || !t.fromReiseketten) return;
         const entry = findTripHistoryEntry(t);
         if (!entry) return;
+        preservePastData(t, entry);
         if (entry.relevanteAbweichung && entry.departure === t.departure) t.relevanteAbweichung = true;
         if (!t.relevanteAbweichung) return;
         if (Array.isArray(t.notifications) && t.notifications.length) return;
@@ -3610,7 +3613,7 @@
             reRenderSyncStatus();
             // full re-render only when the merge pulled remote data in; a
             // push-only sync must not rebuild the DOM mid-interaction
-            if (pulledChanges) reRender();
+            if (pulledChanges) { pastTrips = null; reRender(); }
         }
     }
 
