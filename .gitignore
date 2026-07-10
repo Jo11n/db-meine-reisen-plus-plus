@@ -3,6 +3,7 @@ IDEAS.md
 API.md
 *.log
 memory/
+docs/
 
 # Environment
 .*/

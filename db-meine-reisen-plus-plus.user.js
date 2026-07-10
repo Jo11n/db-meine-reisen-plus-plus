@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.13.1
+// @version      0.13.2
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.13.1';
+    const SCRIPT_VERSION  = '0.13.2';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -57,6 +57,7 @@
     const ROUTING_PROVIDERS = ['bahn.expert', 'chuuchuu', 'transitous.org', 'bleibzuhause.com'];
     const TRAIN_PROVIDERS = ['bahn.expert', 'zugfinder'];
     const DEBUG_LOG_MAX_ENTRIES = 500;
+    const UNMAPPED_ENUM_KEY     = 'dbmrpp.unmappedEnums.v1';
     const RENDER_CACHE_KEY      = 'dbmrpp.renderCache.v3';
     const CHANGE_LOG_KEY         = 'dbmrpp.changeLog.v1';
     const CHANGE_LOG_CLEARED_AT_KEY = 'dbmrpp.changeLogClearedAt.v1';
@@ -142,6 +143,9 @@
             settingsDebugLogCopy:       'Copy log',
             settingsDebugLogClear:      'Clear log',
             settingsDebugLogEntries:    n => `${n} entr${n === 1 ? 'y' : 'ies'} stored`,
+            settingsUnmappedEnumCopy:    'Copy unmapped values',
+            settingsUnmappedEnumClear:   'Clear unmapped values',
+            settingsUnmappedEnumEntries: n => `${n} unmapped enum value${n === 1 ? '' : 's'} seen`,
             settingsUsePastCacheLabel:  'Enhance past view from cache 🗄️',
             settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
             settingsAutoDetailLabel:    'Auto-load details during disruptions ⚠️',
@@ -273,7 +277,6 @@
             diffValues: {
                 status: {
                     FAHRBAR:                          'OK',
-                    ABGESCHLOSSEN:                    'Completed',
                     NICHT_REKONSTRUIERBAR:            'Not reconstructable',
                     GEBROCHEN:                        'Connection broken',
                     VORLAEUFIG_NICHT_REKONSTRUIERBAR: 'Connection is being replanned'
@@ -293,7 +296,8 @@
                     TEILWEISE_STORNIERT: 'Partially cancelled'
                 },
                 auftragStatus: {
-                    ABGESCHLOSSEN: 'Completed'
+                    ABGESCHLOSSEN: 'Completed',
+                    STORNIERT:     'Cancelled'
                 }
             },
             settingsGroupSync:          'Sync',
@@ -342,7 +346,7 @@
             alertResetConfirm:   'Delete ALL local script data — trip cache, tracked changes, tags, notes, settings and WebDAV/CalDAV credentials? Credentials are not part of the standard export. A WebDAV backup on the server is kept. Cannot be undone.',
             alertImportCredsConfirm: 'The file contains WebDAV/CalDAV credentials. Apply them?',
             alertChangeLogClearConfirm: 'Delete all collected changes? Cannot be undone.',
-            alertDeleteCachedTripConfirm: 'Delete cached details for this trip? Only affects local script cache, not the website data. Cannot be undone.',
+            alertDeleteCachedTripConfirm: 'Delete cached details for this trip? Only affects script cache, not the website data. Cannot be undone.',
             alertImportMergeConfirm: 'Import file and merge with local data (newest wins)?',
             alertImportInvalid:  'Invalid import file. Expected a JSON export of the script data.',
             alertImportError:    'Import failed — see console.',
@@ -376,7 +380,7 @@
             ttReload:          'Neu laden',
             ttIcsBulk:         'Alle sichtbaren Reisen als ICS herunterladen',
             ttCsv:             'Alle sichtbaren Reisen als CSV herunterladen',
-            ttReset:           'Löscht alle lokal gespeicherten Skript-Daten',
+            ttReset:           'Löscht alle gespeicherten Skript-Daten',
             ttSettings:        'Einstellungen',
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
@@ -425,6 +429,9 @@
             settingsDebugLogCopy:       'Log kopieren',
             settingsDebugLogClear:      'Log löschen',
             settingsDebugLogEntries:    n => `${n} Eintr${n === 1 ? 'ag' : 'äge'} gespeichert`,
+            settingsUnmappedEnumCopy:    'Unbekannte Werte kopieren',
+            settingsUnmappedEnumClear:   'Unbekannte Werte löschen',
+            settingsUnmappedEnumEntries: n => `${n} unbekannte${n === 1 ? 'r' : ''} Enum-Wert${n === 1 ? '' : 'e'} gesehen`,
             settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern 🗄️',
             settingsUsePastCacheDesc:   'Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
             settingsAutoDetailLabel:    'Bei Störung Details automatisch laden ⚠️',
@@ -554,7 +561,6 @@
             diffValues: {
                 status: {
                     FAHRBAR:                          'Fahrbar',
-                    ABGESCHLOSSEN:                    'Abgeschlossen',
                     NICHT_REKONSTRUIERBAR:            'Nicht rekonstruierbar',
                     GEBROCHEN:                        'Verbindung gebrochen',
                     VORLAEUFIG_NICHT_REKONSTRUIERBAR: 'Verbindung wird umgeplant'
@@ -574,7 +580,8 @@
                     TEILWEISE_STORNIERT: 'Teilweise storniert'
                 },
                 auftragStatus: {
-                    ABGESCHLOSSEN: 'Abgeschlossen'
+                    ABGESCHLOSSEN: 'Abgeschlossen',
+                    STORNIERT:     'Storniert'
                 }
             },
             settingsGroupSync:          'Synchronisierung',
@@ -686,8 +693,6 @@
     let dataIsStale     = false; // panel currently shows cached data; a refresh is pending
     let staleCachedAt   = null;  // cachedAt (ms) of the render cache currently on screen
     let rawReisekettenMap = new Map();
-    let tokenSyncTimer  = null;
-    let is401Recovering = false;
     let _debugBuffer    = [];
     let _debugFlushTimer = null;
     let webdavConfig    = loadWebDavConfig();
@@ -877,6 +882,28 @@
         try { localStorage.removeItem(DEBUG_LOG_KEY); } catch (_) {}
     }
 
+    // Deduped, unbounded-by-log-volume record of enum values with no diffValues
+    // label, so a rare sighting can't be pushed out by the 500-entry log ring buffer.
+    // Unlike dbLog, this is always recorded, not gated on uiSettings.debugLogging.
+    function logUnmappedEnum(field, v) {
+        dbLog('unmapped enum value: ' + field + '=' + v);
+        try {
+            const store = JSON.parse(localStorage.getItem(UNMAPPED_ENUM_KEY) || '{}');
+            const key = field + '=' + v;
+            store[key] = { count: (store[key] && store[key].count || 0) + 1, last: new Date().toISOString() };
+            localStorage.setItem(UNMAPPED_ENUM_KEY, JSON.stringify(store));
+        } catch (_) {}
+    }
+
+    function unmappedEnumCount() {
+        try { return Object.keys(JSON.parse(localStorage.getItem(UNMAPPED_ENUM_KEY) || '{}')).length; }
+        catch (_) { return 0; }
+    }
+
+    function clearUnmappedEnums() {
+        try { localStorage.removeItem(UNMAPPED_ENUM_KEY); } catch (_) {}
+    }
+
     // localStorage (not sessionStorage) so the panel can render instantly on a
     // fresh visit, long before the site's own JS has booted and a token exists.
     // Tagged with kundenprofilId so a cache written by another account is discarded.
@@ -917,8 +944,9 @@
     // =========================================================
     const origFetch = window.fetch.bind(window);
     window.fetch = function (input, init) {
+        let url = '';
+        try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch (_) {}
         try {
-            const url = typeof input === 'string' ? input : (input && input.url) || '';
             captureFromUrl(url);
             let headers;
             if (init && init.headers) headers = init.headers;
@@ -927,7 +955,6 @@
         } catch (_) {}
         const prom = origFetch(input, init);
         try {
-            const url = typeof input === 'string' ? input : (input && input.url) || '';
             if (url.includes('/openid-connect/token')) {
                 return prom.then(res => {
                     try {
@@ -938,17 +965,6 @@
                     return res;
                 });
             }
-            // Handle 401 responses to detect stale tokens
-            return prom.then(res => {
-                if (res.status === 401 && !url.includes('/openid-connect/token')) {
-                    if (!is401Recovering) {
-                        console.log('[DBMRPP] Detected 401 — token may be stale, attempting sync');
-                        is401Recovering = true;
-                        startTokenSync();
-                    }
-                }
-                return res;
-            });
         } catch (_) {}
         return prom;
     };
@@ -957,17 +973,6 @@
     XMLHttpRequest.prototype.open = function (method, url) {
         try { captureFromUrl(url); } catch (_) {}
         return origOpen.apply(this, arguments);
-    };
-
-    const origSetReqHeader = XMLHttpRequest.prototype.setRequestHeader;
-    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
-        try {
-            if (name && name.toLowerCase() === 'authorization'
-                && typeof value === 'string' && value.startsWith('Bearer ')) {
-                rememberToken(value);
-            }
-        } catch (_) {}
-        return origSetReqHeader.apply(this, arguments);
     };
 
     function captureFromUrl(url) {
@@ -979,7 +984,7 @@
             try { localStorage.setItem(KUNDENPROFIL_KEY, kundenprofilId); } catch (_) {}
         }
     }
-     
+
     function captureFromHeaders(headers) {
         if (!headers) return;
         let auth = null;
@@ -996,6 +1001,18 @@
         if (auth && auth.startsWith('Bearer ')) rememberToken(auth);
     }
 
+    // sessionStorage.token is the site's own source of truth for the current
+    // access token — reading it directly is synchronous and doesn't depend on
+    // catching the right fetch/XHR at the right moment.
+    function readSessionToken() {
+        try {
+            const parsed = JSON.parse(sessionStorage.getItem('token'));
+            if (parsed && typeof parsed.accessToken === 'string') {
+                rememberToken('Bearer ' + parsed.accessToken);
+            }
+        } catch (_) {}
+    }
+
     function isTargetPath() {
         return location.pathname.includes('/buchung/reiseuebersicht');
     }
@@ -1003,7 +1020,6 @@
     function rememberToken(t) {
         if (bearerToken === t) return;
         bearerToken = t;
-        is401Recovering = false;
         dbLog('token captured');
         // Only trigger run() when actually on the target page — @match now covers the
         // whole domain so token capture can happen on any bahn.de page.
@@ -1011,16 +1027,6 @@
             alreadyRan = true;
             scheduleRun();
         }
-    }
-
-    // After a 401: give request capture 500ms to deliver a fresh token before
-    // the recovery flag clears.
-    function startTokenSync() {
-        if (tokenSyncTimer !== null) clearTimeout(tokenSyncTimer);
-        tokenSyncTimer = setTimeout(() => {
-            tokenSyncTimer = null;
-            is401Recovering = false;
-        }, 500);
     }
 
     function scheduleRun() {
@@ -1044,11 +1050,6 @@
             clearTimeout(runTimerId);
             runTimerId = null;
         }
-        if (tokenSyncTimer !== null) {
-            clearTimeout(tokenSyncTimer);
-            tokenSyncTimer = null;
-        }
-        is401Recovering = false;
         if (webdavSyncTimer !== null) { clearTimeout(webdavSyncTimer); webdavSyncTimer = null; }
         if (caldavSyncTimer  !== null) { clearTimeout(caldavSyncTimer);  caldavSyncTimer  = null; }
         lastRenderArgs  = null;
@@ -1080,6 +1081,10 @@
 
     function handleNavigation() {
         if (isTargetPath()) {
+            // sessionStorage may already hold a fresher token than our in-memory
+            // copy — e.g. after the tab sat idle on another page long enough for
+            // the in-memory one to expire. Check before deciding whether to run.
+            readSessionToken();
             dbLog('handleNavigation: on-target alreadyRan=' + alreadyRan + ' token=' + !!bearerToken);
             renderFromCacheEarly();
             // Token already captured (SPA nav from another page in same session) — trigger run
@@ -1110,30 +1115,41 @@
     // =========================================================
     // 5) Authenticated fetch wrapper
     // =========================================================
+    // Shared by the initial attempt and the 401 retry so the two can't drift —
+    // the Accept-Language override (RIS/HIM disruption text otherwise follows
+    // the browser's language instead of the site's, only observable on the
+    // German site since int.bahn.de already carries its locale in the path).
+    function buildAuthHeaders(extra) {
+        return Object.assign(
+            { 'Authorization': bearerToken, 'Accept': 'application/json', ...(!IS_INT && { 'Accept-Language': 'de' }) },
+            extra || {}
+        );
+    }
+
     function dbFetch(url, init = {}) {
         const logUrl = url.split('?')[0];
         dbLog('fetch → ' + logUrl);
-        const headers = Object.assign(
-            { 'Authorization': bearerToken, 'Accept': 'application/json', ...(!IS_INT && { 'Accept-Language': 'de' }) },
-            init.headers || {}
-        );
+        const headers = buildAuthHeaders(init.headers);
         return origFetch(url, { ...init, headers, credentials: 'include' }).then(async res => {
             dbLog('fetch ← ' + res.status + ' ' + logUrl);
             // If we get a 401, the website has likely already refreshed its token.
             // Make a safe request to trigger token capture, then retry with updated token.
             if (res.status === 401 && !init._retried) {
                 console.log('[DBMRPP] Got 401 — refreshing token from website state...');
-                // Make a simple request to trigger the website to include/refresh the token
-                try {
-                    await origFetch('/web/api/kundenkonto/v2', { credentials: 'include' });
-                } catch (_) {}
-                // Wait briefly for any captured token to be processed
-                await new Promise(resolve => setTimeout(resolve, 50));
+                // Check the site's own sessionStorage first — it may already have a
+                // fresher token than the one we just tried, no sniffing race involved.
+                readSessionToken();
+                if (bearerToken === headers['Authorization']) {
+                    // Nothing newer in sessionStorage — fall back to nudging the site
+                    // into refreshing and hoping we sniff (or storage picks up) the result.
+                    try {
+                        await origFetch('/web/api/kundenkonto/v2', { credentials: 'include' });
+                    } catch (_) {}
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    readSessionToken();
+                }
                 // Retry with the (hopefully) updated token
-                const retryHeaders = Object.assign(
-                    { 'Authorization': bearerToken, 'Accept': 'application/json' },
-                    init.headers || {}
-                );
+                const retryHeaders = buildAuthHeaders(init.headers);
                 return origFetch(url, { ...init, headers: retryHeaders, credentials: 'include', _retried: true });
             }
             return res;
@@ -4764,6 +4780,35 @@
             if (countEl) countEl.textContent = T.settingsDebugLogEntries(0);
         });
 
+        const unmappedEnumCopyBtn = root.querySelector('.dbmrpp-unmapped-enum-copy');
+        if (unmappedEnumCopyBtn) unmappedEnumCopyBtn.addEventListener('click', () => {
+            const text = localStorage.getItem(UNMAPPED_ENUM_KEY) || '{}';
+            const pretty = JSON.stringify(JSON.parse(text), null, 2);
+            const doFallback = () => {
+                const ta = document.createElement('textarea');
+                ta.value = pretty;
+                ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); } catch(_) {}
+                ta.remove();
+            };
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(pretty).catch(doFallback);
+            } else {
+                doFallback();
+            }
+            const orig = unmappedEnumCopyBtn.textContent;
+            unmappedEnumCopyBtn.textContent = '✓';
+            setTimeout(() => { unmappedEnumCopyBtn.textContent = orig; }, 1500);
+        });
+
+        const unmappedEnumClearBtn = root.querySelector('.dbmrpp-unmapped-enum-clear');
+        if (unmappedEnumClearBtn) unmappedEnumClearBtn.addEventListener('click', () => {
+            clearUnmappedEnums();
+            reRender();
+        });
+
         const showGeoButtonCb = root.querySelector('#dbmrpp-setting-show-geo-button');
         if (showGeoButtonCb) showGeoButtonCb.addEventListener('change', e => {
             uiSettings.showGeoButton = !!e.target.checked;
@@ -5442,6 +5487,11 @@
                         <button class="dbmrpp-debug-log-copy dbmrpp-settings-action">${esc(T.settingsDebugLogCopy)}</button>
                         <button class="dbmrpp-debug-log-clear dbmrpp-settings-action">${esc(T.settingsDebugLogClear)}</button>
                         <span class="dbmrpp-debug-log-count dbmrpp-settings-status">${esc(T.settingsDebugLogEntries(debugLogEntryCount()))}</span>
+                    </div>` : ''}
+                    ${unmappedEnumCount() > 0 ? `<div class="dbmrpp-settings-btn-row">
+                        <button class="dbmrpp-unmapped-enum-copy dbmrpp-settings-action">${esc(T.settingsUnmappedEnumCopy)}</button>
+                        <button class="dbmrpp-unmapped-enum-clear dbmrpp-settings-action">${esc(T.settingsUnmappedEnumClear)}</button>
+                        <span class="dbmrpp-unmapped-enum-count dbmrpp-settings-status">${esc(T.settingsUnmappedEnumEntries(unmappedEnumCount()))}</span>
                     </div>` : ''}
                 </div>
             </details>
@@ -6345,7 +6395,9 @@
         if (v === null || v === undefined || v === '') return '–';
         if (['departure','arrival','departureRt','arrivalRt'].includes(field)) return formatDateTime(v);
         if (typeof v === 'boolean') return v ? (IS_INT ? 'yes' : 'ja') : (IS_INT ? 'no' : 'nein');
-        const mapped = T.diffValues[field] && T.diffValues[field][v];
+        const table = T.diffValues[field];
+        const mapped = table && table[v];
+        if (table && !mapped) logUnmappedEnum(field, v);
         return mapped || String(v);
     }
 

@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.13.2]
+
+### Fixed
+- **token recovery after a 401 was a coin flip** - relied on sniffing a fresh `Authorization` header off some unrelated request within a 500ms window; now reads the token straight from the site's own `sessionStorage` first, which is synchronous and doesn't depend on timing
+
+---
 ## [0.13.1]
 
 ### Fixed
