@@ -5,7 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.13.2]
+## [0.14.0]
+
+### Added
+- **the button is now shown on every bahn.de page while logged in, not just the trip overview** - clicking it elsewhere shows the last cached trip data instead of doing nothing
+
+### Changed
+- **"Open panel on page load" now only auto-opens the panel on the trip overview page** - the button itself already appears everywhere it's supported, so this setting no longer has any effect off `/buchung/reiseuebersicht`; its description was updated to say so
 
 ### Fixed
 - **token recovery after a 401 was a coin flip** - relied on sniffing a fresh `Authorization` header off some unrelated request within a 500ms window; now reads the token straight from the site's own `sessionStorage` first, which is synchronous and doesn't depend on timing

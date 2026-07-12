@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.13.2
+// @version      0.14.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.13.2';
+    const SCRIPT_VERSION  = '0.14.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -104,6 +104,7 @@
             settingsTitle:     'Settings',
             settingsRememberFilter: 'Remember filters',
             settingsOpenOnLoad: 'Open panel on page load',
+            settingsOpenOnLoadDesc: 'Only applies to the trip overview page (bahn.de/buchung/reiseuebersicht). The button itself is always shown elsewhere while logged in.',
             settingsShowJsonButton: 'Show JSON download button {…}',
             settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file.',
             settingsShowGeoButton:  'Show geo export button 🛤️',
@@ -390,6 +391,7 @@
             settingsTitle:     'Einstellungen',
             settingsRememberFilter: 'Filter merken',
             settingsOpenOnLoad: 'Panel beim Laden öffnen',
+            settingsOpenOnLoadDesc: 'Gilt nur für die Reiseübersicht (bahn.de/buchung/reiseuebersicht). Der Button selbst wird bei Anmeldung immer auch auf anderen Seiten angezeigt.',
             settingsShowJsonButton: 'JSON-Download-Button anzeigen {…}',
             settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständigen Bulk-API-Rohantworten als kombinierte JSON-Datei heruntergeladen werden kann.',
             settingsShowGeoButton:  'Geo-Export-Button anzeigen 🛤️',
@@ -1021,6 +1023,7 @@
         if (bearerToken === t) return;
         bearerToken = t;
         dbLog('token captured');
+        injectFab(); // login-gated visibility site-wide; never triggers a fetch on its own
         // Only trigger run() when actually on the target page — @match now covers the
         // whole domain so token capture can happen on any bahn.de page.
         if (!alreadyRan && isTargetPath()) {
@@ -1062,29 +1065,35 @@
         activeView      = 'current';
         const root = document.getElementById('dbmrpp-root');
         if (root) root.remove();
-        const fab = document.getElementById('dbmrpp-fab');
-        if (fab) fab.remove();
+        // FAB stays — it's login-scoped, not page-scoped (see rememberToken()).
+    }
+
+    // Renders the persisted cache (if any) as a stale view. Returns whether it rendered,
+    // so callers can fall back to something else (a stub, or doing nothing) when there's no cache yet.
+    function renderStaleFromCache(label) {
+        const cache = loadRenderCache();
+        if (!cache) return false;
+        dbLog(label + ' (' + cache.trips.length + ' trips)');
+        dataIsStale = true;
+        staleCachedAt = cache.cachedAt;
+        renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit)
+            .catch(err => dbLog(label + ' failed: ' + err.message));
+        return true;
     }
 
     // Panel from the persistent cache at navigation time — token-free, so the
     // FAB exists long before the site's JS boots and run() delivers fresh data.
     function renderFromCacheEarly() {
         if (document.getElementById('dbmrpp-root')) return;
-        const cache = loadRenderCache();
-        if (!cache) return;
-        dbLog('early render from cache (' + cache.trips.length + ' trips)');
-        dataIsStale = true;
-        staleCachedAt = cache.cachedAt;
-        renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit)
-            .catch(err => dbLog('early render failed: ' + err.message));
+        renderStaleFromCache('early render from cache');
     }
 
     function handleNavigation() {
+        // sessionStorage may hold a fresher token than memory (e.g. idle tab). Checked on
+        // every navigation, not just target-page, so the FAB (via rememberToken) appears everywhere.
+        readSessionToken();
+
         if (isTargetPath()) {
-            // sessionStorage may already hold a fresher token than our in-memory
-            // copy — e.g. after the tab sat idle on another page long enough for
-            // the in-memory one to expire. Check before deciding whether to run.
-            readSessionToken();
             dbLog('handleNavigation: on-target alreadyRan=' + alreadyRan + ' token=' + !!bearerToken);
             renderFromCacheEarly();
             // Token already captured (SPA nav from another page in same session) — trigger run
@@ -3953,6 +3962,8 @@
                 reRender(); // recreates root; renderUI will respect panelVisible
                 return;     // renderUI handles display + FAB state
             }
+            // No in-memory render (e.g. FAB clicked off-target) — fall back to the persistent cache.
+            if (renderStaleFromCache('panel: open from cache')) return; // renderUI handles display + FAB state
             // Data still loading — show a stub; renderUI will replace it when ready
             injectStyles();
             root = document.createElement('div');
@@ -5403,7 +5414,7 @@
                 <summary>${T.settingsGroupGeneral}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-remember-filter', uiSettings.rememberFilter, T.settingsRememberFilter)}
-                    ${settingsToggle('dbmrpp-setting-open-on-load', uiSettings.openOnLoad, T.settingsOpenOnLoad)}
+                    ${settingsToggle('dbmrpp-setting-open-on-load', uiSettings.openOnLoad, T.settingsOpenOnLoad, { desc: T.settingsOpenOnLoadDesc })}
                     ${settingsToggle('dbmrpp-setting-show-cancelled-trips', uiSettings.showCancelledTrips, T.settingsShowCancelledTrips, { desc: T.settingsShowCancelledTripsDesc })}
                     ${settingsToggle('dbmrpp-setting-use-past-cache', uiSettings.usePastCache, T.settingsUsePastCacheLabel, { desc: T.settingsUsePastCacheDesc })}
                     ${settingsToggle('dbmrpp-setting-auto-detail', uiSettings.autoLoadDisruptionDetails, T.settingsAutoDetailLabel, { desc: T.settingsAutoDetailDesc })}
