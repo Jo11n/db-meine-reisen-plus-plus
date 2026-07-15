@@ -1092,13 +1092,6 @@
         return true;
     }
 
-    // Panel from the persistent cache at navigation time — token-free, so the
-    // FAB exists long before the site's JS boots and run() delivers fresh data.
-    function renderFromCacheEarly() {
-        if (document.getElementById('dbmrpp-root')) return;
-        renderStaleFromCache('early render from cache');
-    }
-
     function handleNavigation() {
         // sessionStorage may hold a fresher token than memory (e.g. idle tab). Checked on
         // every navigation, not just target-page, so the FAB (via rememberToken) appears everywhere.
@@ -1108,7 +1101,8 @@
             dbLog('handleNavigation: on-target alreadyRan=' + alreadyRan + ' token=' + !!bearerToken);
             resetDetailTitle();
             removeDetailPrintButton();
-            renderFromCacheEarly();
+            // Token-free early render so panel + FAB exist before the site's JS boots
+            if (!document.getElementById('dbmrpp-root')) renderStaleFromCache('early render from cache');
             // Token already captured (SPA nav from another page in same session) — trigger run
             if (!alreadyRan && bearerToken) {
                 alreadyRan = true;
@@ -1140,6 +1134,13 @@
     // Check immediately in case the script loads directly on the target URL
     // (token not captured yet — rememberToken will handle the actual run() trigger)
     handleNavigation();
+
+    // Fresh tab: sessionStorage is empty at document-start and on Firefox the
+    // fetch sniffer never fires — poll until the site has written its token.
+    (function pollSessionToken(attempt = 0) {
+        if (bearerToken || attempt >= 15) return;
+        setTimeout(() => { readSessionToken(); pollSessionToken(attempt + 1); }, 2000);
+    })();
 
     // =========================================================
     // 4b) Detail page: helpful print/PDF filename + print button
@@ -1415,15 +1416,6 @@
         if (runInProgress) return;
         runInProgress = true;
         dbLog('run: start');
-        // Cache-render fallback when renderFromCacheEarly() hasn't fired; never
-        // over an existing panel — that would destroy transient button states (⏳).
-        const cache = document.getElementById('dbmrpp-root') ? null : loadRenderCache();
-        if (cache) {
-            dbLog('run: instant render from cache (' + cache.trips.length + ' trips)');
-            dataIsStale = true;
-            staleCachedAt = cache.cachedAt;
-            try { await renderUI(cache.trips, cache.orphans, cache.changes, cache.lastVisit); } catch (_) {}
-        }
         try {
             // Ensure kundenprofilId is available before fetching auftraege (orders).
             // URL-sniffing may not fire in time (or at all) on int.bahn.de due to
@@ -4140,7 +4132,8 @@
         if (fab) fab.classList.remove('active');
     }
 
-    function togglePanel() { if (panelVisible) hidePanel(); else showPanel(); }
+    // openOnLoad arms panelVisible before any panel exists — open requires a root
+    function togglePanel() { if (panelVisible && document.getElementById('dbmrpp-root')) hidePanel(); else showPanel(); }
 
     // Shared logo glyph (white paths, transparent bg); `cls` selects CSS sizing —
     // `.dbmrpp-fab-icon` for the FAB, `.dbmrpp-title-icon` for the panel header.
