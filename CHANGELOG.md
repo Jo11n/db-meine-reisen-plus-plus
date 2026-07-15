@@ -5,10 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.14.0]
+## [0.14.0] - "Gegenstände auf der Strecke"
 
 ### Added
-- **the button is now shown on every bahn.de page while logged in, not just the trip overview** - clicking it elsewhere shows the last cached trip data instead of doing nothing
+- **the button is now shown on every bahn.de page while logged in, not just the trip overview** - opening the panel elsewhere shows the last cached trip data and pulls a fresh copy from the API in the background
+- **print button on trip detail pages** - prints / saves the page as PDF with a helpful suggested filename (`YYYY-MM-DD_Origin_Destination_Auftragsnummer`); the filename also applies when printing via Ctrl+P or the browser menu
 
 ### Changed
 - **"Open panel on page load" now only auto-opens the panel on the trip overview page** - the button itself already appears everywhere it's supported, so this setting no longer has any effect off `/buchung/reiseuebersicht`; its description was updated to say so

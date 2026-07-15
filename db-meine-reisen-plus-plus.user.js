@@ -98,6 +98,7 @@
             ttSettings:        'Settings',
             ttClose:           'Close',
             ttReleaseLog:      'Open changelog',
+            ttDetailPrint:     'Print / save as PDF (sets a helpful file name)',
             staleHint:         'refreshing…',
             ttStaleHint:       'Showing cached data — current data is being loaded',
             staleAsOf:         'as of',
@@ -385,6 +386,7 @@
             ttSettings:        'Einstellungen',
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
+            ttDetailPrint:     'Drucken / als PDF speichern (setzt einen hilfreichen Dateinamen)',
             staleHint:         'aktualisiere…',
             ttStaleHint:       'Zeigt zwischengespeicherte Daten – aktuelle Daten werden geladen',
             staleAsOf:         'Stand',
@@ -697,6 +699,8 @@
     let rawReisekettenMap = new Map();
     let _debugBuffer    = [];
     let _debugFlushTimer = null;
+    let detailTitleTimerId = null;
+    let detailTitleValue   = null;
     let webdavConfig    = loadWebDavConfig();
     let webdavSyncState = loadWebDavSyncState();
     let webdavSyncTimer = null;
@@ -1019,6 +1023,12 @@
         return location.pathname.includes('/buchung/reiseuebersicht');
     }
 
+    // The trip detail page — reached from a booking or a saved-trip card.
+    // endsWith (not includes) so this doesn't also match /buchung/reiseuebersicht.
+    function isDetailPath() {
+        return location.pathname.endsWith('/buchung/reise');
+    }
+
     function rememberToken(t) {
         if (bearerToken === t) return;
         bearerToken = t;
@@ -1030,6 +1040,7 @@
             alreadyRan = true;
             scheduleRun();
         }
+        if (isDetailPath()) scheduleDetailTitle();
     }
 
     function scheduleRun() {
@@ -1095,6 +1106,8 @@
 
         if (isTargetPath()) {
             dbLog('handleNavigation: on-target alreadyRan=' + alreadyRan + ' token=' + !!bearerToken);
+            resetDetailTitle();
+            removeDetailPrintButton();
             renderFromCacheEarly();
             // Token already captured (SPA nav from another page in same session) — trigger run
             if (!alreadyRan && bearerToken) {
@@ -1107,6 +1120,13 @@
             // Navigated away — reset so the script re-runs on next visit to the target
             alreadyRan = false;
             cleanup();
+            if (isDetailPath()) {
+                injectDetailPrintButton();
+                scheduleDetailTitle();
+            } else {
+                resetDetailTitle();
+                removeDetailPrintButton();
+            }
         }
     }
 
@@ -1120,6 +1140,132 @@
     // Check immediately in case the script loads directly on the target URL
     // (token not captured yet — rememberToken will handle the actual run() trigger)
     handleNavigation();
+
+    // =========================================================
+    // 4b) Detail page: helpful print/PDF filename + print button
+    // =========================================================
+    // document.title only matters as the print dialog's suggested filename; the
+    // dialog snapshots it when it opens, so it's set on beforeprint (also covers
+    // Ctrl+P). Prefetched at load — beforeprint is sync and can't await the API.
+    function resetDetailTitle() {
+        detailTitleValue = null;
+        if (detailTitleTimerId !== null) { clearTimeout(detailTitleTimerId); detailTitleTimerId = null; }
+    }
+
+    window.addEventListener('beforeprint', () => {
+        if (detailTitleValue) document.title = detailTitleValue;
+    });
+
+    // Keeps brackets/punctuation out of the filename but leaves umlauts intact.
+    function sanitizeTitlePart(s) {
+        return String(s || '')
+            .replace(/[[\](){}<>]/g, '')
+            .replace(/[.,;:!?"'`´*/\\|~^]/g, '')
+            .trim()
+            .replace(/\s+/g, '_');
+    }
+
+    // YYYY-MM-DD_Origin_Destination_Auftragsnummer
+    function buildDetailPageTitle(info) {
+        if (!info) return '';
+        const date  = info.departure ? info.departure.slice(0, 10) : '';
+        const from  = sanitizeTitlePart(info.from);
+        const to    = sanitizeTitlePart(info.to);
+        const order = info.auftragsnummer ? String(info.auftragsnummer).replace(/[^0-9A-Za-z]+/g, '') : '';
+        return [date, from, to, order].filter(Boolean).join('_');
+    }
+
+    // Segment shape shared by reisekette detail (trips[0].verbindungsAbschnitte)
+    // and auftrag detail (gesamtangebot.<richtung>.verbindung.verbindungsAbschnitte):
+    // plain-string abfahrtsOrt/ankunftsOrt, abfahrt.sollzeit (see fixtures/).
+    function tripInfoFromSegments(segs) {
+        if (!Array.isArray(segs) || !segs.length) return null;
+        const first = segs[0];
+        return {
+            from: first.abfahrtsOrt || null,
+            to: segs[segs.length - 1].ankunftsOrt || null,
+            departure: (first.abfahrt && first.abfahrt.sollzeit) || null
+        };
+    }
+
+    function extractAuftragTripInfoForTitle(auftrag) {
+        if (!auftrag) return null;
+        // findDeepKey because the segments' gesamtangebot.<richtung> key varies
+        const info = tripInfoFromSegments(findDeepKey(auftrag, 'verbindungsAbschnitte'));
+        if (info) return info;
+        // Route-less orders (e.g. day tickets) have no segments; haltIntervall
+        // is the only from/to source then, and there is no departure date.
+        const halt = Array.isArray(auftrag.dokumentAnzeige) && auftrag.dokumentAnzeige[0] && auftrag.dokumentAnzeige[0].haltIntervall;
+        return halt ? { from: halt.abfahrtHalt || null, to: halt.ankunftHalt || null, departure: null } : null;
+    }
+
+    function scheduleDetailTitle() {
+        if (!isDetailPath()) return;
+        if (detailTitleTimerId !== null) clearTimeout(detailTitleTimerId);
+        detailTitleTimerId = setTimeout(() => {
+            detailTitleTimerId = null;
+            applyDetailTitle().catch(err => dbLog('detail title error: ' + err.message));
+        }, RUN_DELAY_MS);
+    }
+
+    async function applyDetailTitle() {
+        // Firefox never sniffs the token (Violentmonkey content-mode under
+        // bahn.de's CSP) — sessionStorage is the only source there, and a fresh
+        // tab's navigation-time read ran before the site wrote it.
+        if (!bearerToken) readSessionToken();
+        if (!isDetailPath() || !bearerToken) return;
+        const params = new URLSearchParams(location.search);
+        const auftragsnummer = params.get('auftragsnummer');
+        const uuid = params.get('reisekettenuuid');
+        let info = null;
+        try {
+            // Reisekette first; its trips is [] for NICHT_REKONSTRUIERBAR
+            // journeys, where the auftrag endpoint still has the route.
+            if (uuid) info = tripInfoFromSegments(getDetailTrip(await fetchDetail(uuid)).verbindungsAbschnitte);
+            if (!info && auftragsnummer) info = extractAuftragTripInfoForTitle(await fetchAuftragDetail(auftragsnummer));
+        } catch (err) {
+            dbLog('detail title: fetch failed ' + (err && err.message));
+        }
+        if (!isDetailPath()) return; // navigated away while awaiting
+        if (info) info.auftragsnummer = auftragsnummer;
+        detailTitleValue = buildDetailPageTitle(info) || null;
+        dbLog('detail title: ' + (detailTitleValue || '(none)'));
+    }
+
+    function injectDetailPrintButton() {
+        if (!document.body) {
+            new MutationObserver((_, obs) => {
+                if (document.body) { obs.disconnect(); injectDetailPrintButton(); }
+            }).observe(document.documentElement, { childList: true });
+            return;
+        }
+        if (document.getElementById('dbmrpp-print-btn')) return;
+        injectStyles();
+        const btn = document.createElement('button');
+        btn.id = 'dbmrpp-print-btn';
+        btn.type = 'button';
+        btn.title = T.ttDetailPrint;
+        btn.textContent = '🖨️';
+        btn.addEventListener('click', async (ev) => {
+            dbLog('detail print click');
+            ev.preventDefault();
+            ev.stopPropagation();
+            // Prefetch may not have landed yet (late token); beforeprint sets the title
+            if (!detailTitleValue) {
+                try { await applyDetailTitle(); } catch (err) { dbLog('print: title fetch failed ' + (err && err.message)); }
+            }
+            window.print();
+        });
+        ['touchstart', 'touchend', 'touchcancel', 'pointerdown', 'pointerup'].forEach(type => {
+            btn.addEventListener(type, ev => ev.stopPropagation(), { passive: true });
+        });
+        document.body.appendChild(btn);
+    }
+
+    function removeDetailPrintButton() {
+        const btn = document.getElementById('dbmrpp-print-btn');
+        if (btn) btn.remove();
+    }
 
     // =========================================================
     // 5) Authenticated fetch wrapper
@@ -1262,8 +1408,10 @@
     // =========================================================
     // 6) Data fetching
     // =========================================================
-    async function run() {
-        if (!isTargetPath()) return;
+    // force: fetch even off the reiseuebersicht page. The bulk API only needs a valid
+    // token, not the target path; isTargetPath just gates the automatic on-load run.
+    async function run({ force = false } = {}) {
+        if (!isTargetPath() && !force) return;
         if (runInProgress) return;
         runInProgress = true;
         dbLog('run: start');
@@ -3291,7 +3439,7 @@
             loadFilterStateIfEnabled();
 
             alert(T.alertImportSuccess);
-            run();
+            run({ force: true });
         } catch (err) {
             console.error('[DBMRPP] Backup-Import-Fehler', err);
             alert(T.alertImportError);
@@ -3960,20 +4108,24 @@
         if (!root) {
             if (lastRenderArgs) {
                 reRender(); // recreates root; renderUI will respect panelVisible
-                return;     // renderUI handles display + FAB state
+            } else if (!renderStaleFromCache('panel: open from cache')) {
+                // No in-memory render and no cache — show a stub; renderUI replaces it when ready
+                injectStyles();
+                root = document.createElement('div');
+                root.id = 'dbmrpp-root';
+                root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${esc(TITLE_BASE)}${dbLogoSvg('dbmrpp-title-icon')}</span><a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
+                document.body.appendChild(root);
+                const stubClose = root.querySelector('button');
+                if (stubClose) stubClose.addEventListener('click', hidePanel);
             }
-            // No in-memory render (e.g. FAB clicked off-target) — fall back to the persistent cache.
-            if (renderStaleFromCache('panel: open from cache')) return; // renderUI handles display + FAB state
-            // Data still loading — show a stub; renderUI will replace it when ready
-            injectStyles();
-            root = document.createElement('div');
-            root.id = 'dbmrpp-root';
-            root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${esc(TITLE_BASE)}${dbLogoSvg('dbmrpp-title-icon')}</span><a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
-            document.body.appendChild(root);
-            const stubClose = root.querySelector('button');
-            if (stubClose) stubClose.addEventListener('click', hidePanel);
         } else {
             root.style.display = '';
+        }
+        // Off-target the panel opens on cached/stale data; refresh in place unless fresh
+        // in-memory data is already showing. On-target the on-load run() owns this.
+        if (!isTargetPath() && bearerToken && !runInProgress && (dataIsStale || !lastRenderArgs)) {
+            dbLog('panel: off-target refresh');
+            run({ force: true }).catch(err => dbLog('off-target refresh error: ' + err.message));
         }
         const fab = document.getElementById('dbmrpp-fab');
         if (fab) fab.classList.add('active');
@@ -4003,6 +4155,14 @@
     }
 
     function injectFab() {
+        // rememberToken() can fire this at document-start, before body exists. Defer
+        // instead of throwing — off-target nothing else re-injects the FAB.
+        if (!document.body) {
+            new MutationObserver((_, obs) => {
+                if (document.body) { obs.disconnect(); injectFab(); }
+            }).observe(document.documentElement, { childList: true });
+            return;
+        }
         if (document.getElementById('dbmrpp-fab')) return;
         injectStyles();
         const fab = document.createElement('button');
@@ -4076,6 +4236,31 @@
                     #dbmrpp-fab:hover { background: var(--dbmrpp-accent-hover); transform: scale(1.08); }
                     #dbmrpp-fab.active { background: var(--dbmrpp-accent-active); }
                     .dbmrpp-fab-icon { height: 30px; width: auto; display: block; }
+
+                    #dbmrpp-print-btn {
+                        position: fixed;
+                        bottom: 84px;
+                        right: 24px;
+                        width: 52px;
+                        height: 52px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        border: none;
+                        border-radius: 12px;
+                        background: var(--dbmrpp-accent);
+                        color: #fff;
+                        font-size: 22px;
+                        cursor: pointer;
+                        box-shadow: 0 2px 10px rgba(0,0,0,.3);
+                        z-index: 99998;
+                        transition: background .15s, transform .15s;
+                    }
+                    #dbmrpp-print-btn:hover { background: var(--dbmrpp-accent-hover); transform: scale(1.08); }
+
+                    @media print {
+                        #dbmrpp-fab, #dbmrpp-print-btn, #dbmrpp-root { display: none !important; }
+                    }
 
                     #dbmrpp-root {
                         position: fixed;
@@ -4511,6 +4696,7 @@
 
                         #dbmrpp-fab { bottom: 16px; right: 16px; width: 80px; height: 46px; border-radius: 10px; }
                         .dbmrpp-fab-icon { height: 26px; }
+                        #dbmrpp-print-btn { bottom: 68px; right: 16px; width: 46px; height: 46px; border-radius: 10px; font-size: 18px; }
                         .dbmrpp-action-icon { font-size: 16px; width: 1.35em; height: 1.35em; opacity: 0.8; }
                         .dbmrpp-select { min-width: 100px; }
                         .dbmrpp-filter-row-top .dbmrpp-select { min-width: 90px; }
@@ -5261,7 +5447,7 @@
             );
         });
         root.querySelector('.dbmrpp-export').addEventListener('click', () => exportCsv(getFilteredPool()));
-        root.querySelector('.dbmrpp-refresh').addEventListener('click', ev => withLoadingIcon(ev.currentTarget, () => run()));
+        root.querySelector('.dbmrpp-refresh').addEventListener('click', ev => withLoadingIcon(ev.currentTarget, () => run({ force: true })));
 
         root.addEventListener('click', async (ev) => {
             const findTrip = uuid =>
