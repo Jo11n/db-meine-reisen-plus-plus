@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.14.0
+// @version      0.15.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.14.0';
+    const SCRIPT_VERSION  = '0.15.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -54,7 +54,7 @@
     const RUN_DELAY_MS     = 800;
     const SNAPSHOT_COOLDOWN_MS = 30 * 60 * 1000; // freeze baseline for 30 min against quick reloads
     const DEBUG_LOG_KEY         = 'dbmrpp.debugLog.v1';
-    const ROUTING_PROVIDERS = ['bahn.expert', 'chuuchuu', 'transitous.org', 'bleibzuhause.com'];
+    const ROUTING_PROVIDERS = ['bahn.de', 'bahn.expert', 'bleibzuhause.com', 'chuuchuu.com', 'transitous.org'];
     const TRAIN_PROVIDERS = ['bahn.expert', 'zugfinder'];
     const DEBUG_LOG_MAX_ENTRIES = 500;
     const UNMAPPED_ENUM_KEY     = 'dbmrpp.unmappedEnums.v1';
@@ -99,7 +99,6 @@
             ttClose:           'Close',
             ttReleaseLog:      'Open changelog',
             ttDetailPrint:     'Print / save as PDF (sets a helpful file name)',
-            staleHint:         'refreshing…',
             ttStaleHint:       'Showing cached data — current data is being loaded',
             staleAsOf:         'as of',
             settingsTitle:     'Settings',
@@ -108,7 +107,7 @@
             settingsOpenOnLoadDesc: 'Only applies to the trip overview page (bahn.de/buchung/reiseuebersicht). The button itself is always shown elsewhere while logged in.',
             settingsShowJsonButton: 'Show JSON download button {…}',
             settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file.',
-            settingsShowGeoButton:  'Show geo export button 🛤️',
+            settingsShowGeoButton:  'Show geo export button',
             settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file. The Bahn API only provides this for future trips.',
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
@@ -123,11 +122,11 @@
             settingsTrainLinkProvider: 'Train link provider',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Show external routing button 🧭',
-            settingsShowRoutingButtonDesc: 'Shows a button on each trip card that opens the connection in an external routing service, offering different features. The routing links are generated based heuristically on the available trip data, some providers might not work for all trips or the generated connections might differ from the actual trip.',
-            settingsRoutingLinkProvider: 'Route link provider',
+            settingsRoutingProviders: 'Routing providers',
+            settingsRoutingProvidersDesc: 'Shows a routing button on each trip card when at least one provider is selected. A single provider opens directly; with several selected, the button opens a chooser. The routing links are generated heuristically from the available trip data, some providers might not work for all trips or the generated connections might differ from the actual trip.',
+            settingsRoutingProviderBahnDe: 'bahn.de',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
-            settingsRoutingProviderChuuchuu: 'chuuchuu',
+            settingsRoutingProviderChuuchuu: 'chuuchuu.com',
             settingsRoutingProviderTransitous: 'transitous.org',
             settingsRoutingProviderBleibZuHause: 'bleibzuhause.com',
             settingsShowCancelledTrips: 'Show cancelled trips',
@@ -148,15 +147,15 @@
             settingsUnmappedEnumCopy:    'Copy unmapped values',
             settingsUnmappedEnumClear:   'Clear unmapped values',
             settingsUnmappedEnumEntries: n => `${n} unmapped enum value${n === 1 ? '' : 's'} seen`,
-            settingsUsePastCacheLabel:  'Enhance past view from cache 🗄️',
+            settingsUsePastCacheLabel:  'Enhance past view from cache',
             settingsUsePastCacheDesc:   'Can display trip details from previous visits, including for trips no longer present in the past trips API response. Only works if panel was loaded at least once before the trip.',
-            settingsAutoDetailLabel:    'Auto-load details during disruptions ⚠️',
-            settingsAutoDetailDesc:     'For live trips with a relevant deviation (from 2 h before departure until arrival), automatically fetches the detail information with per-stop delays and messages — same as clicking ⚠️.',
+            settingsAutoDetailLabel:    'Auto-load details during disruptions',
+            settingsAutoDetailDesc:     'For live trips with a relevant deviation (from 2 h before departure until arrival), automatically fetches the detail information with per-stop delays and messages — same as clicking the warning button.',
             fromAll:           'From (all)',
             toAll:             'To (all)',
             dayAll:            'All',
             dayN:              n => `${n}D`,
-            onlyIssues:        '⚠ Issues only',
+            onlyIssues:        'Issues only',
             tabUpcoming:       'Upcoming',
             tabPast:           'Past',
             tabChanges:        'Changes',
@@ -167,7 +166,6 @@
             changeLogNew:      'New',
             changeLogEmpty:    'No tracked changes yet.',
             changeLogScope:    'Records plan and booking changes between visits. Realtime deviations appear directly on the trip overview.',
-            changeLogClear:    'Clear',
             ttChangeLogClear:  'Delete all collected changes',
             neverVisited:      'never',
             tagsLabel:         'Tags',
@@ -194,8 +192,10 @@
             tagRerouted:       'Itinerary changed',
             tagReroutedByUser: 'Alternative chosen',
             tagReassigned:     'Seat reassigned',
-            tagMuted:          '🔕 No alerts',
+            tagMuted:          'No alerts',
             tagAuftragStatus:  s => `Order: ${s}`,
+            indicatorBooking:  'Booking',
+            indicatorAlertsOn: 'Alerts on',
             settingsCustomTags:       'Custom tags setup',
             customTagNamePlaceholder: 'Tag label',
             customTagAdd:             'Add',
@@ -208,7 +208,7 @@
             customTagAssignTt:        'Assign custom tags',
             noteTt:                   'Edit note',
             notePlaceholder:          'Add a note…',
-            cacheLabel:        '🗄️ Cache',
+            cacheLabel:        'Cache',
             cacheNotificationsLabel: 'Notifications',
             cacheUpdatedAt:    d => `As of ${d}`,
             cacheMissing:      'ℹ️ No cached trip details available.',
@@ -223,18 +223,18 @@
             icsTooltip:        'Download ICS file',
             pdfTooltip:        'Download ticket PDF',
             shareTooltip:      'Share connection',
-            routeTooltip:      'Open route externally',
+            routeTooltip:      'Open route',
             rawJsonTooltip:    'Download complete raw API JSON',
             gpxTooltip:        'Download GPX track',
             geojsonTooltip:    'Download GeoJSON track',
             deleteCachedTripTooltip: 'Delete trip from script cache',
-            shareCopied:       '✓ Copied!',
+            shareCopied:       'Copied!',
             shareText:         p => `Connection on ${p.date}\n`
                 + `• from ${p.from}, departure ${p.dep}${p.depTrack ? ` platform ${p.depTrack}` : ''}${p.depTrain ? ` with ${p.depTrain}` : ''}\n`
                 + `• to ${p.to}, arrival ${p.arr}${p.arrTrack ? ` platform ${p.arrTrack}` : ''}${p.arrTrain ? ` with ${p.arrTrain}` : ''}\n`
                 + `View connection: ${p.url}`,
             shareError:        'Share failed — see console.',
-            routeError:        'External route link failed — see console.',
+            routeError:        'Route link failed — see console.',
             trainLinkError:    'Train link failed — see console.',
             rawJsonError:      'Raw JSON download failed — see console.',
             geoError:          'Geo data download failed — see console.',
@@ -387,7 +387,6 @@
             ttClose:           'Schließen',
             ttReleaseLog:      'Changelog öffnen',
             ttDetailPrint:     'Drucken / als PDF speichern (setzt einen hilfreichen Dateinamen)',
-            staleHint:         'aktualisiere…',
             ttStaleHint:       'Zeigt zwischengespeicherte Daten – aktuelle Daten werden geladen',
             staleAsOf:         'Stand',
             settingsTitle:     'Einstellungen',
@@ -396,7 +395,7 @@
             settingsOpenOnLoadDesc: 'Gilt nur für die Reiseübersicht (bahn.de/buchung/reiseuebersicht). Der Button selbst wird bei Anmeldung immer auch auf anderen Seiten angezeigt.',
             settingsShowJsonButton: 'JSON-Download-Button anzeigen {…}',
             settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständigen Bulk-API-Rohantworten als kombinierte JSON-Datei heruntergeladen werden kann.',
-            settingsShowGeoButton:  'Geo-Export-Button anzeigen 🛤️',
+            settingsShowGeoButton:  'Geo-Export-Button anzeigen',
             settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
@@ -411,11 +410,11 @@
             settingsTrainLinkProvider: 'Anbieter für Zuglinks',
             settingsTrainProviderZugfinder: 'zugfinder.net',
             settingsTrainProviderBahnExpert: 'bahn.expert',
-            settingsShowRoutingButton: 'Externen Routing-Button anzeigen 🧭',
-            settingsShowRoutingButtonDesc: 'Zeigt bei jeder Reise einen Button, der die Verbindung in einem externen Routing-Dienst mit variierenden Funktionen öffnet. Die Routing-Links werden heuristisch mit den verfügbaren Reisedaten generiert. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
-            settingsRoutingLinkProvider: 'Anbieter für Routing-Links',
+            settingsRoutingProviders: 'Routing-Anbieter',
+            settingsRoutingProvidersDesc: 'Zeigt bei jeder Reise einen Routing-Button, sobald mindestens ein Anbieter ausgewählt ist. Ein einzelner Anbieter öffnet direkt, bei mehreren öffnet der Button eine Auswahl. Die Routing-Links werden heuristisch mit den verfügbaren Reisedaten generiert. Es kann also sein, dass bei manchen Reisen nicht alle Anbieter funktionieren oder dass die generierten Verbindungen von der tatsächlichen Reise abweichen.',
+            settingsRoutingProviderBahnDe: 'bahn.de',
             settingsRoutingProviderBahnExpert: 'bahn.expert',
-            settingsRoutingProviderChuuchuu: 'chuuchuu',
+            settingsRoutingProviderChuuchuu: 'chuuchuu.com',
             settingsRoutingProviderTransitous: 'transitous.org',
             settingsRoutingProviderBleibZuHause: 'bleibzuhause.com',
             settingsShowCancelledTrips: 'Stornierte Reisen anzeigen',
@@ -436,15 +435,15 @@
             settingsUnmappedEnumCopy:    'Unbekannte Werte kopieren',
             settingsUnmappedEnumClear:   'Unbekannte Werte löschen',
             settingsUnmappedEnumEntries: n => `${n} unbekannte${n === 1 ? 'r' : ''} Enum-Wert${n === 1 ? '' : 'e'} gesehen`,
-            settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern 🗄️',
+            settingsUsePastCacheLabel:  'Vergangenheitsansicht mit Cache anreichern',
             settingsUsePastCacheDesc:   'Kann Reisedetails aus vorherigen Besuchen anzeigen, auch für Reisen, die nicht mehr in der API-Antwort zu vergangenen Reisen enthalten sind. Funktioniert nur, wenn das Panel vor der Fahrt mindestens einmal geöffnet wurde.',
-            settingsAutoDetailLabel:    'Bei Störung Details automatisch laden ⚠️',
-            settingsAutoDetailDesc:     'Lädt für laufende Reisen mit relevanter Abweichung (ab 2 Std. vor Abfahrt bis zur Ankunft) automatisch die Detailinformationen mit Verspätungen und Meldungen — wie ein Klick auf ⚠️.',
+            settingsAutoDetailLabel:    'Bei Störung Details automatisch laden',
+            settingsAutoDetailDesc:     'Lädt für laufende Reisen mit relevanter Abweichung (ab 2 Std. vor Abfahrt bis zur Ankunft) automatisch die Detailinformationen mit Verspätungen und Meldungen — wie ein Klick auf den Warn-Button.',
             fromAll:           'Von (alle)',
             toAll:             'Nach (alle)',
             dayAll:            'Alle',
             dayN:              n => `${n}T`,
-            onlyIssues:        '⚠ Mit Problem',
+            onlyIssues:        'Mit Problem',
             tabUpcoming:       'Bevorstehend',
             tabPast:           'Vergangen',
             tabChanges:        'Änderungen',
@@ -455,7 +454,6 @@
             changeLogNew:      'Neu',
             changeLogEmpty:    'Noch keine gesammelten Änderungen.',
             changeLogScope:    'Erfasst Änderungen an Plan- und Buchungsdaten zwischen Besuchen. Echtzeit-Abweichungen erscheinen direkt in der Reiseübersicht.',
-            changeLogClear:    'Leeren',
             ttChangeLogClear:  'Alle gesammelten Änderungen löschen',
             neverVisited:      'noch nie',
             tagsLabel:         'Tags',
@@ -482,8 +480,10 @@
             tagRerouted:       'Reiseplan geändert',
             tagReroutedByUser: 'Alternative gewählt',
             tagReassigned:     'Umplatziert',
-            tagMuted:          '🔕 Keine Benachrichtigungen',
+            tagMuted:          'Keine Benachrichtigungen',
             tagAuftragStatus:  s => `Auftrag: ${s}`,
+            indicatorBooking:  'Buchung',
+            indicatorAlertsOn: 'Benachrichtigungen aktiv',
             settingsCustomTags:       'Eigene Tags definieren',
             customTagNamePlaceholder: 'Tag-Label',
             customTagAdd:             'Hinzufügen',
@@ -496,7 +496,7 @@
             customTagAssignTt:        'Eigene Tags zuweisen',
             noteTt:                   'Notiz bearbeiten',
             notePlaceholder:          'Notiz hinzufügen…',
-            cacheLabel:        '🗄️ Cache',
+            cacheLabel:        'Cache',
             cacheNotificationsLabel: 'Benachrichtigungen',
             cacheUpdatedAt:    d => `Stand ${d}`,
             cacheMissing:      'Keine zwischengespeicherten Reisedetails verfügbar.',
@@ -516,13 +516,13 @@
             gpxTooltip:        'GPX-Track herunterladen',
             geojsonTooltip:    'GeoJSON-Track herunterladen',
             deleteCachedTripTooltip:     'Reise aus Skript-Cache löschen',
-            shareCopied:       '✓ Link kopiert!',
+            shareCopied:       'Link kopiert!',
             shareText:         p => `Verbindung am ${p.date}\n`
                 + `• von ${p.from}, Abfahrt ${p.dep} Uhr${p.depTrack ? ` Gl. ${p.depTrack}` : ''}${p.depTrain ? ` mit ${p.depTrain}` : ''}\n`
                 + `• nach ${p.to}, Ankunft ${p.arr} Uhr${p.arrTrack ? ` Gl. ${p.arrTrack}` : ''}${p.arrTrain ? ` mit ${p.arrTrain}` : ''}\n`
                 + `Verbindung ansehen: ${p.url}`,
             shareError:        'Teilen fehlgeschlagen — siehe Konsole.',
-            routeError:        'Externer Routing-Link fehlgeschlagen — siehe Konsole.',
+            routeError:        'Routing-Link fehlgeschlagen — siehe Konsole.',
             trainLinkError:    'Zug-Link fehlgeschlagen — siehe Konsole.',
             rawJsonError:      'Raw-JSON-Download fehlgeschlagen — siehe Konsole.',
             geoError:          'Geo-Daten-Download fehlgeschlagen — siehe Konsole.',
@@ -719,8 +719,7 @@
             showJsonButton: false,
             trainLinksEnabled: false,
             'traininfo-provider': 'bahn.expert',
-            showRoutingButton: false,
-            'routing-provider': 'bahn.expert',
+            routingProviders: [],
             showGeoButton: false,
             'geo-format': 'gpx',
             debugLogging: false,
@@ -728,9 +727,6 @@
         };
         try {
             const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-            const rawProvider = parsed['traininfo-provider'] || parsed.trainLinkProvider;
-            const provider = normalizeTrainProvider(rawProvider);
-            const routingProvider = normalizeRoutingProvider(parsed['routing-provider']);
             return {
                 rememberFilter: !!parsed.rememberFilter,
                 openOnLoad: !!parsed.openOnLoad,
@@ -738,11 +734,8 @@
                 autoLoadDisruptionDetails: parsed.autoLoadDisruptionDetails !== false,
                 showJsonButton: parsed.showJsonButton !== false,
                 trainLinksEnabled: !!parsed.trainLinksEnabled,
-                'traininfo-provider': provider,
-                showRoutingButton: parsed.showRoutingButton !== undefined
-                    ? !!parsed.showRoutingButton
-                    : !!parsed.routingLinksEnabled,
-                'routing-provider': routingProvider,
+                'traininfo-provider': normalizeTrainProvider(parsed['traininfo-provider']),
+                routingProviders: normalizeRoutingProviders(parsed.routingProviders),
                 showGeoButton: parsed.showGeoButton !== false,
                 'geo-format': parsed['geo-format'] === 'geojson' ? 'geojson' : 'gpx',
                 debugLogging: !!parsed.debugLogging,
@@ -913,7 +906,7 @@
     // localStorage (not sessionStorage) so the panel can render instantly on a
     // fresh visit, long before the site's own JS has booted and a token exists.
     // Tagged with kundenprofilId so a cache written by another account is discarded.
-    // No TTL: however old the data, it renders with the ⏳ stale hint (which
+    // No TTL: however old the data, it renders with the stale hint (which
     // carries the cache timestamp) until the background refresh replaces it.
     function saveRenderCache(trips, orphans, changes, lastVisit) {
         try {
@@ -1246,7 +1239,7 @@
         btn.id = 'dbmrpp-print-btn';
         btn.type = 'button';
         btn.title = T.ttDetailPrint;
-        btn.textContent = '🖨️';
+        btn.innerHTML = icon('printer');
         btn.addEventListener('click', async (ev) => {
             dbLog('detail print click');
             ev.preventDefault();
@@ -1327,7 +1320,7 @@
         return cache.get(key);
     }
 
-    // Detail fetch shared by share link + ⚠; cached until the next full refresh.
+    // Detail fetch shared by share link + warning button; cached until the next full refresh.
     function fetchDetail(uuid) {
         return cachedJsonFetch(detailCache, uuid, `/web/api/reisebegleitung/reiseketten/${encodeURIComponent(uuid)}`);
     }
@@ -1482,6 +1475,13 @@
         } catch (err) {
             dbLog('run: error ' + err.message);
             console.error('[DBMRPP]', err);
+            // a failed refresh must not leave the stale panel's spinner button stuck disabled
+            const btn = document.querySelector('#dbmrpp-root .dbmrpp-refresh');
+            if (btn && btn.disabled) {
+                btn.disabled = false;
+                btn.innerHTML = icon('refresh');
+                btn.title = T.ttReload;
+            }
         } finally {
             runInProgress = false;
         }
@@ -1768,17 +1768,13 @@
     // keep the last known value while the plan time is unchanged.
     function preservePastData(entry, prev) {
         const passed = iso => iso && new Date(iso).getTime() < Date.now();
+        const keep = (fields, blank) => fields.forEach(f => { entry[f] = entry[f] || prev[f] || blank; });
         if (entry.departure === prev.departure && passed(entry.departure)) {
-            entry.departureRt      = entry.departureRt      || prev.departureRt      || null;
-            entry.departureTrackRt = entry.departureTrackRt || prev.departureTrackRt || null;
-            entry.departureTrack   = entry.departureTrack   || prev.departureTrack   || null;
-            entry.zuege            = entry.zuege || prev.zuege || '';
-            entry.seats            = entry.seats || prev.seats || '';
+            keep(['departureRt', 'departureTrackRt', 'departureTrack'], null);
+            keep(['zuege', 'seats'], '');
         }
         if (entry.arrival === prev.arrival && passed(entry.arrival)) {
-            entry.arrivalRt      = entry.arrivalRt      || prev.arrivalRt      || null;
-            entry.arrivalTrackRt = entry.arrivalTrackRt || prev.arrivalTrackRt || null;
-            entry.arrivalTrack   = entry.arrivalTrack   || prev.arrivalTrack   || null;
+            keep(['arrivalRt', 'arrivalTrackRt', 'arrivalTrack'], null);
         }
     }
 
@@ -1815,16 +1811,12 @@
         return null;
     }
 
-
     function deleteCachedTrip(trip) {
         if (!trip) return;
-
         const entry = findTripHistoryEntry(trip);
         if (!entry) return;
-
         const key = historyEntryPrimaryKey(entry);
         if (!key) return;
-
         delete tripHistory.entries[key];
         saveTripHistory();
         if (activeView === 'past' && auftraegeCache) {
@@ -1834,7 +1826,6 @@
         }
         reRender();
     }
-
 
     function pruneTripHistory() {
         const entries = Object.entries(tripHistory.entries || {});
@@ -1852,13 +1843,12 @@
         let changed = false;
         (trips || []).forEach(t => {
             if (!t || !t.fromReiseketten) return;
-            const probe = buildTripHistoryEntry(t);
-            if (!probe) return;
-            const key = historyEntryPrimaryKey(probe);
+            const entry = buildTripHistoryEntry(t);
+            if (!entry) return;
+            const key = historyEntryPrimaryKey(entry);
             if (!key) return;
             const prev = tripHistory.entries[key] || null;
-            const entry = buildTripHistoryEntry(t, prev && prev.cachedAt ? prev.cachedAt : null);
-            if (!entry) return;
+            if (prev && prev.cachedAt) entry.cachedAt = prev.cachedAt;
             if (commitHistoryEntry(key, entry, prev)) changed = true;
         });
         if (!changed) return;
@@ -1866,7 +1856,7 @@
         saveTripHistory();
     }
 
-    // Keeps ⚠-fetched notifications and API-blanked rt/track/zuege/seats data
+    // Keeps detail-fetched notifications and API-blanked rt/track/zuege/seats data
     // alive on the live trip too — the bulk feed erases both once a stop's time
     // has passed, even while the reisekette itself is still "bevorstehend".
     // Runs before the upsert.
@@ -1875,7 +1865,12 @@
         const entry = findTripHistoryEntry(t);
         if (!entry) return;
         preservePastData(t, entry);
-        if (entry.relevanteAbweichung && entry.departure === t.departure) t.relevanteAbweichung = true;
+        if (entry.relevanteAbweichung && entry.departure === t.departure && !t.relevanteAbweichung) {
+            // Restored from cache, not reported live: diffSnapshots must not
+            // treat this as an ongoing disruption.
+            t.relevanteAbweichung = true;
+            t.abweichungPreserved = true;
+        }
         if (!t.relevanteAbweichung) return;
         if (Array.isArray(t.notifications) && t.notifications.length) return;
         if (Array.isArray(entry.notifications) && entry.notifications.length) {
@@ -2794,7 +2789,7 @@
         return normalized;
     }
 
-    // Auto-pull the ⚠ details for disrupted live trips (2h before departure
+    // Auto-pull the disruption details for disrupted live trips (2h before departure
     // until trip end). Fires per run(); qualifying trips are rare (0–2), so
     // this never iterates the whole trip list against the detail endpoint.
     async function autoLoadDisruptionDetails(trips) {
@@ -2893,8 +2888,6 @@
         return seats.join('; ');
     }
 
-    function diffFieldValue(t, f) { return t[f] ?? null; }
-
     // All three categories share the { trip, changes? } shape so the changes
     // pane can render them through a single code path. Note that entfernt
     // trips are stale snapshot copies — they no longer exist in the current
@@ -2902,35 +2895,31 @@
     function diffSnapshots(prev, curr) {
         const out = { neu: [], entfernt: [], geaendert: [] };
         const now = Date.now();
-        for (const uuid of Object.keys(curr)) {
-            if (!prev[uuid]) {
-                out.neu.push({ trip: curr[uuid] });
-            } else {
-                const c = curr[uuid], p = prev[uuid];
-                // Ended trips only lose data as the API ages them out (zuege/
-                // seats reset, status flips) — suppress their diffs. A
-                // still-flagged disruption keeps the trip live past its end.
-                if (!c.relevanteAbweichung && tripEndTime(c) < now) continue;
-                const fld = DIFF_WATCHED
-                    .filter(f => diffFieldValue(c, f) !== diffFieldValue(p, f))
-                    .map(f => ({ field: f, old: diffFieldValue(p, f), new: diffFieldValue(c, f) }));
-                // alternativensuche is diffed asymmetrically: escalating to
-                // KANN/MUSS is worth logging, resolving back to KEINE is the
-                // disruption-over churn (also fires when the trip ends).
-                const alt = diffFieldValue(c, 'alternativensuche');
-                if (alt !== diffFieldValue(p, 'alternativensuche') &&
-                    (alt === 'ALTERNATIVEN_KANN' || alt === 'ALTERNATIVEN_MUSS')) {
-                    fld.push({ field: 'alternativensuche', old: diffFieldValue(p, 'alternativensuche'), new: alt });
-                }
-                if (fld.length) out.geaendert.push({ trip: c, changes: fld });
+        const v = (t, f) => t[f] ?? null;
+        for (const [uuid, c] of Object.entries(curr)) {
+            const p = prev[uuid];
+            if (!p) { out.neu.push({ trip: c }); continue; }
+            // Ended trips only lose data as the API ages them out (zuege/
+            // seats reset, status flips back to FAHRBAR) — suppress their
+            // diffs. Only a disruption the API still reports itself (not
+            // one restored from cache) keeps the trip live past its end.
+            if ((!c.relevanteAbweichung || c.abweichungPreserved) && tripEndTime(c) < now) continue;
+            const fld = DIFF_WATCHED
+                .filter(f => v(c, f) !== v(p, f))
+                .map(f => ({ field: f, old: v(p, f), new: v(c, f) }));
+            // alternativensuche is diffed asymmetrically: escalating to
+            // KANN/MUSS is worth logging, resolving back to KEINE is the
+            // disruption-over churn (also fires when the trip ends).
+            const alt = v(c, 'alternativensuche'), pAlt = v(p, 'alternativensuche');
+            if (alt !== pAlt && (alt === 'ALTERNATIVEN_KANN' || alt === 'ALTERNATIVEN_MUSS')) {
+                fld.push({ field: 'alternativensuche', old: pAlt, new: alt });
             }
+            if (fld.length) out.geaendert.push({ trip: c, changes: fld });
         }
-        for (const uuid of Object.keys(prev)) {
-            if (!curr[uuid]) {
-                // Disappearing before the journey ended is a signal (cancelled/
-                // rebooked); aging out of the feed afterwards is not.
-                if (tripEndTime(prev[uuid]) > now) out.entfernt.push({ trip: prev[uuid] });
-            }
+        for (const [uuid, p] of Object.entries(prev)) {
+            // Disappearing before the journey ended is a signal (cancelled/
+            // rebooked); aging out of the feed afterwards is not.
+            if (!curr[uuid] && tripEndTime(p) > now) out.entfernt.push({ trip: p });
         }
         return out;
     }
@@ -2986,9 +2975,9 @@
           label: ()  => T.tagClass1 },
         { id: 'tagRegionalTicket', cls: 'ok',   cond: t => t.isVerbundticket,
           label: t  => `${esc(T.tagRegionalTicket)}${t.verbundCode ? ' ' + esc(t.verbundCode) : ''}` },
-        { id: 'tagZugbindung',     cls: 'warn', cond: t => t.zugbindung === 'AUFGEHOBEN',
+        { id: 'tagZugbindung',     cls: 'warn', cond: t => t.zugbindung === 'AUFGEHOBEN', hidden: true,
           label: ()  => T.tagZugbindung },
-        { id: 'tagZugbindungBesteht', cls: 'warn', cond: t => t.zugbindung === 'BESTEHT',
+        { id: 'tagZugbindungBesteht', cls: 'warn', cond: t => t.zugbindung === 'BESTEHT', hidden: true,
           label: ()  => T.tagZugbindungBesteht },
         { id: 'tagNotRecon',       cls: 'bad',  cond: t => t.status === 'NICHT_REKONSTRUIERBAR',
           label: ()  => T.tagNotRecon },
@@ -2996,7 +2985,7 @@
           label: ()  => T.tagGebrochen },
         { id: 'tagBeingReplanned', cls: 'warn', cond: t => t.status === 'VORLAEUFIG_NICHT_REKONSTRUIERBAR',
           label: ()  => T.tagBeingReplanned },
-        { id: 'tagMustReroute',    cls: 'bad',  cond: t => t.alternativensuche === 'ALTERNATIVEN_MUSS',
+        { id: 'tagMustReroute',    cls: 'bad',  cond: t => t.alternativensuche === 'ALTERNATIVEN_MUSS', hidden: true,
           label: ()  => T.tagMustReroute },
         { id: 'tagAltPossible',    cls: 'info', cond: t => t.alternativensuche === 'ALTERNATIVEN_KANN',
           label: ()  => T.tagAltPossible },
@@ -3008,13 +2997,13 @@
           label: ()  => T.tagReroutedByUser },
         { id: 'tagReassigned',     cls: 'warn', cond: t => t.umreserviert,
           label: ()  => T.tagReassigned },
-        { id: 'tagMuted',          cls: 'warn', cond: t => t.ueberwacht === false,
+        { id: 'tagMuted',          cls: 'warn', cond: t => t.ueberwacht === false, hidden: true,
           label: ()  => T.tagMuted },
-        { id: 'tagSaved',          cls: 'ok',   cond: t => t.typ === 'FREI' || (t.isFromHistoryCache && t.typ !== 'AUFTRAG'),
+        { id: 'tagSaved',          cls: 'ok',   cond: t => t.typ === 'FREI' || (t.isFromHistoryCache && t.typ !== 'AUFTRAG'), hidden: true,
           label: ()  => T.tagSaved },
-        { id: 'tagWiederholend',   cls: 'ok',   cond: t => t.typ === 'WIEDERHOLEND',
+        { id: 'tagWiederholend',   cls: 'ok',   cond: t => t.typ === 'WIEDERHOLEND', hidden: true,
           label: ()  => T.tagWiederholend },
-        { id: 'tagStorniert',          cls: 'bad',  cond: t => t.storniertStatus === 'STORNIERT',
+        { id: 'tagStorniert',          cls: 'bad',  cond: t => t.storniertStatus === 'STORNIERT', hidden: true,
           label: t  => esc(formatStorno(t.storniertStatus)) },
         { id: 'tagTeilweiseStorniert', cls: 'warn', cond: t => t.storniertStatus === 'TEILWEISE_STORNIERT',
           label: t  => esc(formatStorno(t.storniertStatus)) },
@@ -3379,7 +3368,7 @@
             )
         );
         trips.forEach(t => {
-            const entry = buildTripHistoryEntry(t, cachedAtOverride || null);
+            const entry = buildTripHistoryEntry(t, cachedAtOverride);
             if (!entry) return;
             const key = historyEntryPrimaryKey(entry);
             if (!key) return;
@@ -4105,7 +4094,7 @@
                 injectStyles();
                 root = document.createElement('div');
                 root.id = 'dbmrpp-root';
-                root.innerHTML = `<h2><span class="dbmrpp-header-top"><span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${esc(TITLE_BASE)}${dbLogoSvg('dbmrpp-title-icon')}</span><a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span></span><button type="button">×</button></span></h2>`;
+                root.innerHTML = `<h2><span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${esc(TITLE_BASE)}${dbLogoSvg('dbmrpp-title-icon')}</span><a href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" class="dbmrpp-version-link" title="${esc(T.ttReleaseLog)}">v${esc(SCRIPT_VERSION)}</a></span><span class="dbmrpp-header-actions"><span class="dbmrpp-stale-hint">${esc(T.panelLoading)}</span><button type="button">${icon('close')}</button></span></h2>`;
                 document.body.appendChild(root);
                 const stubClose = root.querySelector('button');
                 if (stubClose) stubClose.addEventListener('click', hidePanel);
@@ -4145,6 +4134,40 @@
             + '<rect x="-54" y="-12" width="108" height="30" transform="matrix(1,0,-0.364,1,262,260)"/>'
             + '<rect x="-12" y="-80" width="30" height="160" transform="matrix(1,0,-0.364,1,285,263)"/>'
             + '</svg>';
+    }
+
+    // UI icons: inner markup of Lucide (lucide.dev, ISC) 24×24 stroke icons.
+    const ICONS = {
+        refresh:  '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+        loading:  '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+        check:    '<path d="M20 6 9 17l-5-5"/>',
+        close:    '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+        settings: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
+        share:    '<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>',
+        trash:    '<path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+        compass:  '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"/>',
+        warning:  '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+        calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+        receipt:  '<path d="M13 16H8"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M4 3a1 1 0 0 1 1-1 1.3 1.3 0 0 1 .7.2l.933.6a1.3 1.3 0 0 0 1.4 0l.934-.6a1.3 1.3 0 0 1 1.4 0l.933.6a1.3 1.3 0 0 0 1.4 0l.933-.6a1.3 1.3 0 0 1 1.4 0l.934.6a1.3 1.3 0 0 0 1.4 0l.933-.6A1.3 1.3 0 0 1 19 2a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1 1.3 1.3 0 0 1-.7-.2l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.934.6a1.3 1.3 0 0 1-1.4 0l-.933-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-1.4 0l-.934-.6a1.3 1.3 0 0 0-1.4 0l-.933.6a1.3 1.3 0 0 1-.7.2 1 1 0 0 1-1-1z"/>',
+        route:    '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+        pencil:   '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+        tag:      '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+        printer:  '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+        train:    '<path d="M8 3.1V7a4 4 0 0 0 8 0V3.1"/><path d="m9 15-1-1"/><path d="m15 15 1-1"/><path d="M9 19c-2.8 0-5-2.2-5-5v-4a8 8 0 0 1 16 0v4c0 2.8-2.2 5-5 5Z"/><path d="m8 19-2 3"/><path d="m16 19 2 3"/>',
+        seat:     '<path d="M19 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v3"/><path d="M3 16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v1.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V11a2 2 0 0 0-4 0z"/><path d="M5 18v2"/><path d="M19 18v2"/>',
+        ticket:   '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>',
+        ticketX:  '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="m9.5 14.5 5-5"/><path d="m9.5 9.5 5 5"/>',
+        bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
+        repeat:   '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+        bell:     '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+        bellOff:  '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742"/><path d="m2 2 20 20"/><path d="M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.707 6.05"/>',
+        link:     '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+        unlink:   '<path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><path d="m8 2 .5 2"/><path d="M2 8l2 .5"/><path d="m16 22-.5-2"/><path d="M22 16l-2-.5"/>',
+        link2Off: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>'
+    };
+
+    function icon(name, cls) {
+        return `<svg class="dbmrpp-icon${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
     }
 
     function injectFab() {
@@ -4197,7 +4220,6 @@
                         --dbmrpp-warn-bg: #ffe9b3;
                         --dbmrpp-warn-text: #8a5a00;
                         --dbmrpp-info-bg: #dde8ff;
-                        --dbmrpp-marked: #6600cc;
                         --dbmrpp-surface: #f0f3f5; /* bahn.de page background tone: cards, filter/settings bars */
                         /* type scale — the only font sizes in the panel */
                         --dbmrpp-fs-lg:  14px;  /* panel title */
@@ -4205,6 +4227,8 @@
                         --dbmrpp-fs-sm:  12px;  /* controls, buttons, inputs */
                         --dbmrpp-fs-xs:  11px;  /* meta, notes, statuses */
                         --dbmrpp-fs-xxs: 10px;  /* chips, badges, markers */
+                        /* one height for the title line and the header buttons — keeps them exactly flush */
+                        --dbmrpp-header-h: calc(var(--dbmrpp-fs-lg) + 6px);
                     }
 
                     #dbmrpp-fab {
@@ -4281,43 +4305,32 @@
                         font-family: inherit !important;
                     }
 
+                    /* header bar: title block (title over version link) left, button row right */
                     #dbmrpp-root h2 {
                         margin: 0;
                         padding: 10px 14px;
                         background: var(--dbmrpp-accent);
                         color: #fff;
-                        font-size: calc(var(--dbmrpp-fs-lg) + 2px);
                         font-weight: 600;
                         display: flex;
-                        flex-direction: column;
-                        gap: 8px;
+                        justify-content: space-between;
+                        align-items: flex-start;
+                        gap: 12px;
+                        flex-wrap: wrap;
                         flex-shrink: 0;
                     }
 
-                    .dbmrpp-header-top {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: baseline;
-                        gap: 12px;
-                        flex-wrap: wrap;
-                    }
-
-                    .dbmrpp-header-actions {
-                        display: flex;
-                        align-items: center;
-                        gap: 4px;
-                        flex-wrap: wrap;
-                    }
-
                     .dbmrpp-title-wrap {
-                        display: inline-flex;
-                        align-items: baseline;
-                        gap: 8px;
-                        flex-wrap: wrap;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: flex-start;
                     }
 
+                    /* line-height 1 makes the line box exactly --dbmrpp-header-h, same as the buttons */
                     .dbmrpp-title-text {
                         text-transform: uppercase;
+                        font-size: var(--dbmrpp-header-h);
+                        line-height: 1;
                     }
 
                     /* Normal inline flow, not a flex item: a replaced element's default
@@ -4332,10 +4345,14 @@
                         vertical-align: baseline;
                     }
 
+                    /* negative margin pulls the link into the title's descender space —
+                       the all-caps title renders nothing below its baseline */
                     .dbmrpp-version-link {
                         color: rgba(255,255,255,.92);
                         font-size: var(--dbmrpp-fs-xs);
                         font-weight: 400;
+                        line-height: 1;
+                        margin-top: -1px;
                         text-decoration: underline;
                         text-underline-offset: 2px;
                         white-space: nowrap;
@@ -4350,14 +4367,39 @@
                         white-space: nowrap;
                     }
 
+                    .dbmrpp-header-actions {
+                        display: flex;
+                        align-items: center;
+                        gap: 4px;
+                        flex-wrap: wrap;
+                    }
+
                     #dbmrpp-root h2 button {
                         background: transparent;
                         border: 1px solid rgba(255,255,255,.6);
                         color: #fff;
-                        padding: 2px 8px;
+                        box-sizing: border-box;
+                        height: var(--dbmrpp-header-h);
+                        padding: 0 4px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
                         cursor: pointer;
                         border-radius: 3px;
                         font-size: var(--dbmrpp-fs-sm);
+                    }
+
+                    .dbmrpp-icon { width: 1.1em; height: 1.1em; vertical-align: -0.2em; }
+                    .dbmrpp-icon-spin { animation: dbmrpp-spin 1s linear infinite; }
+                    @keyframes dbmrpp-spin { to { transform: rotate(360deg); } }
+                    @media (prefers-reduced-motion: reduce) { .dbmrpp-icon-spin { animation: none; } }
+
+                    /* icon-only buttons: fixed square so the icon (refresh vs. spinner) can't change the width */
+                    #dbmrpp-root h2 .dbmrpp-refresh,
+                    #dbmrpp-root h2 .dbmrpp-settings-btn,
+                    #dbmrpp-root h2 .dbmrpp-close {
+                        width: var(--dbmrpp-header-h);
+                        padding: 0;
                     }
 
                     #dbmrpp-root h2 button:hover { background: rgba(255,255,255,.15); }
@@ -4382,6 +4424,31 @@
                         border-radius: 4px;
                     }
                     .dbmrpp-trip + .dbmrpp-trip { margin-top: 8px; }
+                    /* column card: indicator icons left (trip lists only), body, action buttons right */
+                    .dbmrpp-trip-cols { display: flex; gap: 8px; }
+                    .dbmrpp-trip-indicators {
+                        flex: none;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        gap: 4px;
+                        padding-top: 2px;
+                        color: var(--dbmrpp-text-muted);
+                    }
+                    .dbmrpp-trip-indicators .dbmrpp-icon { width: 15px; height: 15px; }
+                    .dbmrpp-ind { display: inline-flex; line-height: 1; }
+                    .dbmrpp-ind-bad  { color: var(--dbmrpp-accent); }
+                    .dbmrpp-ind-warn { color: var(--dbmrpp-warn-text); }
+                    .dbmrpp-ind-ok   { color: var(--dbmrpp-ok-text); }
+                    .dbmrpp-trip-body { flex: 1 1 auto; min-width: 0; }
+                    .dbmrpp-trip-actions {
+                        flex: none;
+                        display: flex;
+                        flex-direction: column;
+                        justify-content: flex-end;
+                        align-items: center;
+                        gap: 4px;
+                    }
 
                     .dbmrpp-route {
                         font-weight: 600;
@@ -4473,7 +4540,7 @@
                     }
 
                     .dbmrpp-tag-warn { background: var(--dbmrpp-warn-bg); color: var(--dbmrpp-warn-text); }
-                    .dbmrpp-tag-bad  { background: #ffd0d0; color: #8a0000; }
+                    .dbmrpp-tag-bad  { background: #ffd0d0; color: var(--dbmrpp-accent); }
                     .dbmrpp-tag-ok   { background: #d6f3d6; color: var(--dbmrpp-ok-text); }
                     .dbmrpp-tag-info { background: var(--dbmrpp-info-bg); color: var(--dbmrpp-navy); }
 
@@ -4518,7 +4585,13 @@
                         font-size: var(--dbmrpp-fs-sm);
                         font-weight: 700;
                         color: #27408a;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
                     }
+
+                    /* buttons don't inherit color; keep the title's blue */
+                    .dbmrpp-settings-close { color: inherit; }
 
                     .dbmrpp-settings-btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
                     .dbmrpp-settings-status { font-size: var(--dbmrpp-fs-xs); color: var(--dbmrpp-text-muted); }
@@ -4550,6 +4623,12 @@
                         justify-items: start;
                     }
                     .dbmrpp-settings-sub { padding-left: 20px; }
+                    .dbmrpp-settings-check-group {
+                        display: grid;
+                        gap: 3px;
+                        font-size: var(--dbmrpp-fs-sm);
+                        color: #333;
+                    }
                     .dbmrpp-settings-info-text {
                         font-size: var(--dbmrpp-fs-xs);
                         color: var(--dbmrpp-text-muted);
@@ -4664,14 +4743,16 @@
                     }
                     .dbmrpp-changelog-clear {
                         margin-left: auto;
+                        display: inline-flex;
+                        align-items: center;
                         background: transparent;
                         border: 1px solid var(--dbmrpp-divider);
                         border-radius: 3px;
-                        padding: 2px 8px;
-                        font-size: var(--dbmrpp-fs-xs);
+                        padding: 3px;
                         color: var(--dbmrpp-text-muted);
                         cursor: pointer;
                     }
+                    .dbmrpp-changelog-clear .dbmrpp-icon { width: 14px; height: 14px; }
                     .dbmrpp-changelog-clear:hover { color: var(--dbmrpp-accent); border-color: var(--dbmrpp-accent); }
                     .dbmrpp-orphan { opacity: 0.55; }
                     .dbmrpp-orphan .dbmrpp-route-link { text-decoration: line-through; color: var(--dbmrpp-text-faint); }
@@ -4704,7 +4785,7 @@
                         cursor: pointer;
                     }
                     .dbmrpp-custom-tag-details > summary::-webkit-details-marker { display: none; }
-                    .dbmrpp-custom-tag-assigned { color: var(--dbmrpp-marked) !important; opacity: 1 !important; }
+                    .dbmrpp-custom-tag-assigned { color: var(--dbmrpp-navy) !important; opacity: 1 !important; }
                     .dbmrpp-custom-tag-picker {
                         position: absolute;
                         top: calc(100% + 2px);
@@ -4721,7 +4802,15 @@
                         gap: 2px;
                         white-space: nowrap;
                     }
-                    .dbmrpp-custom-tag-toggle {
+                    /* bottom-anchored in the action column: open upward and right-aligned
+                       so the picker stays over the card instead of clipping at the edges */
+                    .dbmrpp-trip-actions .dbmrpp-custom-tag-picker {
+                        top: auto;
+                        bottom: calc(100% + 2px);
+                        left: auto;
+                        right: 0;
+                    }
+                    .dbmrpp-custom-tag-toggle, .dbmrpp-route-provider-btn {
                         border: 1px solid transparent;
                         background: none;
                         cursor: pointer;
@@ -4731,7 +4820,8 @@
                         display: flex;
                         align-items: center;
                     }
-                    .dbmrpp-custom-tag-toggle:hover { background: #f0f0f0; border-color: var(--dbmrpp-border); }
+                    .dbmrpp-custom-tag-toggle:hover, .dbmrpp-route-provider-btn:hover { background: #f0f0f0; border-color: var(--dbmrpp-border); }
+                    .dbmrpp-route-provider-btn { font-size: var(--dbmrpp-fs-sm); color: #333; }
                     .dbmrpp-custom-tag-toggle.active { outline: 2px solid var(--dbmrpp-accent); outline-offset: -2px; }
                     .dbmrpp-custom-tag-def-row { display: flex; align-items: center; gap: 6px; }
                     .dbmrpp-custom-tag-create {
@@ -4793,7 +4883,7 @@
                         min-height: 38px;
                         box-sizing: border-box;
                     }
-                    .dbmrpp-note-btn-active { opacity: 1 !important; color: var(--dbmrpp-marked); }
+                    .dbmrpp-note-btn-active { opacity: 1 !important; color: var(--dbmrpp-navy); }
                 `;
         document.head.appendChild(s);
     }
@@ -4847,6 +4937,12 @@
         const settingsBtn = root.querySelector('.dbmrpp-settings-btn');
         if (settingsBtn) settingsBtn.addEventListener('click', () => {
             settingsOpen = !settingsOpen;
+            reRender();
+        });
+
+        const settingsCloseBtn = root.querySelector('.dbmrpp-settings-close');
+        if (settingsCloseBtn) settingsCloseBtn.addEventListener('click', () => {
+            settingsOpen = false;
             reRender();
         });
 
@@ -4958,9 +5054,7 @@
             } else {
                 doFallback();
             }
-            const orig = debugLogCopyBtn.textContent;
-            debugLogCopyBtn.textContent = '✓';
-            setTimeout(() => { debugLogCopyBtn.textContent = orig; }, 1500);
+            flashCheck(debugLogCopyBtn);
         });
 
         const debugLogClearBtn = root.querySelector('.dbmrpp-debug-log-clear');
@@ -4988,9 +5082,7 @@
             } else {
                 doFallback();
             }
-            const orig = unmappedEnumCopyBtn.textContent;
-            unmappedEnumCopyBtn.textContent = '✓';
-            setTimeout(() => { unmappedEnumCopyBtn.textContent = orig; }, 1500);
+            flashCheck(unmappedEnumCopyBtn);
         });
 
         const unmappedEnumClearBtn = root.querySelector('.dbmrpp-unmapped-enum-clear');
@@ -5022,12 +5114,14 @@
             reRender();
         });
 
-        const routingLinksCb = root.querySelector('#dbmrpp-setting-show-routing-button');
-        if (routingLinksCb) routingLinksCb.addEventListener('change', e => {
-            uiSettings.showRoutingButton = !!e.target.checked;
+        const routingProviderCbs = root.querySelectorAll('.dbmrpp-routing-provider-cb');
+        routingProviderCbs.forEach(cb => cb.addEventListener('change', () => {
+            uiSettings.routingProviders = normalizeRoutingProviders(
+                Array.from(routingProviderCbs).filter(x => x.checked).map(x => x.getAttribute('data-provider'))
+            );
             rememberUiState();
             reRender();
-        });
+        }));
 
         const trainProviderSel = root.querySelector('#dbmrpp-setting-traininfo-provider');
         if (trainProviderSel) trainProviderSel.addEventListener('change', e => {
@@ -5036,12 +5130,6 @@
             reRender();
         });
 
-        const routingProviderSel = root.querySelector('#dbmrpp-setting-routing-provider');
-        if (routingProviderSel) routingProviderSel.addEventListener('change', e => {
-            uiSettings['routing-provider'] = normalizeRoutingProvider(e.target.value);
-            rememberUiState();
-            reRender();
-        });
     }
 
     function bindTagHandlers(root, trips, orphans) {
@@ -5232,28 +5320,35 @@
     }
 
     // Unified loading indicator for buttons whose click triggers an API call:
-    // swap the icon for ⏳ while the action runs, restore it afterwards.
+    // swap in the loading icon while the action runs, restore afterwards.
     async function withLoadingIcon(btn, action) {
-        const origText = btn.textContent;
-        btn.textContent = '⏳';
+        const orig = btn.innerHTML;
+        btn.innerHTML = icon('loading', 'dbmrpp-icon-spin');
         btn.style.opacity = '1';
         btn.disabled = true;
         try {
             return await action();
         } finally {
-            btn.textContent = origText;
+            btn.innerHTML = orig;
             btn.style.opacity = '';
             btn.disabled = false;
         }
     }
 
-    async function onRouteExtClick(btn, trip) {
+    // Brief success feedback: swap to the check icon, restore the button afterwards.
+    function flashCheck(btn, ms = 1500, onRestore) {
+        const orig = btn.innerHTML;
+        btn.innerHTML = icon('check');
+        setTimeout(() => { btn.innerHTML = orig; if (onRestore) onRestore(); }, ms);
+    }
+
+    async function openRoutingProvider(btn, trip, provider) {
         const popup = window.open('about:blank', '_blank');
         try {
             await withLoadingIcon(btn, async () => {
-                const url = await getExternalRoutingUrl(trip);
+                const url = await getExternalRoutingUrl(trip, provider);
                 if (!url) throw new Error('No external routing URL available');
-                if (!openExternalUrlInNewTab(url, popup)) throw new Error('Could not open external routing URL');
+                if (!openExternalUrlInNewTab(url, popup)) throw new Error('Could not open routing URL');
             });
         } catch (err) {
             console.error('[DBMRPP] Routing-Link-Fehler', err);
@@ -5262,14 +5357,27 @@
         }
     }
 
+    // Direct button — rendered only when exactly one provider is selected.
+    async function onRouteExtClick(btn, trip) {
+        await openRoutingProvider(btn, trip, uiSettings.routingProviders[0]);
+    }
+
+    async function onRouteProviderClick(btn, trip) {
+        const details = btn.closest('details');
+        if (details) details.open = false;
+        // Loading icon on the summary: the picker itself is closed already.
+        const indicator = details ? details.querySelector('summary') : btn;
+        await openRoutingProvider(indicator, trip, btn.getAttribute('data-provider'));
+    }
+
     async function onShareClick(btn, trip) {
         const origTitle = btn.title;
         try {
             await withLoadingIcon(btn, async () => {
                 await navigator.clipboard.writeText(buildShareText(trip, await getShareLink(trip)));
             });
-            btn.textContent = '✓'; btn.title = T.shareCopied; btn.style.opacity = '1';
-            setTimeout(() => { btn.textContent = '⤴️'; btn.title = origTitle; btn.style.opacity = ''; }, 2000);
+            btn.title = T.shareCopied; btn.style.opacity = '1';
+            flashCheck(btn, 2000, () => { btn.title = origTitle; btn.style.opacity = ''; });
         } catch (err) {
             console.error('[DBMRPP] Share-Fehler', err);
             alert(T.shareError);
@@ -5316,7 +5424,7 @@
             const detailDiv = document.createElement('div');
             detailDiv.className = 'dbmrpp-fgr-detail';
             detailDiv.textContent = resultText;
-            tripDiv.appendChild(detailDiv);
+            tripBodyEl(tripDiv).appendChild(detailDiv);
         }
     }
 
@@ -5345,6 +5453,11 @@
             if (popup && !popup.closed) popup.close();
             alert(T.trainLinkError);
         }
+    }
+
+    // Dynamic blocks belong in the body column, not appended to the flex card root.
+    function tripBodyEl(tripDiv) {
+        return tripDiv.querySelector('.dbmrpp-trip-body') || tripDiv;
     }
 
     function onNoteClick(btn) {
@@ -5377,7 +5490,7 @@
             btn.classList.toggle('dbmrpp-note-btn-active', !!val.trim());
         });
         area.appendChild(ta);
-        tripDiv.appendChild(area);
+        tripBodyEl(tripDiv).appendChild(area);
         ta.focus();
     }
 
@@ -5404,7 +5517,7 @@
             console.error('[DBMRPP] Abweichung-Fehler', err);
             detailDiv.textContent = T.abweichungError;
         }
-        tripDiv.appendChild(detailDiv);
+        tripBodyEl(tripDiv).appendChild(detailDiv);
     }
 
     // Delegated per-trip button actions: selector → handler(btn, trip).
@@ -5417,6 +5530,7 @@
         { selector: '.dbmrpp-geo-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadGeo(trip)) },
         { selector: '.dbmrpp-delete-cache-btn', handler: (btn, trip) => { if (confirm(T.alertDeleteCachedTripConfirm)) deleteCachedTrip(trip); } },
         { selector: '.dbmrpp-route-ext-btn',    handler: onRouteExtClick },
+        { selector: '.dbmrpp-route-provider-btn', handler: onRouteProviderClick },
         { selector: '.dbmrpp-share-btn',        handler: onShareClick },
         { selector: '.dbmrpp-fgr-btn',          handler: onFgrClick },
         { selector: '.dbmrpp-train-num-link',   needsTrip: false, handler: onTrainNumClick },
@@ -5568,18 +5682,23 @@
     }
 
     function buildHTML(trips, orphans, changes, lastVisit) {
+        // while a background refresh runs, the refresh button itself is the loading indicator
+        const refreshBtn = dataIsStale
+            ? `<button class="dbmrpp-refresh" disabled title="${T.ttStaleHint}${staleCachedAt ? ` (${T.staleAsOf} ${new Date(staleCachedAt).toLocaleString()})` : ''}">${icon('loading', 'dbmrpp-icon-spin')}</button>`
+            : `<button class="dbmrpp-refresh" title="${T.ttReload}">${icon('refresh')}</button>`;
         return `
         <h2>
-                    <span class="dbmrpp-header-top">
-                        <span class="dbmrpp-title-wrap"><span class="dbmrpp-title-text">${TITLE_BASE}${dbLogoSvg('dbmrpp-title-icon')}</span><a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a>${dataIsStale ? `<span class="dbmrpp-stale-hint" title="${T.ttStaleHint}${staleCachedAt ? ` (${T.staleAsOf} ${new Date(staleCachedAt).toLocaleString()})` : ''}">⏳ ${T.staleHint}</span>` : ''}</span>
-                        <button class="dbmrpp-close" title="${T.ttClose}">×</button>
-                    </span>
-                    <span class="dbmrpp-header-actions">
-                        <button class="dbmrpp-refresh" title="${T.ttReload}">↺</button>
-                        <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">📅 ICS</button>
-                        <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
-                        <button class="dbmrpp-settings-btn" title="${T.ttSettings}">⚙️</button>
-                    </span>
+            <span class="dbmrpp-title-wrap">
+                <span class="dbmrpp-title-text">${TITLE_BASE}${dbLogoSvg('dbmrpp-title-icon')}</span>
+                <a class="dbmrpp-version-link" href="${CHANGELOG_URL}" target="_blank" rel="noopener noreferrer" title="${T.ttReleaseLog}">v${esc(SCRIPT_VERSION)}</a>
+            </span>
+            <span class="dbmrpp-header-actions">
+                ${refreshBtn}
+                <button class="dbmrpp-ics-bulk" title="${T.ttIcsBulk}">${icon('calendar')} ICS</button>
+                <button class="dbmrpp-export"   title="${T.ttCsv}">CSV</button>
+                <button class="dbmrpp-settings-btn" title="${T.ttSettings}">${icon('settings')}</button>
+                <button class="dbmrpp-close" title="${T.ttClose}">${icon('close')}</button>
+            </span>
         </h2>
         ${buildSettingsBar()}
         <div id="dbmrpp-content">${buildContent(trips, orphans, changes, lastVisit)}</div>`;
@@ -5588,8 +5707,8 @@
     function buildSettingsBar() {
         return `
         <div class="dbmrpp-settings-bar${settingsOpen ? '' : ' dbmrpp-settings-hidden'}">
-            <div class="dbmrpp-settings-title">${T.settingsTitle}</div>
-            <details class="dbmrpp-settings-group" open>
+            <div class="dbmrpp-settings-title">${T.settingsTitle}<button type="button" class="dbmrpp-settings-close dbmrpp-action-icon" title="${T.ttClose}">${icon('close')}</button></div>
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group" open>
                 <summary>${T.settingsGroupGeneral}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-remember-filter', uiSettings.rememberFilter, T.settingsRememberFilter)}
@@ -5599,7 +5718,7 @@
                     ${settingsToggle('dbmrpp-setting-auto-detail', uiSettings.autoLoadDisruptionDetails, T.settingsAutoDetailLabel, { desc: T.settingsAutoDetailDesc })}
                 </div>
             </details>
-            <details class="dbmrpp-settings-group" open>
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupTripExports}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-show-geo-button', uiSettings.showGeoButton, T.settingsShowGeoButton, { desc: T.settingsShowGeoButtonDesc })}
@@ -5609,16 +5728,14 @@
                     ])}
                 </div>
             </details>
-            <details class="dbmrpp-settings-group">
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupExternalLinks}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    ${settingsToggle('dbmrpp-setting-show-routing-button', uiSettings.showRoutingButton, T.settingsShowRoutingButton, { desc: T.settingsShowRoutingButtonDesc })}
-                    ${settingsSelect('dbmrpp-setting-routing-provider', T.settingsRoutingLinkProvider, uiSettings.showRoutingButton, uiSettings['routing-provider'], [
-                        ['bahn.expert', T.settingsRoutingProviderBahnExpert],
-                        ['bleibzuhause.com', T.settingsRoutingProviderBleibZuHause],
-                        ['chuuchuu', T.settingsRoutingProviderChuuchuu],
-                        ['transitous.org', T.settingsRoutingProviderTransitous],
-                    ])}
+                    <div class="dbmrpp-settings-check-group">
+                        <span>${T.settingsRoutingProviders}</span>
+                        ${ROUTING_PROVIDERS.map(p => `<label class="dbmrpp-settings-toggle dbmrpp-settings-sub"><input type="checkbox" class="dbmrpp-routing-provider-cb" data-provider="${p}"${uiSettings.routingProviders.includes(p) ? ' checked' : ''}><span>${routingProviderLabel(p)}</span></label>`).join('')}
+                    </div>
+                    <div class="dbmrpp-settings-info-text">${T.settingsRoutingProvidersDesc}</div>
                     ${settingsToggle('dbmrpp-setting-train-links', uiSettings.trainLinksEnabled, T.settingsTrainLinksEnabled, { desc: T.settingsTrainLinksDesc })}
                     ${settingsSelect('dbmrpp-setting-traininfo-provider', T.settingsTrainLinkProvider, uiSettings.trainLinksEnabled, uiSettings['traininfo-provider'], [
                         ['bahn.expert', T.settingsTrainProviderBahnExpert],
@@ -5626,7 +5743,7 @@
                     ])}
                 </div>
             </details>
-            <details class="dbmrpp-settings-group">
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupData}</summary>
                 <div class="dbmrpp-settings-group-body">
                     <div class="dbmrpp-settings-info-text">${esc(T.settingsSnapshotDataDesc)}</div>
@@ -5638,7 +5755,7 @@
                     <button class="dbmrpp-settings-action dbmrpp-reset-all" title="${T.ttReset}">${T.settingsResetAll}</button>
                 </div>
             </details>
-            <details class="dbmrpp-settings-group">
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${esc(T.settingsGroupSync)}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-webdav-enabled', webdavConfig.enabled, esc(T.settingsWebDavEnabled), { desc: esc(T.settingsWebDavSyncDesc) })}
@@ -5667,7 +5784,7 @@
                     <div id="dbmrpp-caldav-status" class="dbmrpp-settings-status">${esc(calDavSyncStatusText())}</div>
                 </div>
             </details>
-            <details class="dbmrpp-settings-group">
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupDev}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-show-json-button', uiSettings.showJsonButton, T.settingsShowJsonButton, { desc: T.settingsShowJsonButtonDesc })}
@@ -5685,12 +5802,12 @@
                     </div>` : ''}
                 </div>
             </details>
-            <details class="dbmrpp-settings-group">
+            <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${esc(T.settingsCustomTags)}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${customTagDefs.map(def => `<div class="dbmrpp-custom-tag-def-row">
                         <span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span>
-                        <button class="dbmrpp-custom-tag-edit dbmrpp-settings-action" data-id="${esc(def.id)}" title="${esc(T.customTagEditTt)}">✎</button>
+                        <button class="dbmrpp-custom-tag-edit dbmrpp-settings-action" data-id="${esc(def.id)}" title="${esc(T.customTagEditTt)}">${icon('pencil')}</button>
                         <button class="dbmrpp-custom-tag-delete dbmrpp-settings-action" data-id="${esc(def.id)}" title="${esc(T.customTagDeleteTt)}">×</button>
                     </div>`).join('')}
                     <div class="dbmrpp-custom-tag-create">
@@ -5819,7 +5936,7 @@
             k === 'entfernt' ? `<span class="dbmrpp-tag dbmrpp-tag-bad">${T.changesRemoved}</span> ` : '';
         return `
         <div class="dbmrpp-section">
-            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${T.changeLogClear}</button>`)}
+            ${buildViewTabs(`<button class="dbmrpp-changelog-clear" title="${esc(T.ttChangeLogClear)}">${icon('trash')}</button>`)}
             <div class="dbmrpp-scroll-area">
                 <div class="dbmrpp-changes-scope">${T.changeLogScope}</div>
                 ${noChangesLine}
@@ -5866,13 +5983,13 @@
 
     function renderDeleteCacheBtn(t) {
         if (!t.isFromHistoryCache) return '';
-        return actionButton('dbmrpp-delete-cache-btn', t, T.deleteCachedTripTooltip, '🗑️');
+        return actionButton('dbmrpp-delete-cache-btn', t, T.deleteCachedTripTooltip, icon('trash'));
     }
 
     function renderShareLink(t) {
         if (t.isPastTrip) return '';
         if (t.fromReiseketten ? t.isOrphaned : (!t.auftragsnummer || !t.kundenwunschId)) return '';
-        return actionButton('dbmrpp-share-btn', t, T.shareTooltip, '⤴️');
+        return actionButton('dbmrpp-share-btn', t, T.shareTooltip, icon('share'));
     }
 
     function isRoutingEligibleTrip(t) {
@@ -5881,19 +5998,24 @@
     }
 
     function renderExternalRouteLink(t) {
-        if (!uiSettings.showRoutingButton) return '';
+        const providers = uiSettings.routingProviders;
+        if (!providers.length) return '';
         if (!isRoutingEligibleTrip(t)) return '';
-        return actionButton('dbmrpp-route-ext-btn', t, T.routeTooltip, '🧭');
+        if (providers.length === 1) return actionButton('dbmrpp-route-ext-btn', t, T.routeTooltip, icon('compass'));
+        const items = providers.map(p =>
+            `<button type="button" class="dbmrpp-route-provider-btn" data-uuid="${esc(t.uuid)}" data-provider="${esc(p)}">${esc(routingProviderLabel(p))}</button>`
+        ).join('');
+        return ` <details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon" title="${T.routeTooltip}">${icon('compass')}</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
     }
 
     function renderAbweichungBtn(t) {
         if (!t.relevanteAbweichung || !t.fromReiseketten || t.isPastTrip) return '';
-        return actionButton('dbmrpp-abweichung-btn', t, T.abweichungTooltip, '⚠️');
+        return actionButton('dbmrpp-abweichung-btn', t, T.abweichungTooltip, icon('warning'));
     }
 
     function renderIcsLink(t) {
         if (!isIcsSupportedTrip(t)) return '';
-        return actionButton('dbmrpp-ics-link', t, T.icsTooltip, '📅');
+        return actionButton('dbmrpp-ics-link', t, T.icsTooltip, icon('calendar'));
     }
 
     function isIcsSupportedTrip(t) {
@@ -5910,7 +6032,7 @@
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
         if (t.storniertStatus === 'STORNIERT') return '';
-        return actionButton('dbmrpp-pdf-link', t, T.pdfTooltip, '🧾');
+        return actionButton('dbmrpp-pdf-link', t, T.pdfTooltip, icon('receipt'));
     }
 
     function renderRawJsonLink(t) {
@@ -5923,7 +6045,7 @@
         if (!uiSettings.showGeoButton) return '';
         if (!t?.fromReiseketten || !t.uuid || t.isPastTrip) return '';
         const tooltip = uiSettings['geo-format'] === 'geojson' ? T.geojsonTooltip : T.gpxTooltip;
-        return actionButton('dbmrpp-geo-link', t, tooltip, '🛤️');
+        return actionButton('dbmrpp-geo-link', t, tooltip, icon('route'));
     }
 
     function renderFahrgastrechteBtn(t) {
@@ -6078,12 +6200,22 @@
         } catch (_) {}
     }
 
-    function normalizeRoutingProvider(v) {
-        return ROUTING_PROVIDERS.includes(v) ? v : 'bahn.expert';
+    // Filtering by ROUTING_PROVIDERS keeps canonical order and dedupes.
+    function normalizeRoutingProviders(v) {
+        return Array.isArray(v) ? ROUTING_PROVIDERS.filter(p => v.includes(p)) : [];
+    }
+
+    function routingProviderLabel(p) {
+        return {
+            'bahn.de': T.settingsRoutingProviderBahnDe,
+            'bahn.expert': T.settingsRoutingProviderBahnExpert,
+            'bleibzuhause.com': T.settingsRoutingProviderBleibZuHause,
+            'chuuchuu.com': T.settingsRoutingProviderChuuchuu,
+            'transitous.org': T.settingsRoutingProviderTransitous,
+        }[p] || p;
     }
 
     function normalizeTrainProvider(v) {
-        if (v === 'bahnexpert') return 'bahn.expert';
         return TRAIN_PROVIDERS.includes(v) ? v : 'bahn.expert';
     }
 
@@ -6095,6 +6227,27 @@
             isNichtRekonstruierbar: t.status === 'NICHT_REKONSTRUIERBAR',
             departure: t.departure
         };
+    }
+
+    // Deep link into bahn.de's own connection search. Minimal A/O/L location
+    // keys are accepted; hd is Berlin-local without offset, hza=D anchors it
+    // as departure time, sts=true triggers the search on load.
+    function buildBahnDeUrl(endpoints, t) {
+        const localDateTime = String(t.departure).slice(0, 16);
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(localDateTime)) {
+            logRoutingUrlUnavailable('invalid-departure-time-bahn-de', tripDiagFields(t));
+            return null;
+        }
+        const params = new URLSearchParams();
+        params.set('sts', 'true');
+        params.set('so', endpoints.fromName || '');
+        params.set('zo', endpoints.toName || '');
+        params.set('soid', `A=1@O=${endpoints.fromName || ''}@L=${endpoints.fromId}@`);
+        params.set('zoid', `A=1@O=${endpoints.toName || ''}@L=${endpoints.toId}@`);
+        params.set('hd', `${localDateTime}:00`);
+        params.set('hza', 'D');
+        params.set('ar', 'false');
+        return `https://www.bahn.de/buchung/fahrplan/suche#${params.toString()}`;
     }
 
     function buildBahnExpertUrl(endpoints, t) {
@@ -6167,7 +6320,7 @@
         return `https://bleibzuhause.com/fahrplan?${params.toString()}`;
     }
 
-    async function getExternalRoutingUrl(t) {
+    async function getExternalRoutingUrl(t, provider) {
         if (!t || !t.uuid || !t.departure || !t.fromReiseketten) {
             logRoutingUrlUnavailable('invalid-trip-input', {
                 hasTrip: !!t,
@@ -6207,11 +6360,13 @@
             return null;
         }
 
-        const provider = normalizeRoutingProvider(uiSettings['routing-provider']);
+        if (provider === 'bahn.de') return buildBahnDeUrl(endpoints, t);
         if (provider === 'bahn.expert') return buildBahnExpertUrl(endpoints, t);
-        if (provider === 'transitous.org') return buildTransitousUrl(endpoints, routingCtxRecon, t);
         if (provider === 'bleibzuhause.com') return buildBleibZuHauseUrl(endpoints, t);
-        return buildChuuchuuUrl(endpoints, t);
+        if (provider === 'chuuchuu.com') return buildChuuchuuUrl(endpoints, t);
+        if (provider === 'transitous.org') return buildTransitousUrl(endpoints, routingCtxRecon, t);
+        logRoutingUrlUnavailable('unknown-provider', { provider, ...tripDiagFields(t) });
+        return null;
     }
 
     function openExternalUrlInNewTab(url, popupRef) {
@@ -6350,21 +6505,48 @@
         }
         if (field === 'zuege') {
             if (!t || !t.bookedZuege || t.bookedZuege === t.zuege) return '';
-            return `<br><span class="dbmrpp-plan-change">🚅 <s>${esc(t.bookedZuege)}</s></span>`;
+            return `<br><span class="dbmrpp-plan-change">${icon('train')} <s>${esc(t.bookedZuege)}</s></span>`;
         }
         return '';
     }
 
+    // `hidden` tag defs stay filterable via getTripTagIds but render as
+    // indicator icons (tripIndicators) instead of tags.
     function buildTripTags(t) {
         const tag = (cls, text) => `<span class="dbmrpp-tag ${cls}">${text}</span>`;
         const tags = TRIP_TAG_DEFS
-            .filter(d => d.cond(t))
+            .filter(d => d.cond(t) && !d.hidden)
             .map(d => tag(`dbmrpp-tag-${d.cls}`, d.label(t)));
         (customTagAssignments[t.uuid] || []).forEach(cid => {
             const def = customTagDefs.find(d => d.id === cid);
             if (def) tags.push(tag(`dbmrpp-tag-${def.color}`, esc(def.label)));
         });
         return tags;
+    }
+
+    // Left-column indicators, top to bottom: trip kind first, then the
+    // notification bell (skipped when ueberwacht is null/unknown).
+    function tripIndicators(t) {
+        const has = id => TRIP_TAG_DEFS.find(d => d.id === id).cond(t);
+        const kind =
+            has('tagWiederholend') ? { icon: 'repeat',   title: T.tagWiederholend } :
+            has('tagSaved')        ? { icon: 'bookmark', title: T.tagSaved } :
+            has('tagStorniert')    ? { icon: 'ticketX',  title: formatStorno(t.storniertStatus), cls: 'bad' } :
+                                     { icon: 'ticket',   title: T.indicatorBooking };
+        const out = [kind];
+        if (t.ueberwacht === true) out.push({ icon: 'bell',    title: T.indicatorAlertsOn });
+        if (has('tagMuted'))       out.push({ icon: 'bellOff', title: T.tagMuted, cls: 'warn' });
+        if (has('tagZugbindungBesteht')) out.push({ icon: 'link',   title: T.tagZugbindungBesteht, cls: 'warn' });
+        if (has('tagZugbindung'))        out.push({ icon: 'unlink', title: T.tagZugbindung, cls: 'ok' });
+        if (has('tagMustReroute'))       out.push({ icon: 'link2Off', title: T.tagMustReroute, cls: 'bad' });
+        return out;
+    }
+
+    function renderTripIndicators(t) {
+        const items = tripIndicators(t).map(ind =>
+            `<span class="dbmrpp-ind${ind.cls ? ` dbmrpp-ind-${ind.cls}` : ''}" title="${esc(ind.title)}">${icon(ind.icon)}</span>`
+        ).join('');
+        return `<div class="dbmrpp-trip-indicators">${items}</div>`;
     }
 
     function renderCustomTagBtn(t) {
@@ -6375,7 +6557,7 @@
             const isActive = assigned.includes(def.id);
             return `<button class="dbmrpp-custom-tag-toggle${isActive ? ' active' : ''}" data-uuid="${esc(t.uuid)}" data-tagid="${esc(def.id)}"><span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span></button>`;
         }).join('');
-        return `<details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon${hasAssigned ? ' dbmrpp-custom-tag-assigned' : ''}" title="${esc(T.customTagAssignTt)}">🔖</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
+        return `<details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon${hasAssigned ? ' dbmrpp-custom-tag-assigned' : ''}" title="${esc(T.customTagAssignTt)}">${icon('tag')}</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
     }
 
     function renderNoteDisplay(uuid) {
@@ -6390,10 +6572,10 @@
 
     function renderNoteBtn(t) {
         const hasNote = !!(tripNotes[t.uuid] && tripNotes[t.uuid].trim());
-        return actionButton(`dbmrpp-note-btn${hasNote ? ' dbmrpp-note-btn-active' : ''}`, t, esc(T.noteTt), '✏️');
+        return actionButton(`dbmrpp-note-btn${hasNote ? ' dbmrpp-note-btn-active' : ''}`, t, esc(T.noteTt), icon('pencil'));
     }
 
-    // One "🚅 [platform] train list [platform]" meta line. `source` carries the
+    // One "[train icon] [platform] train list [platform]" meta line. `source` carries the
     // track/train data (the trip itself, or its cached live state), `t` is the
     // trip used for link context and the Verbundticket check.
     function trainMetaLine(source, t, showPlatforms) {
@@ -6403,11 +6585,12 @@
                 : '';
         const dep = platform(source.departureTrack, source.departureTrackRt);
         const arr = platform(source.arrivalTrack, source.arrivalTrackRt);
-        return `🚅 ${dep ? `${dep} ` : ''}${renderTrainList(source, t)}${arr ? ` ${arr}` : ''}`;
+        return `${icon('train')} ${dep ? `${dep} ` : ''}${renderTrainList(source, t)}${arr ? ` ${arr}` : ''}`;
     }
 
     // Full per-trip action strip for the main trip list. Each renderer
     // decides for itself whether its button applies and returns '' if not.
+    // Tag and note buttons live in the right-hand action column instead.
     function renderTripActions(t) {
         return [
             renderExternalRouteLink(t),
@@ -6418,21 +6601,20 @@
             renderGeoLink(t),
             renderRawJsonLink(t),
             renderFahrgastrechteBtn(t),
-            renderDeleteCacheBtn(t),
-            renderCustomTagBtn(t),
-            renderNoteBtn(t)
+            renderDeleteCacheBtn(t)
         ].join(' ');
     }
 
-    // Slim strip for the change block: routing, tag, note. Removed trips are
-    // stale snapshot copies that findTrip cannot resolve, so their routing
-    // button would be dead — skip it; tag and note work purely off data-uuid.
+    // Right-hand card column, filled bottom-up: note btn, custom tag btn.
+    function renderTripActionColumn(t) {
+        return `<div class="dbmrpp-trip-actions">${renderCustomTagBtn(t)}${renderNoteBtn(t)}</div>`;
+    }
+
+    // Removed trips are stale snapshot copies that findTrip cannot resolve, so
+    // their routing button would be dead — skip it; the tag and note buttons in
+    // the action column work purely off data-uuid.
     function renderChangeActions(t, removed) {
-        return [
-            removed ? '' : renderExternalRouteLink(t),
-            renderCustomTagBtn(t),
-            renderNoteBtn(t)
-        ].join(' ');
+        return removed ? '' : renderExternalRouteLink(t);
     }
 
     function renderTripLine(t) {
@@ -6453,7 +6635,9 @@
         const cacheTags = showCacheTagsInline ? `<div class="dbmrpp-cache-tags">${tags.join('')}</div>` : '';
         const recurrenceRule = formatWiederholungRule(t.wiederholung);
         return `
-        <div class="dbmrpp-trip${t.isOrphaned ? ' dbmrpp-orphan' : ''}${(t.isPastTrip && t.isFromHistoryCache) ? ' dbmrpp-cached-trip' : ''}" data-uuid="${esc(t.uuid)}">
+        <div class="dbmrpp-trip dbmrpp-trip-cols${t.isOrphaned ? ' dbmrpp-orphan' : ''}${(t.isPastTrip && t.isFromHistoryCache) ? ' dbmrpp-cached-trip' : ''}" data-uuid="${esc(t.uuid)}">
+            ${renderTripIndicators(t)}
+            <div class="dbmrpp-trip-body">
             <div class="dbmrpp-route">
                 ${t.isFromHistoryCache ? `<span class="dbmrpp-cache-badge">${esc(T.cacheLabel)}</span> ` : ''}
                 ${renderRouteLink(t)}
@@ -6465,7 +6649,7 @@
                 ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
                 ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
                 ${showPrimaryTrainInfo && t.zuege ? `<br>${trainMetaLine(t, t, showPrimaryPlatformInfo)}${planChangeTag(t, 'zuege')}` : ''}
-                ${showPrimaryTrainInfo && t.seats ? `<br>💺 ${esc(t.seats)}` : ''}
+                ${showPrimaryTrainInfo && t.seats ? `<br>${icon('seat')} ${esc(t.seats)}` : ''}
                 ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
                 ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
                 ${t.ueberwachungName ? `<br>${esc(T.metaRecurringName(t.ueberwachungName))}` : ''}
@@ -6477,6 +6661,8 @@
             ${renderCacheInfo(t, cacheTags, { showTransportLines: showTransportInCacheBlock })}
             ${renderNoteDisplay(t.uuid)}
             ${!showCacheTagsInline ? `<div class="dbmrpp-trip-tags">${tags.join('')}</div>` : ''}
+            </div>
+            ${renderTripActionColumn(t)}
         </div>`;
     }
 
@@ -6502,7 +6688,7 @@
         if (!entries || !entries.length) return '';
         const deviations = entries.filter(isDeviationEntry);
         const messages = entries.filter(e => !isDeviationEntry(e));
-        const devLines = deviations.map(e => `<div>⚠️ ${deviationTextHtml(e.text)}</div>`).join('');
+        const devLines = deviations.map(e => `<div>${icon('warning')} ${deviationTextHtml(e.text)}</div>`).join('');
         const msgBlock = messages.length
             ? `<details class="dbmrpp-notif-collapse"><summary>ℹ️ ${esc(T.cacheNotificationsLabel)} (${messages.length})</summary>${messages.map(e => `<div class="dbmrpp-notif-msg">${esc(e.text)}</div>`).join('')}</details>`
             : '';
@@ -6546,7 +6732,7 @@
         const lines = [];
         if (facts.length) lines.push(facts.join(' · '));
         if (showTransportLines && c.zuege) lines.push(trainMetaLine(c, t, !t.isFromHistoryCache));
-        if (showTransportLines && c.seats) lines.push(`💺 ${esc(c.seats)}`);
+        if (showTransportLines && c.seats) lines.push(`${icon('seat')} ${esc(c.seats)}`);
 
         const notifBody = notificationListHtml(normalizeNotificationEntries(c.notifications || []));
         const notifBlock = notifBody ? `<div class="dbmrpp-cache-msg">${notifBody}</div>` : '';
@@ -6567,7 +6753,8 @@
             ? `<span class="dbmrpp-route-link dbmrpp-route-cached">${esc(tripRouteLabel(t))}</span>`
             : renderRouteLink(t);
         return `
-        <div class="dbmrpp-trip" data-uuid="${esc(t.uuid)}">
+        <div class="dbmrpp-trip dbmrpp-trip-cols" data-uuid="${esc(t.uuid)}">
+            <div class="dbmrpp-trip-body">
             <div class="dbmrpp-route">${badge}${route}${renderChangeActions(t, removed)}</div>
             <div class="dbmrpp-meta"><strong>${t.departure ? esc(formatDateTime(t.departure)) : '?'}</strong></div>
             ${(c.changes || []).map(d => `
@@ -6576,6 +6763,8 @@
                 <span class="dbmrpp-diff-old">${esc(formatVal(d.field, d.old))}</span>
                 → <span class="dbmrpp-diff-new">${esc(formatVal(d.field, d.new))}</span>
             </div>`).join('')}
+            </div>
+            ${renderTripActionColumn(t)}
         </div>`;
     }
 

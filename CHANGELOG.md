@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.15.0] - "Hochwasser"
+
+### Added
+- **indicator column on trip cards** - icons on the left edge show the trip kind (ticket = booking, ticket-x = cancelled, bookmark = saved, repeat = recurring), a bell / crossed-out bell for the notification state (like bahn.de itself), the Zugbindung state (link = in force, green unlink = lifted) and a red broken link when the connection is no longer possible
+- **bahn.de routing provider** - opens bahn.de's own Fahrplanauskunft prefilled with the trip's origin, destination and departure time, alongside the existing external providers
+
+### Changed
+- **routing providers are now a multi-select** - pick none, some or all; the routing button appears once at least one provider is selected, opens directly with exactly one and shows a chooser with several; chuuchuu is now listed as chuuchuu.com. **Breaking:** the old single-provider setting is not migrated - if you used the routing button, re-select your provider(s) in the settings once
+- **seven tags turned into indicators** - "Gemerkt", "Wiederholend", "Storniert", "Keine Benachrichtigungen", "Zugbindung", "Zugbindung aufgehoben" and "Verbindung nicht möglich" no longer appear as tags but as left-column icons; all stay selectable in the tag filter ("Teilweise storniert" remains a tag)
+- **tag and note buttons moved to an action column on the right card edge** - active state turns it blue
+- **rearranged the title header** - somewhat leaner, and loading indicated integrated in refresh button
+- **emojis replaced with clean SVG icons (Lucide)** - consistent monochrome look across platforms, icons inherit text color and size; loading is now a spinner; decorative emojis in labels, tooltips and descriptions were dropped entirely
+- **settings section usability** - close button in the Einstellungen row; settings groups now act as an accordion (opening one closes the others)
+
+### Fixed
+- **ended trips no longer show up as "Fahrbar" again in the change log** - the disruption flag preserved from cache kept ended trips diffable forever, so the API's cleanup (status reset to FAHRBAR) was logged as a change; only disruptions the API still reports itself keep a trip diffable past its end
+
+---
 ## [0.14.0] - "Gegenstände auf der Strecke"
 
 ### Added
