@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.15.0
+// @version      0.15.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.15.0';
+    const SCRIPT_VERSION  = '0.15.1';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -211,7 +211,7 @@
             cacheLabel:        'Cache',
             cacheNotificationsLabel: 'Notifications',
             cacheUpdatedAt:    d => `As of ${d}`,
-            cacheMissing:      'ℹ️ No cached trip details available.',
+            cacheMissing:      'No cached trip details available.',
             planChangedFrom:   'was',
             metaValidLabel:    'Valid:',
             metaPlatform:      'Pl.',
@@ -3590,7 +3590,11 @@
         const merged = {
             format:     'dbmrpp-snapshot-export-v1',
             exportedAt: new Date().toISOString(),
-            snapshot:   mergeObjects(local.snapshot, remote.snapshot, preferRemoteSnapshot),
+            // snapshot + lastVisit are written as a pair at rotation; a uuid only
+            // on the losing side is a deleted trip, so the newer baseline wins wholesale.
+            snapshot:   preferRemoteSnapshot
+                ? (isPlainObject(remote.snapshot) ? remote.snapshot : (isPlainObject(local.snapshot) ? local.snapshot : {}))
+                : (isPlainObject(local.snapshot) ? local.snapshot : (isPlainObject(remote.snapshot) ? remote.snapshot : {})),
             lastVisit:  pick(local.lastVisit, remote.lastVisit, preferRemoteSnapshot),
             settings:   mergeObjects(local.settings, remote.settings, preferRemoteSettings),
             settingsUpdatedAt: pick(local.settingsUpdatedAt, remote.settingsUpdatedAt, preferRemoteSettings),
@@ -4136,7 +4140,8 @@
             + '</svg>';
     }
 
-    // UI icons: inner markup of Lucide (lucide.dev, ISC) 24×24 stroke icons.
+    // UI icons: path data from Lucide (https://lucide.dev), ISC License, Copyright (c) 2020-present Lucide Contributors.
+    // Inner markup of their 24×24 stroke icons.
     const ICONS = {
         refresh:  '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
         loading:  '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
@@ -4163,7 +4168,10 @@
         bellOff:  '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742"/><path d="m2 2 20 20"/><path d="M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.707 6.05"/>',
         link:     '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
         unlink:   '<path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><path d="m8 2 .5 2"/><path d="M2 8l2 .5"/><path d="m16 22-.5-2"/><path d="M22 16l-2-.5"/>',
-        link2Off: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>'
+        link2Off: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>',
+        fileBracesCorner: '<path d="M14 22h4a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v6"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M5 14a1 1 0 0 0-1 1v2a1 1 0 0 1-1 1 1 1 0 0 1 1 1v2a1 1 0 0 0 1 1"/><path d="M9 22a1 1 0 0 0 1-1v-2a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-2a1 1 0 0 0-1-1"/>',
+        scale:    '<path d="M12 3v18"/><path d="m19 8 3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1"/><path d="m5 8 3 8a5 5 0 0 1-6 0zV7"/><path d="M7 21h10"/>',
+        info:     '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
     };
 
     function icon(name, cls) {
@@ -6038,7 +6046,7 @@
     function renderRawJsonLink(t) {
         if (uiSettings.showJsonButton === false) return '';
         if (!t.uuid) return '';
-        return actionButton('dbmrpp-json-link', t, T.rawJsonTooltip, '{…}');
+        return actionButton('dbmrpp-json-link', t, T.rawJsonTooltip, icon('fileBracesCorner'));
     }
 
     function renderGeoLink(t) {
@@ -6054,7 +6062,7 @@
         // so the query button has no further purpose.
         const stored = fgrClaims[t.auftragsnummer];
         if (stored && stored.claims && stored.claims.length) return '';
-        return actionButton('dbmrpp-fgr-btn', t, T.fgrBtnTooltip, '§');
+        return actionButton('dbmrpp-fgr-btn', t, T.fgrBtnTooltip, icon('scale'));
     }
 
     function parseCtxReconStops(ctxRecon) {
@@ -6690,7 +6698,7 @@
         const messages = entries.filter(e => !isDeviationEntry(e));
         const devLines = deviations.map(e => `<div>${icon('warning')} ${deviationTextHtml(e.text)}</div>`).join('');
         const msgBlock = messages.length
-            ? `<details class="dbmrpp-notif-collapse"><summary>ℹ️ ${esc(T.cacheNotificationsLabel)} (${messages.length})</summary>${messages.map(e => `<div class="dbmrpp-notif-msg">${esc(e.text)}</div>`).join('')}</details>`
+            ? `<details class="dbmrpp-notif-collapse"><summary>${icon('info')} ${esc(T.cacheNotificationsLabel)} (${messages.length})</summary>${messages.map(e => `<div class="dbmrpp-notif-msg">${esc(e.text)}</div>`).join('')}</details>`
             : '';
         return devLines + msgBlock;
     }
@@ -6721,7 +6729,7 @@
         if (!t.hasTripHistoryEntry || !t.cacheInfo) {
             if (!t.isPastTrip) return '';
                 if (t.isFromHistoryCache) return '';
-            return `<div class="dbmrpp-cache-block dbmrpp-cache-missing"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${esc(T.cacheMissing)}</div>`;
+            return `<div class="dbmrpp-cache-block dbmrpp-cache-missing"><span class="dbmrpp-cache-label">${esc(T.cacheLabel)}</span> ${icon('info')} ${esc(T.cacheMissing)}</div>`;
         }
         const c = t.cacheInfo;
         const facts = [];

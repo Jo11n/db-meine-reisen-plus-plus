@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.15.1]
+
+### Fixed
+- **deleted trips no longer reappear as "entfernt" in the change log** - the WebDAV sync merged snapshots as a union, so a trip deleted on bahn.de was pulled back into the diff baseline from the remote bundle and re-detected as removed every baseline window; the newer snapshot now wins wholesale
+- **raw JSON and Fahrgastrechte buttons mismatched size and baseline on mobile** - both still rendered as text glyphs (`{…}`/`§`) instead of SVG icons, so they followed font metrics instead of the fixed icon sizing everything else uses; now Lucide icons like the rest
+- **leftover ℹ️ emoji in the trip card cache block** - now Lucide info icon
+
+---
 ## [0.15.0] - "Hochwasser"
 
 ### Added
