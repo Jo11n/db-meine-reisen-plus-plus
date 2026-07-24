@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
 
+
+---
+## [0.15.3]
+
+- **action button icons could still mismatch size across browsers** - the styling also depended on whether several routing providers were chosen
+
 ---
 ## [0.15.2]
 
