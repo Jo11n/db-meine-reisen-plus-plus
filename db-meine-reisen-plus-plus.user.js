@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.15.1
+// @version      0.15.3
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.15.1';
+    const SCRIPT_VERSION  = '0.15.3';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -4473,22 +4473,32 @@
                     .dbmrpp-route-cached:hover { text-decoration: none; }
                     button.dbmrpp-train-link { background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 
+                    /* fixed px, not em: keeps size locked regardless of browser text-zoom
+                       or host-page font-size rules bleeding onto button/summary elements */
                     .dbmrpp-action-icon {
                         display: inline-flex;
                         align-items: center;
                         justify-content: center;
-                        width: 1.25em;
-                        height: 1.25em;
-                        font-size: var(--dbmrpp-fs-sm);
+                        width: 15px;
+                        height: 15px;
                         line-height: 1;
                         opacity: 0.7;
                         text-decoration: none;
                         user-select: none;
                     }
+                    .dbmrpp-action-icon .dbmrpp-icon { width: 15px; height: 15px; }
 
                     .dbmrpp-action-icon:hover { opacity: 1; }
                     a.dbmrpp-action-icon { cursor: pointer; }
-                    button.dbmrpp-action-icon { background: transparent; border: none; cursor: pointer; padding: 0; }
+                    /* summary has no button-like UA styling to reset, but needs the same
+                       zeroed box model to render identically to the button variants */
+                    button.dbmrpp-action-icon, summary.dbmrpp-action-icon {
+                        background: transparent;
+                        border: none;
+                        margin: 0;
+                        cursor: pointer;
+                        padding: 0;
+                    }
 
                     /* attachment blocks: small uniform indent ties them to their trip */
                     .dbmrpp-abweichung-detail, .dbmrpp-fgr-detail, .dbmrpp-cache-block {
@@ -4784,17 +4794,18 @@
                         .dbmrpp-filter-row-top .dbmrpp-select { min-width: 90px; }
                     }
 
-                    .dbmrpp-custom-tag-details {
+                    .dbmrpp-action-details {
                         position: relative;
-                        display: inline-block;
+                        display: inline-flex;
+                        align-items: center;
                     }
-                    .dbmrpp-custom-tag-details > summary {
+                    .dbmrpp-action-details > summary {
                         list-style: none;
                         cursor: pointer;
                     }
-                    .dbmrpp-custom-tag-details > summary::-webkit-details-marker { display: none; }
+                    .dbmrpp-action-details > summary::-webkit-details-marker { display: none; }
                     .dbmrpp-custom-tag-assigned { color: var(--dbmrpp-navy) !important; opacity: 1 !important; }
-                    .dbmrpp-custom-tag-picker {
+                    .dbmrpp-action-picker {
                         position: absolute;
                         top: calc(100% + 2px);
                         left: 0;
@@ -4812,7 +4823,7 @@
                     }
                     /* bottom-anchored in the action column: open upward and right-aligned
                        so the picker stays over the card instead of clipping at the edges */
-                    .dbmrpp-trip-actions .dbmrpp-custom-tag-picker {
+                    .dbmrpp-trip-actions .dbmrpp-action-picker {
                         top: auto;
                         bottom: calc(100% + 2px);
                         left: auto;
@@ -5989,6 +6000,13 @@
         return ` <button type="button" class="${cls} dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" title="${title}">${icon}</button>`;
     }
 
+    // Shared template for action-icon buttons that open a dropdown of choices
+    // instead of acting directly. `summaryCls` marks the icon itself (e.g. to
+    // highlight that a choice is already active).
+    function actionDetails(title, icon, itemsHtml, summaryCls = '') {
+        return ` <details class="dbmrpp-action-details"><summary class="dbmrpp-action-icon${summaryCls ? ' ' + summaryCls : ''}" title="${title}">${icon}</summary><div class="dbmrpp-action-picker">${itemsHtml}</div></details>`;
+    }
+
     function renderDeleteCacheBtn(t) {
         if (!t.isFromHistoryCache) return '';
         return actionButton('dbmrpp-delete-cache-btn', t, T.deleteCachedTripTooltip, icon('trash'));
@@ -6013,7 +6031,7 @@
         const items = providers.map(p =>
             `<button type="button" class="dbmrpp-route-provider-btn" data-uuid="${esc(t.uuid)}" data-provider="${esc(p)}">${esc(routingProviderLabel(p))}</button>`
         ).join('');
-        return ` <details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon" title="${T.routeTooltip}">${icon('compass')}</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
+        return actionDetails(T.routeTooltip, icon('compass'), items);
     }
 
     function renderAbweichungBtn(t) {
@@ -6565,7 +6583,7 @@
             const isActive = assigned.includes(def.id);
             return `<button class="dbmrpp-custom-tag-toggle${isActive ? ' active' : ''}" data-uuid="${esc(t.uuid)}" data-tagid="${esc(def.id)}"><span class="dbmrpp-tag dbmrpp-tag-${def.color}">${esc(def.label)}</span></button>`;
         }).join('');
-        return `<details class="dbmrpp-custom-tag-details"><summary class="dbmrpp-action-icon${hasAssigned ? ' dbmrpp-custom-tag-assigned' : ''}" title="${esc(T.customTagAssignTt)}">${icon('tag')}</summary><div class="dbmrpp-custom-tag-picker">${items}</div></details>`;
+        return actionDetails(esc(T.customTagAssignTt), icon('tag'), items, hasAssigned ? 'dbmrpp-custom-tag-assigned' : '');
     }
 
     function renderNoteDisplay(uuid) {

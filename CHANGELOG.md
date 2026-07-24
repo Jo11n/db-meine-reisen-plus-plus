@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.15.2]
+
+- **action button icons could still mismatch size across browsers** - they were sized in `em` off the button's font-size rather than fixed px like the indicator column
+
+
+---
 ## [0.15.1]
 
 ### Fixed
@@ -12,7 +18,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **raw JSON and Fahrgastrechte buttons mismatched size and baseline on mobile** - both still rendered as text glyphs (`{…}`/`§`) instead of SVG icons, so they followed font metrics instead of the fixed icon sizing everything else uses; now Lucide icons like the rest
 - **leftover ℹ️ emoji in the trip card cache block** - now Lucide info icon
 
----
+
+--- 
 ## [0.15.0] - "Hochwasser"
 
 ### Added
