@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
-## [0.16.0]
+## [0.16.0] - "zusätzlicher Halt zum Ein- und Ausstieg"
 
 ### Fixed
 - **train-swap badge on trip cards never showed** - `bookedZuege` compared against data the bulk auftrag endpoint never provides; now derived from the train first seen in trip history instead
