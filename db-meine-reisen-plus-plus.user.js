@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.15.3
+// @version      0.16.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.15.3';
+    const SCRIPT_VERSION  = '0.16.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -227,6 +227,11 @@
             rawJsonTooltip:    'Download complete raw API JSON',
             gpxTooltip:        'Download GPX track',
             geojsonTooltip:    'Download GeoJSON track',
+            filenameTicket:      'Ticket',
+            filenameCalendar:    'Calendar',
+            filenameRawData:     'RawData',
+            filenameRoute:       'Route',
+            filenameTripDetails: 'Trip Details',
             deleteCachedTripTooltip: 'Delete trip from script cache',
             shareCopied:       'Copied!',
             shareText:         p => `Connection on ${p.date}\n`
@@ -245,10 +250,10 @@
             deviationArr:      'arr',
             deviationDep:      'dep',
             deviationStopCancelled: 'stop cancelled',
-            fgrBtnTooltip:     'Passenger rights claim filed? (§)',
+            fgrBtnTooltip:     'Passenger rights claim filed?',
             fgrNone:           'No passenger rights claim filed.',
             fgrError:          'Failed to load — see console.',
-            fgrClaim:          (date, ids) => `§ Claim filed ${date} · ${ids.join(', ')}`,
+            fgrClaim:          (date, ids) => `Claim filed ${date} · ${ids.join(', ')}`,
             fieldLabels: {
                 zugbindung:          'Train binding',
                 status:              'Status',
@@ -515,6 +520,11 @@
             rawJsonTooltip:    'Vollständiges Raw-API-JSON herunterladen',
             gpxTooltip:        'GPX-Track herunterladen',
             geojsonTooltip:    'GeoJSON-Track herunterladen',
+            filenameTicket:      'Ticket',
+            filenameCalendar:    'Kalender',
+            filenameRawData:     'Rohdaten',
+            filenameRoute:       'Route',
+            filenameTripDetails: 'Reisedetails',
             deleteCachedTripTooltip:     'Reise aus Skript-Cache löschen',
             shareCopied:       'Link kopiert!',
             shareText:         p => `Verbindung am ${p.date}\n`
@@ -533,10 +543,10 @@
             deviationArr:      'an',
             deviationDep:      'ab',
             deviationStopCancelled: 'Halt entfällt',
-            fgrBtnTooltip:     'Fahrgastrechte-Antrag gestellt? (§)',
+            fgrBtnTooltip:     'Fahrgastrechte-Antrag gestellt?',
             fgrNone:           'Kein Fahrgastrechte-Antrag gestellt.',
             fgrError:          'Laden fehlgeschlagen — siehe Konsole.',
-            fgrClaim:          (date, ids) => `§ Antrag vom ${date} · ${ids.join(', ')}`,
+            fgrClaim:          (date, ids) => `FGR-Antrag vom ${date} · ${ids.join(', ')}`,
             fieldLabels: {
                 zugbindung:          'Zugbindung',
                 status:              'Status',
@@ -1150,23 +1160,34 @@
         if (detailTitleValue) document.title = detailTitleValue;
     });
 
-    // Keeps brackets/punctuation out of the filename but leaves umlauts intact.
-    function sanitizeTitlePart(s) {
-        return String(s || '')
-            .replace(/[[\](){}<>]/g, '')
-            .replace(/[.,;:!?"'`´*/\\|~^]/g, '')
-            .trim()
-            .replace(/\s+/g, '_');
+    const RESERVED_WIN_FILENAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+    const FILENAME_MAX_LEN = 180;
+
+    // Windows-forbidden chars, control chars and spaces collapse to a single '-'
+    // (edges trimmed); umlauts/ß pass through untouched — legal everywhere.
+    function sanitizeFilenamePart(s) {
+        let out = String(s || '')
+            .replace(/[<>:"/\\|?*\x00-\x1F ]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .replace(/[. ]+$/, '');
+        if (out && RESERVED_WIN_FILENAMES.test(out)) out += '-Bahnhof';
+        return out;
     }
 
-    // YYYY-MM-DD_Origin_Destination_Auftragsnummer
-    function buildDetailPageTitle(info) {
-        if (!info) return '';
-        const date  = info.departure ? info.departure.slice(0, 10) : '';
-        const from  = sanitizeTitlePart(info.from);
-        const to    = sanitizeTitlePart(info.to);
-        const order = info.auftragsnummer ? String(info.auftragsnummer).replace(/[^0-9A-Za-z]+/g, '') : '';
-        return [date, from, to, order].filter(Boolean).join('_');
+    // {YYYY-MM-DD}_{From}-{To}_{Auftragsnummer|UUID-prefix}_{content}[.{ext}]
+    // Route-less trips (e.g. LEISTUNG day tickets) fall back to leistungsname.
+    function buildTripFilename(t, contentLabel, ext) {
+        if (!t) return '';
+        const date  = t.departure ? t.departure.slice(0, 10) : '';
+        const from  = sanitizeFilenamePart(t.from);
+        const to    = sanitizeFilenamePart(t.to);
+        const route = from && to ? `${from}-${to}` : (from || to || sanitizeFilenamePart(t.leistungsname));
+        const order = t.auftragsnummer
+            ? String(t.auftragsnummer).replace(/[^0-9A-Za-z]+/g, '')
+            : (t.uuid || '').slice(0, 8);
+        let name = [date, route, order, contentLabel].filter(Boolean).join('_');
+        if (name.length > FILENAME_MAX_LEN) name = name.slice(0, FILENAME_MAX_LEN).replace(/[-_]+$/, '');
+        return ext ? `${name}.${ext}` : name;
     }
 
     // Segment shape shared by reisekette detail (trips[0].verbindungsAbschnitte)
@@ -1221,8 +1242,8 @@
             dbLog('detail title: fetch failed ' + (err && err.message));
         }
         if (!isDetailPath()) return; // navigated away while awaiting
-        if (info) info.auftragsnummer = auftragsnummer;
-        detailTitleValue = buildDetailPageTitle(info) || null;
+        if (info) { info.auftragsnummer = auftragsnummer; info.uuid = uuid; }
+        detailTitleValue = buildTripFilename(info, T.filenameTripDetails) || null;
         dbLog('detail title: ' + (detailTitleValue || '(none)'));
     }
 
@@ -1434,6 +1455,7 @@
             trips.forEach(t => mergeAuftrag(t, auftragMap[t.kundenwunschId]));
             trips.forEach(adoptCachedNotifications);
             upsertTripHistoryFromReiseketten(trips);
+            trips.forEach(deriveBookedZuege);
             upsertTripHistoryFromAuftraege(auftraege);
 
             auftraegeCache = auftraege;
@@ -1651,6 +1673,7 @@
             departureRt: src.departureRt || null,
             arrivalRt: src.arrivalRt || null,
             zuege: src.zuege || '',
+            firstSeenZuege: src.firstSeenZuege || null,
             seats: src.seats || '',
             zugbindung: src.zugbindung || null,
             status: src.status || null,
@@ -1849,6 +1872,8 @@
             if (!key) return;
             const prev = tripHistory.entries[key] || null;
             if (prev && prev.cachedAt) entry.cachedAt = prev.cachedAt;
+            // Frozen once set, like cachedAt: the train first seen for this trip.
+            entry.firstSeenZuege = (prev && prev.firstSeenZuege) || entry.zuege || null;
             if (commitHistoryEntry(key, entry, prev)) changed = true;
         });
         if (!changed) return;
@@ -2068,15 +2093,6 @@
         };
     }
 
-    function bookedZuegeFromFahrt(fahrt) {
-        const segs = (fahrt.verbindung && fahrt.verbindung.verbindungsAbschnitte) || [];
-        const names = segs
-            .filter(s => s.verkehrsmittel && s.verkehrsmittel.typ !== 'WALK')
-            .map(s => { const vm = s.verkehrsmittel || {}; return vm.mittelText || vm.name || ''; })
-            .filter(Boolean);
-        return names.length ? names.join(' → ') : null;
-    }
-
     function buildAuftragMap(auftraege) {
         const map = {};
         auftraege.forEach(a => {
@@ -2104,8 +2120,7 @@
                     gueltigVon:          fahrt.zeitlicheGueltigkeit && fahrt.zeitlicheGueltigkeit.ersterGeltungszeitpunkt || null,
                     gueltigBis:          fahrt.zeitlicheGueltigkeit && fahrt.zeitlicheGueltigkeit.letzterGeltungszeitpunkt || null,
                     bookedDeparture:     fahrt.abfahrt || null,
-                    bookedArrival:       fahrt.ankunft || null,
-                    bookedZuege:         bookedZuegeFromFahrt(fahrt)
+                    bookedArrival:       fahrt.ankunft || null
                 };
             });
         });
@@ -2330,7 +2345,7 @@
 
             triggerDownload(
                 new Blob([ics], { type: 'text/calendar;charset=utf-8' }),
-                `DB_${t.departure ? t.departure.slice(0, 10) : ''}_${routeSlug(t)}_${t.auftragsnummer || (t.uuid || '').slice(0, 8)}.ics`
+                buildTripFilename(t, T.filenameCalendar, 'ics')
             );
         } catch (err) {
             console.error('[DBMRPP] ICS-Fehler', err);
@@ -2385,7 +2400,7 @@
                 const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
                 triggerDownload(
                     new Blob([bytes], { type: 'application/pdf' }),
-                    `DB_${t.departure ? t.departure.slice(0, 10) : ''}_${routeSlug(t)}_${t.auftragsnummer || t.leistungsbuendelId}.pdf`
+                    buildTripFilename(t, T.filenameTicket, 'pdf')
                 );
                 return;
             } catch (err) {
@@ -2451,7 +2466,7 @@
                 }
             }
 
-            const filename = `DB_RAW_${t.departure ? t.departure.slice(0, 10) : 'trip'}_${routeSlug(t)}_${(t.uuid || t.auftragsnummer || 'data').replace(/[^a-z0-9_-]+/gi, '_')}.json`;
+            const filename = buildTripFilename(t, T.filenameRawData, 'json');
             triggerDownload(
                 new Blob([JSON.stringify(out, null, 2)], { type: 'application/json;charset=utf-8' }),
                 filename
@@ -2652,7 +2667,7 @@
             const content  = isGeoJson ? tripToGeoJson(data, t) : tripToGpx(data, t);
             const mimeType = isGeoJson ? 'application/geo+json;charset=utf-8' : 'application/gpx+xml;charset=utf-8';
             const ext      = isGeoJson ? 'geojson' : 'gpx';
-            const filename = `DB_${t.departure ? t.departure.slice(0, 10) : 'trip'}_${routeSlug(t)}.${ext}`;
+            const filename = buildTripFilename(t, T.filenameRoute, ext);
             triggerDownload(new Blob([content], { type: mimeType }), filename);
         } catch (err) {
             console.error('[DBMRPP] Geo-Export-Fehler', err);
@@ -2806,6 +2821,17 @@
             if (r.status === 'rejected') dbLog('auto-detail failed for ' + live[i].uuid + ': ' + (r.reason && r.reason.message || r.reason));
         });
         if (results.some(r => r.status === 'fulfilled' && r.value.length)) reRenderContent();
+    }
+
+    // Auftrag bulk data carries no train info, so the train first seen in trip
+    // history is the only available stand-in for the booked train — only covers
+    // swaps that happened after tracking started.
+    function deriveBookedZuege(t) {
+        if (!t) return;
+        const entry = findTripHistoryEntry(t);
+        if (entry && entry.firstSeenZuege && entry.firstSeenZuege !== t.zuege) {
+            t.bookedZuege = entry.firstSeenZuege;
+        }
     }
 
     // =========================================================
@@ -3773,11 +3799,6 @@
             // push-only sync must not rebuild the DOM mid-interaction
             if (pulledChanges) { pastTrips = null; reRender(); }
         }
-    }
-
-    function routeSlug(t) {
-        return (t.from || 'Reise').replace(/[^a-z0-9]+/gi, '_')
-             + '-' + (t.to || '').replace(/[^a-z0-9]+/gi, '_');
     }
 
     // =========================================================
@@ -5429,7 +5450,7 @@
                 saveFgrClaims();
                 scheduleWebDavSync();
                 // Re-render the trip div: the claim now appears permanently in the
-                // meta area and the § button disappears (it has no further purpose).
+                // meta area and the fahrgastrechte button disappears (it has no further purpose).
                 const tmpWrap = document.createElement('div');
                 tmpWrap.innerHTML = renderTripLine(trip).trim();
                 const newEl = tmpWrap.firstElementChild;
@@ -6520,18 +6541,20 @@
         return `<span class="dbmrpp-delay"> → ${esc(rt)}</span>`;
     }
 
+    // Renders "~~old~~ " (trailing space, old before new) so callers place it
+    // immediately before the current value.
     function planChangeTag(t, field) {
         if (field === 'arrival') {
             if (!t || !t.bookedArrival || t.bookedArrival === t.arrival) return '';
-            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedArrival))}"> <s>${esc(formatTime(t.bookedArrival))}</s></span>`;
+            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedArrival))}"><s>${esc(formatTime(t.bookedArrival))}</s></span> `;
         }
         if (field === 'departure') {
             if (!t || !t.bookedDeparture || t.bookedDeparture === t.departure) return '';
-            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedDeparture))}"> <s>${esc(formatTime(t.bookedDeparture))}</s></span>`;
+            return `<span class="dbmrpp-plan-change" title="${esc(T.planChangedFrom + ' ' + formatDateTime(t.bookedDeparture))}"><s>${esc(formatTime(t.bookedDeparture))}</s></span> `;
         }
         if (field === 'zuege') {
             if (!t || !t.bookedZuege || t.bookedZuege === t.zuege) return '';
-            return `<br><span class="dbmrpp-plan-change">${icon('train')} <s>${esc(t.bookedZuege)}</s></span>`;
+            return `<span class="dbmrpp-plan-change"><s>${esc(t.bookedZuege)}</s></span> `;
         }
         return '';
     }
@@ -6604,14 +6627,14 @@
     // One "[train icon] [platform] train list [platform]" meta line. `source` carries the
     // track/train data (the trip itself, or its cached live state), `t` is the
     // trip used for link context and the Verbundticket check.
-    function trainMetaLine(source, t, showPlatforms) {
+    function trainMetaLine(source, t, showPlatforms, changedTag = '') {
         const platform = (track, trackRt) =>
             showPlatforms && track && !t.isVerbundticket
                 ? `${esc(T.metaPlatform)} ${esc(track)}${trackChangedTag(trackRt)}`
                 : '';
         const dep = platform(source.departureTrack, source.departureTrackRt);
         const arr = platform(source.arrivalTrack, source.arrivalTrackRt);
-        return `${icon('train')} ${dep ? `${dep} ` : ''}${renderTrainList(source, t)}${arr ? ` ${arr}` : ''}`;
+        return `${icon('train')} ${dep ? `${dep} ` : ''}${changedTag}${renderTrainList(source, t)}${arr ? ` ${arr}` : ''}`;
     }
 
     // Full per-trip action strip for the main trip list. Each renderer
@@ -6644,10 +6667,14 @@
     }
 
     function renderTripLine(t) {
-        const d    = t.departure ? formatDateTime(t.departure) : '?';
+        // Split into date/time so a changed-plan badge can sit between them
+        // ("Fr., 31.07.2026, ~~09:47~~ 09:04") instead of before the date.
+        const departureDate = t.departure ? formatDateOnly(t.departure) : null;
+        const departureTime = t.departure ? formatTime(t.departure) : '?';
         const sameDay = t.departure && t.arrival &&
             t.departure.slice(0, 10) === t.arrival.slice(0, 10);
-        const a    = t.arrival ? (sameDay ? formatTime(t.arrival) : formatDateTime(t.arrival)) : '?';
+        const arrivalDate = (t.arrival && !sameDay) ? formatDateOnly(t.arrival) : null;
+        const arrivalTime = t.arrival ? formatTime(t.arrival) : '?';
         const showLeistungsnameMeta = !!t.leistungsname && !!(t.from || t.to);
         // Past trips enriched from history (hasTripHistoryEntry) show platform/
         // train info in the cache block instead of the primary line.
@@ -6670,11 +6697,11 @@
                 ${renderTripActions(t)}
             </div>
             <div class="dbmrpp-meta">
-                ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}<strong>${esc(d)}</strong>${planChangeTag(t, 'departure')}${delayTag(t.departure, t.departureRt)} – <strong>${esc(a)}</strong>${planChangeTag(t, 'arrival')}${delayTag(t.arrival, t.arrivalRt)}
+                ${t.isVerbundticket ? `<span class="dbmrpp-meta-label">${T.metaValidLabel}</span> ` : ''}${departureDate ? `<strong>${esc(departureDate)}, </strong>` : ''}${planChangeTag(t, 'departure')}<strong>${esc(departureTime)}</strong>${delayTag(t.departure, t.departureRt)} – ${arrivalDate ? `<strong>${esc(arrivalDate)}, </strong>` : ''}${planChangeTag(t, 'arrival')}<strong>${esc(arrivalTime)}</strong>${delayTag(t.arrival, t.arrivalRt)}
                 ${showLeistungsnameMeta ? ` · <strong>${esc(t.leistungsname)}</strong>` : ''}
                 ${t.cityTicket ? ` · CityTicket ${esc(t.cityTicket)}` : ''}
                 ${t.reisende && t.reisende.length > 1 ? ` · ${T.metaPersons(t.reisende.length)}` : ''}
-                ${showPrimaryTrainInfo && t.zuege ? `<br>${trainMetaLine(t, t, showPrimaryPlatformInfo)}${planChangeTag(t, 'zuege')}` : ''}
+                ${showPrimaryTrainInfo && t.zuege ? `<br>${trainMetaLine(t, t, showPrimaryPlatformInfo, planChangeTag(t, 'zuege'))}` : ''}
                 ${showPrimaryTrainInfo && t.seats ? `<br>${icon('seat')} ${esc(t.seats)}` : ''}
                 ${t.auftragsnummer ? `<br>${T.metaOrder(esc(t.auftragsnummer))}` : ''}
                 ${t.anlagedatum ? ` · ${T.metaBooked(esc(formatDate(t.anlagedatum)))}` : ''}
@@ -6816,6 +6843,13 @@
         const d = new Date(iso);
         if (isNaN(d.getTime())) return iso;
         return d.toLocaleTimeString(DATE_LOCALE, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // formatDateOnly(iso) + ', ' + formatTime(iso) reproduces formatDateTime(iso).
+    function formatDateOnly(iso) {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleDateString(DATE_LOCALE, { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     }
 
     function formatDate(iso) {

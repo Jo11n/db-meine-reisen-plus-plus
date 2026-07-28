@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project uses [Semantic Versioning](https://semver.org/).
 
+---
+## [0.16.0]
+
+### Fixed
+- **train-swap badge on trip cards never showed** - `bookedZuege` compared against data the bulk auftrag endpoint never provides; now derived from the train first seen in trip history instead
+
+### Changed
+- **plan-change badges now read old → new** - struck-through original time/train shown before the current value, and the train badge sits inline instead of on its own line
+- **unified filenames for ticket/calendar/raw-JSON/geo downloads and the print title** - one fixed `date_from-to_order_content.ext` pattern everywhere, umlauts kept instead of stripped
 
 ---
 ## [0.15.3]
