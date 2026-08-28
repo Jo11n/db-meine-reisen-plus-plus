@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.16.0
+// @version      0.16.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.16.0';
+    const SCRIPT_VERSION  = '0.16.1';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -4318,7 +4318,7 @@
                         flex-direction: column;
                         overflow: hidden;
                         background: #fff;
-                        border: 1px solid var(--dbmrpp-border);
+                        border: none;
                         border-radius: 8px;
                         box-shadow: 0 4px 24px rgba(0,0,0,.18);
                         z-index: 99999;
