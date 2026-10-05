@@ -1842,11 +1842,7 @@
         if (!key) return;
         delete tripHistory.entries[key];
         saveTripHistory();
-        if (activeView === 'past' && auftraegeCache) {
-            pastTrips = buildPastTrips(auftraegeCache);
-        } else {
-            pastTrips = null;
-        }
+        pastTrips = null;
         reRender();
     }
 
@@ -3127,6 +3123,7 @@
 
     // Single source for both the rendered list and the ICS/CSV exports.
     function visibleTripPool(trips, orphans, isPast) {
+        if (isPast && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
         const raw = isPast ? (pastTrips || []) : [...filterUpcomingTrips(trips), ...orphans];
         return uiSettings.showCancelledTrips ? raw : raw.filter(t => t.storniertStatus !== 'STORNIERT');
     }
@@ -5673,7 +5670,6 @@
             const tab = ev.target.closest('.dbmrpp-view-tab');
             if (tab) {
                 activeView = tab.getAttribute('data-view');
-                if (activeView === 'past' && pastTrips === null && auftraegeCache) pastTrips = buildPastTrips(auftraegeCache);
                 if (!uiSettings.rememberFilter) {
                     filterState.from = ''; filterState.to = ''; filterState.tags = []; filterState.days = 0;
                     if (activeView === 'past') filterState.onlyProblems = false;
@@ -5934,7 +5930,9 @@
 
     function buildTripSection(filtered, sourcePool, isPast, filterBarHtml = '', changeCount = 0) {
         const count = `${filtered.length}/${sourcePool.length}`;
-        const empty = filtered.length !== sourcePool.length ? T.noTripsFilter : T.noTrips;
+        // past trips derive from auftraege, which the render cache doesn't hold
+        const empty = isPast && !auftraegeCache ? T.panelLoading
+            : filtered.length !== sourcePool.length ? T.noTripsFilter : T.noTrips;
         return `
         <div class="dbmrpp-section">
             ${buildViewTabs(`<span class="dbmrpp-view-count">${count}</span>`, changeCount)}

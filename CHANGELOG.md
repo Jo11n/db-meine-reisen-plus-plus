@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.16.1] 
+
+### Fixed
+
+- **removed a less than beautiful frame** - it was visible on small screens
+- **swichting to past view now always renders saved trips** - or shows a "loading" text 
+
+---
 ## [0.16.0] - "zusätzlicher Halt zum Ein- und Ausstieg"
 
 ### Fixed
