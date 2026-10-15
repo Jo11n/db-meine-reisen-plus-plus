@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.16.1
+// @version      0.17.0
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.16.1';
+    const SCRIPT_VERSION  = '0.17.0';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -64,6 +64,7 @@
     const CHANGE_LOG_MAX_ENTRIES = 500;
     const WEBDAV_CONFIG_KEY              = 'dbmrpp.webdavConfig.v1';
     const WEBDAV_SYNC_STATE_KEY          = 'dbmrpp.webdavSyncState.v1';
+    const WEBDAV_SYNC_FILE               = 'dbmrpp-sync.json';
     const CALDAV_CONFIG_KEY              = 'dbmrpp.caldavConfig.v1';
     const CALDAV_SYNC_STATE_KEY          = 'dbmrpp.caldavSyncState.v1';
     const SETTINGS_UPDATED_AT_KEY        = 'dbmrpp.settingsUpdatedAt';
@@ -71,6 +72,12 @@
     const TAG_DEFS_UPDATED_AT_KEY        = 'dbmrpp.tagDefsUpdatedAt';
     const TRIP_NOTES_UPDATED_AT_KEY      = 'dbmrpp.tripNotesUpdatedAt';
     const FGR_CLAIMS_UPDATED_AT_KEY      = 'dbmrpp.fgrClaimsUpdatedAt';
+    // archived detail files, `${kind}/${id}` → fetchedAt; drives the trip-card archive button
+    const RAW_ARCHIVE_DETAILS_KEY            = 'dbmrpp.rawArchiveDetails.v1';
+    const RAW_ARCHIVE_DETAILS_UPDATED_AT_KEY = 'dbmrpp.rawArchiveDetailsUpdatedAt';
+    // uploaded ticket PDFs, leistungsbuendelId → { path, t }; hin/rück share one id and one file
+    const TICKET_ARCHIVE_KEY            = 'dbmrpp.ticketArchive.v1';
+    const TICKET_ARCHIVE_UPDATED_AT_KEY = 'dbmrpp.ticketArchiveUpdatedAt';
     // Plan/booking state only. Realtime-derived values (rt times/tracks,
     // relevanteAbweichung) are shown live on the trip cards and flip back when
     // a disruption resolves or ends — diffing them churns. alternativensuche
@@ -109,6 +116,8 @@
             settingsShowJsonButtonDesc: 'Shows a button on each trip card to download the complete raw API responses as a combined JSON file.',
             settingsShowGeoButton:  'Show geo export button',
             settingsShowGeoButtonDesc: 'Shows a button on each trip card to export the route geometry as a GPX or GeoJSON file. The Bahn API only provides this for future trips.',
+            settingsUploadTickets:     'Save ticket PDFs to WebDAV',
+            settingsUploadTicketsDesc: 'Requires WebDAV sync. The ticket button uploads the PDF to a "tickets/" subfolder of the sync folder instead of downloading it. The icon turns green once the ticket is stored.',
             settingsGeoFormat:      'Export format',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
@@ -139,6 +148,12 @@
             settingsGroupDev:           'Developer options',
             settingsDownloadBulkJson:   'Download bulk API JSON',
             bulkJsonStillLoading:       'Data is still loading - please try again in a moment.',
+            settingsArchiveRawApi:      'Archive raw API data on WebDAV',
+            settingsArchiveRawApiDesc:  'Requires WebDAV sync. Raw API responses are stored as JSON files in a "raw/" subfolder of the sync folder. Each trip card gets a button that shows the archive state of its detail data and stores it on demand. The files contain personal booking data (names, addresses, prices).',
+            settingsArchiveRawIncidental:     'Collect incidentally',
+            settingsArchiveRawIncidentalDesc: 'Also stores responses the script receives anyway: trip lists on every load, trip and order details fetched by other features. No extra requests to bahn.de; files are only re-uploaded when their content changes.',
+            rawArchiveTt:               'Store raw API data on WebDAV',
+            rawArchiveError:            'Could not store the raw API data. Details are in the debug log.',
             settingsDebugLogging:       'Enable debug logging',
             settingsDebugLoggingDesc:   'Logs navigation, lifecycle, and API events to localStorage so you can read them after a reload.',
             settingsDebugLogCopy:       'Copy log',
@@ -222,6 +237,9 @@
             metaRecurringName: n => `Series: ${n}`,
             icsTooltip:        'Download ICS file',
             pdfTooltip:        'Download ticket PDF',
+            pdfUploadTooltip:  'Save ticket PDF to WebDAV',
+            ticketStoredAt:    d => `Stored ${d}`,
+            ticketUploadError: 'Could not save the ticket to WebDAV. Details are in the console.',
             shareTooltip:      'Share connection',
             routeTooltip:      'Open route',
             rawJsonTooltip:    'Download complete raw API JSON',
@@ -309,8 +327,8 @@
             },
             settingsGroupSync:          'Sync',
             settingsWebDavEnabled:      'Enable WebDAV sync',
-            settingsWebDavSyncDesc:     'Syncs history, tags, and notes to a WebDAV file (e.g. on Nextcloud). Enter the full URL to the sync file. Credentials are stored locally only and are never synced.',
-            settingsWebDavUrl:          'File URL',
+            settingsWebDavSyncDesc:     'Syncs history, tags, and notes to the file dbmrpp-sync.json in a WebDAV folder (e.g. on Nextcloud). Enter the folder URL; a missing folder is created if its parent exists. Credentials are stored locally only and are never synced.',
+            settingsWebDavUrl:          'Folder URL',
             settingsWebDavUsername:     'Username',
             settingsWebDavPassword:     'Password',
             settingsWebDavSave:         'Save',
@@ -402,6 +420,8 @@
             settingsShowJsonButtonDesc: 'Zeigt bei jeder Reise einen Button, mit dem die vollständigen Bulk-API-Rohantworten als kombinierte JSON-Datei heruntergeladen werden kann.',
             settingsShowGeoButton:  'Geo-Export-Button anzeigen',
             settingsShowGeoButtonDesc: 'Zeigt bei jeder Reise einen Button zum Export der Streckengeometrie als GPX- oder GeoJSON-Datei. Die Bahn-API liefert das nur für zukünftige Reisen aus.',
+            settingsUploadTickets:     'Ticket-PDFs auf WebDAV speichern',
+            settingsUploadTicketsDesc: 'Setzt WebDAV-Sync voraus. Der Ticket-Button lädt das PDF in den Unterordner „tickets/“ des Sync-Ordners hoch, statt es herunterzuladen. Das Symbol wird grün, sobald das Ticket gespeichert ist.',
             settingsGeoFormat:      'Exportformat',
             settingsGeoFormatGpx:   'GPX',
             settingsGeoFormatGeojson: 'GeoJSON',
@@ -432,6 +452,12 @@
             settingsGroupDev:           'Entwickleroptionen',
             settingsDownloadBulkJson:   'Bulk-API-JSON herunterladen',
             bulkJsonStillLoading:       'Daten werden noch geladen - bitte versuche es gleich nochmal.',
+            settingsArchiveRawApi:      'API-Rohdaten auf WebDAV archivieren',
+            settingsArchiveRawApiDesc:  'Setzt WebDAV-Sync voraus. API-Rohantworten werden als JSON-Dateien im Unterordner „raw/“ des Sync-Ordners abgelegt. Jede Reise bekommt einen Button, der den Archivstand der Detaildaten anzeigt und sie bei Bedarf speichert. Die Dateien enthalten persönliche Buchungsdaten (Namen, Adressen, Preise).',
+            settingsArchiveRawIncidental:     'Nebenbei sammeln',
+            settingsArchiveRawIncidentalDesc: 'Speichert zusätzlich Antworten, die das Skript ohnehin erhält: Reiselisten bei jedem Laden, Reise- und Auftragsdetails, die andere Funktionen abrufen. Keine zusätzlichen Anfragen an bahn.de; Dateien werden nur bei geändertem Inhalt erneut hochgeladen.',
+            rawArchiveTt:               'API-Rohdaten auf WebDAV speichern',
+            rawArchiveError:            'Die API-Rohdaten konnten nicht gespeichert werden. Details stehen im Debug-Log.',
             settingsDebugLogging:       'Debug-Logging aktivieren',
             settingsDebugLoggingDesc:   'Protokolliert Navigation, Skript-Lebenszyklus und API-Aufrufe in localStorage, damit du sie auch nach einem Reload lesen kannst.',
             settingsDebugLogCopy:       'Log kopieren',
@@ -515,6 +541,9 @@
             metaRecurringName: n => `Serie: ${n}`,
             icsTooltip:        'ICS-Datei herunterladen',
             pdfTooltip:        'Ticket-PDF herunterladen',
+            pdfUploadTooltip:  'Ticket-PDF auf WebDAV speichern',
+            ticketStoredAt:    d => `Gespeichert ${d}`,
+            ticketUploadError: 'Das Ticket konnte nicht auf WebDAV gespeichert werden. Details stehen in der Konsole.',
             shareTooltip:      'Verbindung teilen',
             routeTooltip:      'Route extern öffnen',
             rawJsonTooltip:    'Vollständiges Raw-API-JSON herunterladen',
@@ -600,8 +629,8 @@
             },
             settingsGroupSync:          'Synchronisierung',
             settingsWebDavEnabled:      'WebDAV-Sync aktivieren',
-            settingsWebDavSyncDesc:     'Synchronisiert Verlauf, Tags und Notizen mit einer WebDAV-Datei (z. B. auf Nextcloud). Die vollständige URL zur Sync-Datei angeben. Zugangsdaten werden nur lokal gespeichert und niemals synchronisiert.',
-            settingsWebDavUrl:          'Datei-URL',
+            settingsWebDavSyncDesc:     'Synchronisiert Verlauf, Tags und Notizen mit der Datei dbmrpp-sync.json in einem WebDAV-Ordner (z. B. auf Nextcloud). Die Ordner-URL angeben; ein fehlender Ordner wird angelegt, sofern der übergeordnete existiert. Zugangsdaten werden nur lokal gespeichert und niemals synchronisiert.',
+            settingsWebDavUrl:          'Ordner-URL',
             settingsWebDavUsername:     'Benutzername',
             settingsWebDavPassword:     'Passwort',
             settingsWebDavSave:         'Speichern',
@@ -703,6 +732,8 @@
     let customTagAssignments = loadCustomTagAssignments();
     let tripNotes            = loadTripNotes();
     let fgrClaims            = loadFgrClaims();
+    let rawArchiveDetails    = loadRawArchiveDetails();
+    let ticketArchive        = loadTicketArchive();
     let panelVisible    = !!uiSettings.openOnLoad;
     let dataIsStale     = false; // panel currently shows cached data; a refresh is pending
     let staleCachedAt   = null;  // cachedAt (ms) of the render cache currently on screen
@@ -719,6 +750,10 @@
     let caldavConfig    = loadCalDavConfig();
     let caldavSyncState = loadCalDavSyncState();
     let caldavSyncTimer = null;
+    let rawArchiveQueue = new Map(); // path → { url, data, h, at }
+    let rawArchiveTimer = null;
+    let rawArchiveDrain = null;      // in-flight drain promise
+    let rawIndex        = null;      // { etag, files } of raw/index.json, loaded on the first drain
 
     function loadUiSettings() { 
         const defaults = {
@@ -733,6 +768,9 @@
             showGeoButton: false,
             'geo-format': 'gpx',
             debugLogging: false,
+            archiveRawApi: false,
+            archiveRawIncidental: false,
+            uploadTicketsWebDav: false,
             showCancelledTrips: true
         };
         try {
@@ -749,6 +787,9 @@
                 showGeoButton: parsed.showGeoButton !== false,
                 'geo-format': parsed['geo-format'] === 'geojson' ? 'geojson' : 'gpx',
                 debugLogging: !!parsed.debugLogging,
+                archiveRawApi: !!parsed.archiveRawApi,
+                archiveRawIncidental: !!parsed.archiveRawIncidental,
+                uploadTicketsWebDav: !!parsed.uploadTicketsWebDav,
                 showCancelledTrips: parsed.showCancelledTrips !== false
             };
         } catch (_) {
@@ -843,6 +884,24 @@
         try {
             localStorage.setItem(FGR_CLAIMS_KEY, JSON.stringify(fgrClaims));
             localStorage.setItem(FGR_CLAIMS_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
+    }
+    function loadRawArchiveDetails() {
+        try { return JSON.parse(localStorage.getItem(RAW_ARCHIVE_DETAILS_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveRawArchiveDetails() {
+        try {
+            localStorage.setItem(RAW_ARCHIVE_DETAILS_KEY, JSON.stringify(rawArchiveDetails));
+            localStorage.setItem(RAW_ARCHIVE_DETAILS_UPDATED_AT_KEY, new Date().toISOString());
+        } catch (_) {}
+    }
+    function loadTicketArchive() {
+        try { return JSON.parse(localStorage.getItem(TICKET_ARCHIVE_KEY) || '{}'); } catch (_) { return {}; }
+    }
+    function saveTicketArchive() {
+        try {
+            localStorage.setItem(TICKET_ARCHIVE_KEY, JSON.stringify(ticketArchive));
+            localStorage.setItem(TICKET_ARCHIVE_UPDATED_AT_KEY, new Date().toISOString());
         } catch (_) {}
     }
     function loadChangeLog() {
@@ -1328,13 +1387,15 @@
 
     // Cached JSON fetch: one in-flight/settled promise per key; evicted on
     // failure so the next call retries instead of returning the cached error.
-    function cachedJsonFetch(cache, key, url) {
+    // onFresh fires once per network response, not on cache hits.
+    function cachedJsonFetch(cache, key, url, onFresh) {
         if (!cache.has(key)) {
             const p = dbFetch(url)
                 .then(res => {
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     return res.json();
-                });
+                })
+                .then(data => { if (onFresh) onFresh(data); return data; });
             p.catch(() => cache.delete(key));
             cache.set(key, p);
         }
@@ -1343,13 +1404,15 @@
 
     // Detail fetch shared by share link + warning button; cached until the next full refresh.
     function fetchDetail(uuid) {
-        return cachedJsonFetch(detailCache, uuid, `/web/api/reisebegleitung/reiseketten/${encodeURIComponent(uuid)}`);
+        const url = `${ENDPOINT_PATH}/${encodeURIComponent(uuid)}`;
+        return cachedJsonFetch(detailCache, uuid, url, d => archiveRaw('reiseketten', uuid, url, d));
     }
 
     // On-demand cached fetch for single order details used by raw JSON export.
     function fetchAuftragDetail(auftragsnummer) {
         if (!auftragsnummer) return Promise.resolve(null);
-        return cachedJsonFetch(auftragDetailCache, auftragsnummer, `${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(auftragsnummer)}`);
+        const url = `${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(auftragsnummer)}`;
+        return cachedJsonFetch(auftragDetailCache, auftragsnummer, url, d => archiveRaw('auftrag', auftragsnummer, url, d));
     }
 
     // Detail APIs are not always shape-stable. These helpers normalize common wrappers
@@ -1460,6 +1523,7 @@
 
             auftraegeCache = auftraege;
             pastTrips = null;
+            archiveBulkItems();
 
             const matchedKeys = new Set();
             trips.forEach(t => getTripMatchKeys(t).forEach(k => matchedKeys.add(k)));
@@ -2380,8 +2444,7 @@
     // =========================================================
     // 9) PDF download via /web/api/buchung/ticket
     // =========================================================
-    async function downloadPdf(t) {
-        if (!t.leistungsbuendelId) { alert(T.alertPdfNoId); return; }
+    async function fetchTicketPdf(t) {
         for (const artId of ['2', '52']) {
             try {
                 const res = await dbFetch('/web/api/buchung/ticket', {
@@ -2393,17 +2456,54 @@
                 const json = await res.json();
                 const b64 = json && json.data;
                 if (!b64) { console.warn('[DBMRPP] ticket: keine Daten (artId', artId + ')'); continue; }
-                const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-                triggerDownload(
-                    new Blob([bytes], { type: 'application/pdf' }),
-                    buildTripFilename(t, T.filenameTicket, 'pdf')
-                );
-                return;
+                return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
             } catch (err) {
                 console.error('[DBMRPP] PDF-Fehler (artId', artId + ')', err);
             }
         }
-        alert(T.alertPdfError);
+        return null;
+    }
+
+    async function downloadPdf(t) {
+        if (!t.leistungsbuendelId) { alert(T.alertPdfNoId); return; }
+        const bytes = await fetchTicketPdf(t);
+        if (!bytes) { alert(T.alertPdfError); return; }
+        triggerDownload(new Blob([bytes], { type: 'application/pdf' }), buildTripFilename(t, T.filenameTicket, 'pdf'));
+    }
+
+    function ticketUploadReady() {
+        return uiSettings.uploadTicketsWebDav && webdavReady();
+    }
+
+    async function uploadTicketPdf(t) {
+        const id = t.leistungsbuendelId;
+        const bytes = await fetchTicketPdf(t);
+        if (!bytes) throw new Error('ticket PDF fetch failed');
+        const base = webdavConfig.folder;
+        const path = (ticketArchive[id] && ticketArchive[id].path) || 'tickets/' + encodeURIComponent(buildTripFilename(t, T.filenameTicket, 'pdf'));
+        const headers = { ...webdavAuthHeaders(), 'Content-Type': 'application/pdf' };
+        const res = await webdavPutCreatingDirs(base + path, headers, new Blob([bytes], { type: 'application/pdf' }), [base, base + 'tickets/']);
+        dbLog('ticket-upload: PUT ' + path + ' ' + res.status);
+        if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+        ticketArchive[id] = { path, t: new Date().toISOString() };
+        saveTicketArchive();
+        refreshTicketButtons();
+        scheduleWebDavSync();
+    }
+
+    function ticketBtnState(id) {
+        const entry = ticketArchive[id];
+        return entry
+            ? { cls: ' dbmrpp-raw-archive-full', title: `${T.pdfUploadTooltip}\n${T.ticketStoredAt(formatDateTime(entry.t))}` }
+            : { cls: '', title: T.pdfUploadTooltip };
+    }
+
+    function refreshTicketButtons() {
+        document.querySelectorAll('.dbmrpp-pdf-upload').forEach(btn => {
+            const { cls, title } = ticketBtnState(btn.dataset.lb);
+            btn.classList.toggle('dbmrpp-raw-archive-full', !!cls);
+            btn.title = title;
+        });
     }
 
     async function downloadRawJson(t) {
@@ -3453,17 +3553,20 @@
     // =========================================================
     // WebDAV sync
     // =========================================================
+    // Legacy configs hold the sync file's full URL in `url`; split it into folder + file.
     function loadWebDavConfig() {
         try {
             const raw = JSON.parse(localStorage.getItem(WEBDAV_CONFIG_KEY) || '{}');
+            const legacyUrl = typeof raw.folder !== 'string' && typeof raw.url === 'string' ? raw.url : '';
             return {
                 enabled:  !!raw.enabled,
-                url:      typeof raw.url      === 'string' ? raw.url      : '',
+                folder:   legacyUrl ? legacyUrl.replace(/[^/]*$/, '') : (typeof raw.folder === 'string' ? raw.folder : ''),
+                file:     (legacyUrl && legacyUrl.replace(/^.*\//, '')) || (typeof raw.file === 'string' && raw.file) || WEBDAV_SYNC_FILE,
                 username: typeof raw.username === 'string' ? raw.username : '',
                 password: typeof raw.password === 'string' ? raw.password : ''
             };
         } catch (_) {
-            return { enabled: false, url: '', username: '', password: '' };
+            return { enabled: false, folder: '', file: WEBDAV_SYNC_FILE, username: '', password: '' };
         }
     }
 
@@ -3485,7 +3588,7 @@
     }
 
     function webdavReady() {
-        return !!(webdavConfig.enabled && webdavConfig.url);
+        return !!(webdavConfig.enabled && webdavConfig.folder);
     }
 
     function webdavSyncStatusText() {
@@ -3534,7 +3637,11 @@
         { field: 'tripNotes', tsField: 'tripNotesUpdatedAt', key: NOTES_KEY, tsKey: TRIP_NOTES_UPDATED_AT_KEY,
           get: () => tripNotes, set: v => { tripNotes = v; } },
         { field: 'fgrClaims', tsField: 'fgrClaimsUpdatedAt', key: FGR_CLAIMS_KEY, tsKey: FGR_CLAIMS_UPDATED_AT_KEY,
-          get: () => fgrClaims, set: v => { fgrClaims = v; } }
+          get: () => fgrClaims, set: v => { fgrClaims = v; } },
+        { field: 'rawArchiveDetails', tsField: 'rawArchiveDetailsUpdatedAt', key: RAW_ARCHIVE_DETAILS_KEY, tsKey: RAW_ARCHIVE_DETAILS_UPDATED_AT_KEY,
+          get: () => rawArchiveDetails, set: v => { rawArchiveDetails = v; } },
+        { field: 'ticketArchive', tsField: 'ticketArchiveUpdatedAt', key: TICKET_ARCHIVE_KEY, tsKey: TICKET_ARCHIVE_UPDATED_AT_KEY,
+          get: () => ticketArchive, set: v => { ticketArchive = v; } }
     ];
 
     function buildSyncBundle() {
@@ -3684,12 +3791,28 @@
         return { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(webdavConfig.username + ':' + webdavConfig.password))) };
     }
 
+    function webdavFileUrl() {
+        return webdavConfig.folder + webdavConfig.file;
+    }
+
+    // A PUT below a missing collection: 404 on Nextcloud, 409 per RFC 4918.
+    // dirs are created in order (MKCOL on an existing one answers 405), then the PUT is retried once.
+    async function webdavPutCreatingDirs(url, headers, body, dirs) {
+        const res = await gmXhr('PUT', url, headers, body);
+        if (res.status !== 404 && res.status !== 409) return res;
+        for (const dir of dirs) {
+            const r = await gmXhr('MKCOL', dir, webdavAuthHeaders(), undefined);
+            dbLog('webdav: MKCOL ' + dir + ' ' + r.status);
+        }
+        return gmXhr('PUT', url, headers, body);
+    }
+
     // bundle is null on 404/invalid body; 304 reuses the cached body.
     // Throws on other HTTP errors.
     async function fetchRemoteBundle(headers) {
         const getHeaders = { ...headers };
         if (webdavRemoteCache.etag && webdavRemoteCache.text) getHeaders['If-None-Match'] = webdavRemoteCache.etag;
-        const getRes = await gmXhr('GET', webdavConfig.url, getHeaders, undefined);
+        const getRes = await gmXhr('GET', webdavFileUrl(), getHeaders, undefined);
         dbLog('webdav: GET ' + getRes.status);
         let text = null;
         let etag = null;
@@ -3748,7 +3871,7 @@
         webdavSyncInProgress = true;
         const headers = webdavAuthHeaders();
         reRenderSyncStatus(T.webDavStatusSyncing);
-        dbLog('webdav: sync start → ' + webdavConfig.url);
+        dbLog('webdav: sync start → ' + webdavFileUrl());
 
         let pulledChanges = false;
         try {
@@ -3766,7 +3889,7 @@
                 const putHeaders = { ...headers, 'Content-Type': 'application/json' };
                 if (etag) putHeaders['If-Match'] = etag;
                 else if (missing) putHeaders['If-None-Match'] = '*';
-                const putRes = await gmXhr('PUT', webdavConfig.url, putHeaders, body);
+                const putRes = await webdavPutCreatingDirs(webdavFileUrl(), putHeaders, body, [webdavConfig.folder]);
                 dbLog('webdav: PUT ' + putRes.status);
                 if (putRes.status === 412 && attempt === 0) {
                     webdavRemoteCache = { etag: null, text: null };
@@ -3796,6 +3919,171 @@
             // push-only sync must not rebuild the DOM mid-interaction
             if (pulledChanges) { pastTrips = null; reRender(); }
         }
+    }
+
+    // =========================================================
+    // Raw API archive (WebDAV, raw/ in the sync folder)
+    // =========================================================
+    // One file per endpoint+id, overwritten only when the payload hash changes.
+    // Hashes live in raw/index.json on the server, not in the sync bundle.
+    const RAW_INDEX_PATH = 'raw/index.json';
+    const RAW_DETAIL_KINDS = ['reiseketten', 'auftrag'];
+
+    function rawArchiveReady() {
+        return uiSettings.archiveRawApi && webdavReady();
+    }
+
+    function rawArchivePath(kind, id) {
+        return `raw/${kind}/${encodeURIComponent(id)}.json`;
+    }
+
+    async function hashText(text) {
+        const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(buf).slice(0, 8), b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // force: manual upload; bypasses the incidental switch and the unchanged-hash skip.
+    async function archiveRaw(kind, id, url, data, { force = false } = {}) {
+        if (!rawArchiveReady() || !id || !data) return;
+        if (!force && !uiSettings.archiveRawIncidental) return;
+        const path = rawArchivePath(kind, id);
+        const at = new Date().toISOString();
+        const h = await hashText(JSON.stringify(data));
+        const queued = rawArchiveQueue.get(path);
+        rawArchiveQueue.set(path, { kind, id, url, data, h, at, force: force || !!(queued && queued.force) });
+        if (rawArchiveTimer !== null) clearTimeout(rawArchiveTimer);
+        rawArchiveTimer = setTimeout(() => { rawArchiveTimer = null; drainRawArchive(); }, 2000);
+    }
+
+    function archiveBulkItems() {
+        if (!rawArchiveReady() || !uiSettings.archiveRawIncidental) return;
+        rawReisekettenMap.forEach((item, uuid) => archiveRaw('reiseketten-list', uuid, ENDPOINT_PATH, item));
+        (auftraegeCache || []).forEach(a => archiveRaw('auftrag-list', a.auftragsnummer, AUFTRAG_PATH, a));
+    }
+
+    // index.json: path → { h: payload hash, t: fetchedAt }
+    async function loadRawIndex(base) {
+        const res = await gmXhr('GET', base + RAW_INDEX_PATH, webdavAuthHeaders(), undefined);
+        dbLog('raw-archive: index GET ' + res.status);
+        if (res.status === 404) return { etag: null, files: {} };
+        if (res.status !== 200) throw new Error(`index HTTP ${res.status}`);
+        const parsed = JSON.parse(res.responseText || '{}');
+        return { etag: responseEtag(res), files: isPlainObject(parsed) ? parsed : {} };
+    }
+
+    // One retry: 412 means another device wrote the index since our GET.
+    async function saveRawIndex(base, updates) {
+        for (let attempt = 0; ; attempt++) {
+            const files = { ...rawIndex.files, ...updates };
+            const headers = { ...webdavAuthHeaders(), 'Content-Type': 'application/json' };
+            if (rawIndex.etag) headers['If-Match'] = rawIndex.etag;
+            else headers['If-None-Match'] = '*';
+            const res = await webdavPutCreatingDirs(base + RAW_INDEX_PATH, headers, JSON.stringify(files), [base, base + 'raw/']);
+            dbLog('raw-archive: index PUT ' + res.status);
+            if (res.status === 412 && attempt === 0) { rawIndex = await loadRawIndex(base); continue; }
+            if (res.status < 200 || res.status >= 300) throw new Error(`index HTTP ${res.status}`);
+            rawIndex = { etag: responseEtag(res), files };
+            return;
+        }
+    }
+
+    // Joins an in-flight drain; its loop picks up entries queued meanwhile.
+    function drainRawArchive() {
+        if (!rawArchiveDrain) rawArchiveDrain = drainRawArchiveQueue().finally(() => { rawArchiveDrain = null; });
+        return rawArchiveDrain;
+    }
+
+    // Resolves to the paths whose upload failed.
+    async function drainRawArchiveQueue() {
+        const failed = [];
+        if (!rawArchiveReady()) { rawArchiveQueue.clear(); return failed; }
+        const base = webdavConfig.folder;
+        if (!rawIndex) {
+            try {
+                rawIndex = await loadRawIndex(base);
+            } catch (err) {
+                dbLog('raw-archive: ' + (err.message || err));
+                failed.push(...rawArchiveQueue.keys());
+                rawArchiveQueue.clear();
+                return failed;
+            }
+        }
+        const putHeaders = { ...webdavAuthHeaders(), 'Content-Type': 'application/json' };
+        const updates = {};
+        let detailsChanged = false;
+        while (rawArchiveQueue.size) {
+            const [path, entry] = rawArchiveQueue.entries().next().value;
+            rawArchiveQueue.delete(path);
+            const known = updates[path] || rawIndex.files[path];
+            if (!entry.force && known && known.h === entry.h) continue;
+            const body = JSON.stringify({ fetchedAt: entry.at, url: entry.url, data: entry.data }, null, 2);
+            try {
+                const dirs = [base, base + 'raw/', base + path.slice(0, path.lastIndexOf('/') + 1)];
+                const res = await webdavPutCreatingDirs(base + path, putHeaders, body, dirs);
+                if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+                updates[path] = { h: entry.h, t: entry.at };
+                if (RAW_DETAIL_KINDS.includes(entry.kind)) {
+                    rawArchiveDetails[`${entry.kind}/${entry.id}`] = entry.at;
+                    detailsChanged = true;
+                }
+            } catch (err) {
+                dbLog('raw-archive: PUT ' + path + ' failed ' + (err.message || err));
+                failed.push(path);
+            }
+        }
+        const stored = Object.keys(updates).length;
+        if (stored) {
+            dbLog('raw-archive: stored ' + stored + ' file(s)');
+            try { await saveRawIndex(base, updates); } catch (err) { dbLog('raw-archive: ' + (err.message || err)); }
+        }
+        if (detailsChanged) {
+            saveRawArchiveDetails();
+            refreshRawArchiveButtons();
+            scheduleWebDavSync();
+        }
+        return failed;
+    }
+
+    // Detail files a trip can have; reiseketten detail only for live reiseketten trips.
+    function rawArchiveDetailKeys(rk, ao) {
+        return [rk && `reiseketten/${rk}`, ao && `auftrag/${ao}`].filter(Boolean);
+    }
+
+    function rawArchiveBtnState(rk, ao) {
+        const keys = rawArchiveDetailKeys(rk, ao);
+        const stored = keys.filter(k => rawArchiveDetails[k]);
+        const cls = !stored.length ? '' : stored.length === keys.length ? ' dbmrpp-raw-archive-full' : ' dbmrpp-raw-archive-partial';
+        const lines = keys.map(k => `${k}: ${rawArchiveDetails[k] ? formatDateTime(rawArchiveDetails[k]) : '—'}`);
+        return { cls, title: [T.rawArchiveTt, ...lines].join('\n') };
+    }
+
+    function refreshRawArchiveButtons() {
+        document.querySelectorAll('.dbmrpp-raw-archive-btn').forEach(btn => {
+            const { cls, title } = rawArchiveBtnState(btn.dataset.rk, btn.dataset.ao);
+            btn.classList.remove('dbmrpp-raw-archive-full', 'dbmrpp-raw-archive-partial');
+            if (cls) btn.classList.add(cls.trim());
+            btn.title = title;
+        });
+    }
+
+    async function storeTripRawArchive(trip) {
+        const rk = trip.fromReiseketten ? trip.uuid : null;
+        const ao = trip.auftragsnummer || null;
+        const jobs = [];
+        if (rk) {
+            jobs.push(fetchDetail(rk).then(d => archiveRaw('reiseketten', rk, `${ENDPOINT_PATH}/${encodeURIComponent(rk)}`, d, { force: true })));
+            jobs.push(archiveRaw('reiseketten-list', rk, ENDPOINT_PATH, rawReisekettenMap.get(rk), { force: true }));
+        }
+        if (ao) {
+            jobs.push(fetchAuftragDetail(ao).then(d => archiveRaw('auftrag', ao, `${AUFTRAG_DETAIL_PATH}/${encodeURIComponent(ao)}`, d, { force: true })));
+            jobs.push(archiveRaw('auftrag-list', ao, AUFTRAG_PATH, (auftraegeCache || []).find(a => a.auftragsnummer === ao), { force: true }));
+        }
+        const results = await Promise.allSettled(jobs);
+        const failedPaths = await drainRawArchive();
+        const rejected = results.find(r => r.status === 'rejected');
+        if (rejected) throw rejected.reason;
+        const detailPaths = [rk && rawArchivePath('reiseketten', rk), ao && rawArchivePath('auftrag', ao)];
+        if (detailPaths.some(p => p && failedPaths.includes(p))) throw new Error('upload failed');
     }
 
     // =========================================================
@@ -4188,6 +4476,7 @@
         unlink:   '<path d="m18.84 12.25 1.72-1.71h-.02a5.004 5.004 0 0 0-.12-7.07 5.006 5.006 0 0 0-6.95 0l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5.004 5.004 0 0 0 .12 7.07 5.006 5.006 0 0 0 6.95 0l1.71-1.71"/><path d="m8 2 .5 2"/><path d="M2 8l2 .5"/><path d="m16 22-.5-2"/><path d="M22 16l-2-.5"/>',
         link2Off: '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" x2="12" y1="12" y2="12"/><line x1="2" x2="22" y1="2" y2="22"/>',
         fileBracesCorner: '<path d="M14 22h4a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v6"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M5 14a1 1 0 0 0-1 1v2a1 1 0 0 1-1 1 1 1 0 0 1 1 1v2a1 1 0 0 0 1 1"/><path d="M9 22a1 1 0 0 0 1-1v-2a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-2a1 1 0 0 0-1-1"/>',
+        archive:  '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
         scale:    '<path d="M12 3v18"/><path d="m19 8 3 8a5 5 0 0 1-6 0zV7"/><path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1"/><path d="m5 8 3 8a5 5 0 0 1-6 0zV7"/><path d="M7 21h10"/>',
         info:     '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'
     };
@@ -4665,14 +4954,32 @@
                         font-size: var(--dbmrpp-fs-sm);
                         color: #333;
                     }
-                    .dbmrpp-settings-info-text {
+                    .dbmrpp-settings-row { display: flex; align-items: center; gap: 4px; position: relative; }
+                    /* host page sets label { margin-bottom: .5rem }, which skews the centring */
+                    .dbmrpp-settings-row > label { margin: 0; }
+                    .dbmrpp-settings-info { display: inline-flex; color: var(--dbmrpp-text-faint); cursor: help; }
+                    .dbmrpp-settings-info:hover, .dbmrpp-settings-info:focus { color: var(--dbmrpp-navy); outline: none; }
+                    .dbmrpp-settings-info-bubble {
+                        display: none;
+                        position: absolute;
+                        top: calc(100% + 2px);
+                        left: 0;
+                        z-index: 200;
+                        width: 320px;
+                        max-width: calc(100vw - 90px); /* fits the panel incl. .dbmrpp-settings-sub indent */
+                        background: #fff;
+                        border: 1px solid var(--dbmrpp-border);
+                        border-radius: 4px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,.18);
+                        padding: 6px 8px;
                         font-size: var(--dbmrpp-fs-xs);
-                        color: var(--dbmrpp-text-muted);
-                        padding-left: 20px; /* = checkbox 14px + gap 6px, so it aligns with the option text */
+                        font-weight: normal;
+                        color: var(--dbmrpp-text-soft);
                         line-height: 1.4;
+                        cursor: auto;
                     }
-                    /* hug the option above; the group gap then separates whole settings */
-                    .dbmrpp-settings-toggle + .dbmrpp-settings-info-text { margin-top: -4px; }
+                    .dbmrpp-settings-info:hover > .dbmrpp-settings-info-bubble,
+                    .dbmrpp-settings-info:focus > .dbmrpp-settings-info-bubble { display: block; }
 
                     .dbmrpp-settings-toggle, .dbmrpp-settings-provider {
                         display: inline-flex;
@@ -4921,6 +5228,8 @@
                         box-sizing: border-box;
                     }
                     .dbmrpp-note-btn-active { opacity: 1 !important; color: var(--dbmrpp-navy); }
+                    .dbmrpp-raw-archive-full    { opacity: 1 !important; color: var(--dbmrpp-ok-text); }
+                    .dbmrpp-raw-archive-partial { opacity: 1 !important; color: var(--dbmrpp-warn-text); }
                 `;
         document.head.appendChild(s);
     }
@@ -5063,6 +5372,28 @@
             uiSettings.showJsonButton = !!e.target.checked;
             rememberUiState();
             reRender();
+        });
+
+        const archiveRawApiCb = root.querySelector('#dbmrpp-setting-archive-raw-api');
+        if (archiveRawApiCb) archiveRawApiCb.addEventListener('change', e => {
+            uiSettings.archiveRawApi = !!e.target.checked;
+            rememberUiState();
+            reRender();
+            archiveBulkItems();
+        });
+
+        const uploadTicketsCb = root.querySelector('#dbmrpp-setting-upload-tickets');
+        if (uploadTicketsCb) uploadTicketsCb.addEventListener('change', e => {
+            uiSettings.uploadTicketsWebDav = !!e.target.checked;
+            rememberUiState();
+            reRender();
+        });
+
+        const archiveRawIncidentalCb = root.querySelector('#dbmrpp-setting-archive-raw-incidental');
+        if (archiveRawIncidentalCb) archiveRawIncidentalCb.addEventListener('change', e => {
+            uiSettings.archiveRawIncidental = !!e.target.checked;
+            rememberUiState();
+            archiveBulkItems();
         });
 
         const debugLoggingCb = root.querySelector('#dbmrpp-setting-debug-logging');
@@ -5265,10 +5596,11 @@
             const urlInput  = root.querySelector('#dbmrpp-webdav-url');
             const userInput = root.querySelector('#dbmrpp-webdav-username');
             const passInput = root.querySelector('#dbmrpp-webdav-password');
-            webdavConfig.url      = urlInput  ? urlInput.value.trim()  : webdavConfig.url;
+            if (urlInput) webdavConfig.folder = urlInput.value.trim().replace(/([^/])$/, '$1/');
             webdavConfig.username = userInput ? userInput.value.trim() : webdavConfig.username;
             webdavConfig.password = passInput ? passInput.value        : webdavConfig.password;
             webdavRemoteCache = { etag: null, text: null };
+            rawIndex = null;
             saveWebDavConfig();
             if (webdavReady()) webdavSync();
         });
@@ -5421,6 +5753,26 @@
         }
     }
 
+    async function onRawArchiveClick(btn, trip) {
+        try {
+            await withLoadingIcon(btn, () => storeTripRawArchive(trip));
+            flashCheck(btn);
+        } catch (err) {
+            console.error('[DBMRPP] Raw archive error', err);
+            alert(T.rawArchiveError);
+        }
+    }
+
+    async function onTicketUploadClick(btn, trip) {
+        try {
+            await withLoadingIcon(btn, () => uploadTicketPdf(trip));
+            flashCheck(btn);
+        } catch (err) {
+            console.error('[DBMRPP] Ticket upload error', err);
+            alert(T.ticketUploadError);
+        }
+    }
+
     async function onFgrClick(btn, trip) {
         const tripDiv = btn.closest('.dbmrpp-trip');
         const existing = tripDiv.querySelector('.dbmrpp-fgr-detail');
@@ -5564,6 +5916,8 @@
         { selector: '.dbmrpp-ics-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadIcs(trip)) },
         { selector: '.dbmrpp-pdf-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadPdf(trip)) },
         { selector: '.dbmrpp-json-link',        handler: (btn, trip) => withLoadingIcon(btn, () => downloadRawJson(trip)) },
+        { selector: '.dbmrpp-pdf-upload',       handler: onTicketUploadClick },
+        { selector: '.dbmrpp-raw-archive-btn',  handler: onRawArchiveClick },
         { selector: '.dbmrpp-geo-link',         handler: (btn, trip) => withLoadingIcon(btn, () => downloadGeo(trip)) },
         { selector: '.dbmrpp-delete-cache-btn', handler: (btn, trip) => { if (confirm(T.alertDeleteCachedTripConfirm)) deleteCachedTrip(trip); } },
         { selector: '.dbmrpp-route-ext-btn',    handler: onRouteExtClick },
@@ -5683,14 +6037,19 @@
     // =========================================================
     // 18) HTML builders
     // =========================================================
-    // One checkbox setting, optionally with an info line below it.
+    // ⓘ with a CSS-only bubble on hover/focus. Must stay outside <label>, or clicks toggle the checkbox.
+    // span+tabindex, not <button>: Safari doesn't focus buttons on click.
+    function settingsInfo(desc) {
+        return `<span class="dbmrpp-settings-info" tabindex="0">${icon('info')}<span class="dbmrpp-settings-info-bubble">${desc}</span></span>`;
+    }
+
+    // One checkbox setting, optionally with an ⓘ bubble.
     // opts: desc (info text), disabled.
     function settingsToggle(id, checked, label, opts = {}) {
-        return `<label class="dbmrpp-settings-toggle">
+        return `<div class="dbmrpp-settings-row"><label class="dbmrpp-settings-toggle">
                         <input type="checkbox" id="${id}"${checked ? ' checked' : ''}${opts.disabled ? ' disabled' : ''}>
                         <span>${label}</span>
-                    </label>${opts.desc ? `
-                    <div class="dbmrpp-settings-info-text">${opts.desc}</div>` : ''}`;
+                    </label>${opts.desc ? settingsInfo(opts.desc) : ''}</div>`;
     }
 
     // Dependent provider/format dropdown; options is an array of [value, label].
@@ -5762,16 +6121,16 @@
                         ['gpx', T.settingsGeoFormatGpx],
                         ['geojson', T.settingsGeoFormatGeojson],
                     ])}
+                    ${settingsToggle('dbmrpp-setting-upload-tickets', uiSettings.uploadTicketsWebDav, T.settingsUploadTickets, { desc: T.settingsUploadTicketsDesc, disabled: !webdavReady() })}
                 </div>
             </details>
             <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupExternalLinks}</summary>
                 <div class="dbmrpp-settings-group-body">
                     <div class="dbmrpp-settings-check-group">
-                        <span>${T.settingsRoutingProviders}</span>
+                        <div class="dbmrpp-settings-row"><span>${T.settingsRoutingProviders}</span>${settingsInfo(T.settingsRoutingProvidersDesc)}</div>
                         ${ROUTING_PROVIDERS.map(p => `<label class="dbmrpp-settings-toggle dbmrpp-settings-sub"><input type="checkbox" class="dbmrpp-routing-provider-cb" data-provider="${p}"${uiSettings.routingProviders.includes(p) ? ' checked' : ''}><span>${routingProviderLabel(p)}</span></label>`).join('')}
                     </div>
-                    <div class="dbmrpp-settings-info-text">${T.settingsRoutingProvidersDesc}</div>
                     ${settingsToggle('dbmrpp-setting-train-links', uiSettings.trainLinksEnabled, T.settingsTrainLinksEnabled, { desc: T.settingsTrainLinksDesc })}
                     ${settingsSelect('dbmrpp-setting-traininfo-provider', T.settingsTrainLinkProvider, uiSettings.trainLinksEnabled, uiSettings['traininfo-provider'], [
                         ['bahn.expert', T.settingsTrainProviderBahnExpert],
@@ -5782,10 +6141,10 @@
             <details class="dbmrpp-settings-group" name="dbmrpp-settings-group">
                 <summary>${T.settingsGroupData}</summary>
                 <div class="dbmrpp-settings-group-body">
-                    <div class="dbmrpp-settings-info-text">${esc(T.settingsSnapshotDataDesc)}</div>
-                    <div class="dbmrpp-settings-btn-row">
+                    <div class="dbmrpp-settings-btn-row dbmrpp-settings-row">
                         <button class="dbmrpp-export-backup dbmrpp-settings-action">${T.settingsExportBackup}</button>
                         ${settingsToggle('dbmrpp-setting-export-creds', exportCredsChecked, esc(T.settingsExportCreds))}
+                        ${settingsInfo(esc(T.settingsSnapshotDataDesc))}
                     </div>
                     <button class="dbmrpp-import-backup dbmrpp-settings-action">${T.settingsImportBackup}</button>
                     <button class="dbmrpp-settings-action dbmrpp-reset-all" title="${T.ttReset}">${T.settingsResetAll}</button>
@@ -5795,7 +6154,7 @@
                 <summary>${esc(T.settingsGroupSync)}</summary>
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-webdav-enabled', webdavConfig.enabled, esc(T.settingsWebDavEnabled), { desc: esc(T.settingsWebDavSyncDesc) })}
-                    ${settingsInput('dbmrpp-webdav-url', esc(T.settingsWebDavUrl), webdavConfig.url, webdavConfig.enabled, { placeholder: 'https://…/dbmrpp-sync.json' })}
+                    ${settingsInput('dbmrpp-webdav-url', esc(T.settingsWebDavUrl), webdavConfig.folder, webdavConfig.enabled, { placeholder: 'https://…/dbmrpp/' })}
                     ${settingsInput('dbmrpp-webdav-username', esc(T.settingsWebDavUsername), webdavConfig.username, webdavConfig.enabled, { autocomplete: 'off' })}
                     ${settingsInput('dbmrpp-webdav-password', esc(T.settingsWebDavPassword), webdavConfig.password, webdavConfig.enabled, { type: 'password', autocomplete: 'new-password' })}
                     <div class="dbmrpp-settings-btn-row">
@@ -5825,6 +6184,10 @@
                 <div class="dbmrpp-settings-group-body">
                     ${settingsToggle('dbmrpp-setting-show-json-button', uiSettings.showJsonButton, T.settingsShowJsonButton, { desc: T.settingsShowJsonButtonDesc })}
                     <button class="dbmrpp-settings-bulk-json dbmrpp-settings-action">${T.settingsDownloadBulkJson}</button>
+                    ${settingsToggle('dbmrpp-setting-archive-raw-api', uiSettings.archiveRawApi, T.settingsArchiveRawApi, { desc: T.settingsArchiveRawApiDesc, disabled: !webdavReady() })}
+                    <div class="dbmrpp-settings-sub">
+                        ${settingsToggle('dbmrpp-setting-archive-raw-incidental', uiSettings.archiveRawIncidental, T.settingsArchiveRawIncidental, { desc: T.settingsArchiveRawIncidentalDesc, disabled: !rawArchiveReady() })}
+                    </div>
                     ${settingsToggle('dbmrpp-setting-debug-logging', uiSettings.debugLogging, T.settingsDebugLogging, { desc: T.settingsDebugLoggingDesc })}
                     ${uiSettings.debugLogging ? `<div class="dbmrpp-settings-btn-row">
                         <button class="dbmrpp-debug-log-copy dbmrpp-settings-action">${esc(T.settingsDebugLogCopy)}</button>
@@ -6074,16 +6437,29 @@
             || t.typ === 'WIEDERHOLEND';
     }
 
+    // data-lb lets refreshTicketButtons update every card sharing the ticket.
     function renderPdfLink(t) {
         if (!t.pdfVerfuegbar || !t.leistungsbuendelId) return '';
         if (t.storniertStatus === 'STORNIERT') return '';
-        return actionButton('dbmrpp-pdf-link', t, T.pdfTooltip, icon('receipt'));
+        if (!ticketUploadReady()) return actionButton('dbmrpp-pdf-link', t, T.pdfTooltip, icon('receipt'));
+        const { cls, title } = ticketBtnState(t.leistungsbuendelId);
+        return ` <button type="button" class="dbmrpp-pdf-upload${cls} dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" data-lb="${esc(t.leistungsbuendelId)}" title="${esc(title)}">${icon('receipt')}</button>`;
     }
 
     function renderRawJsonLink(t) {
         if (uiSettings.showJsonButton === false) return '';
         if (!t.uuid) return '';
         return actionButton('dbmrpp-json-link', t, T.rawJsonTooltip, icon('fileBracesCorner'));
+    }
+
+    // data-rk/data-ao let refreshRawArchiveButtons update the state in place.
+    function renderRawArchiveBtn(t) {
+        if (!rawArchiveReady()) return '';
+        const rk = t.fromReiseketten ? t.uuid : '';
+        const ao = t.auftragsnummer || '';
+        if (!rk && !ao) return '';
+        const { cls, title } = rawArchiveBtnState(rk, ao);
+        return ` <button type="button" class="dbmrpp-raw-archive-btn${cls} dbmrpp-action-icon" data-uuid="${esc(t.uuid)}" data-rk="${esc(rk)}" data-ao="${esc(ao)}" title="${esc(title)}">${icon('archive')}</button>`;
     }
 
     function renderGeoLink(t) {
@@ -6647,6 +7023,7 @@
             renderPdfLink(t),
             renderGeoLink(t),
             renderRawJsonLink(t),
+            renderRawArchiveBtn(t),
             renderFahrgastrechteBtn(t),
             renderDeleteCacheBtn(t)
         ].join(' ');

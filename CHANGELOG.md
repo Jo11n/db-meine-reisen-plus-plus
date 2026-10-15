@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.17.0]
+
+### Added
+- **raw API archive on WebDAV** (developer option) - stores raw API responses as JSON files in `raw/` of the sync folder; a trip-card button shows the archive state and stores on demand; optional incidental collection of responses the script receives anyway
+- **save ticket PDFs to WebDAV** - optional; the ticket button uploads to `tickets/` of the sync folder instead of downloading and turns green once stored (state synced across devices)
+
+### Changed
+- **WebDAV setting takes a folder URL** - the sync file is `dbmrpp-sync.json` inside it; existing file URLs are migrated automatically
+- **missing WebDAV folder is created** - Nextcloud answered the first PUT with 404
+- **settings explanations moved behind ⓘ icons** - shown on hover or click, keeping the settings menu compact
+
+---
 ## [0.16.1] 
 
 ### Fixed
