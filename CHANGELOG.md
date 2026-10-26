@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/).
 
 ---
+## [0.17.1]
+
+### Fixed
+- **trip detail page could reload endlessly** - when the script loaded late it crashed and broke the site's navigation; the reloads soon got the order requests rate-limited (HTTP 429)
+- **print filename stayed empty for expired past trips** - now taken from the order when the trip itself is no longer available
+
+---
 ## [0.17.0]
 
 ### Added

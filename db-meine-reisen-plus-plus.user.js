@@ -2,7 +2,7 @@
 // @name         DB Meine Reisen++
 // @name:de      DB Meine Reisen++
 // @namespace    db-meine-reisen-plus-plus
-// @version      0.17.0
+// @version      0.17.1
 // @description  A userscript that enhances the Deutsche Bahn (bahn.de) travel overview page ("My trips"/"Meine Reisen") with a full trip view, filter options, exports, change tracking, CalDAV sync, and more. Works on both the German and international versions of the site. 
 // @description:de  Ein Userscript, dass die DB-Seite "Meine Reisen" mit Vollansicht aller Reisen, Filtern, CSV/ICS-Export, Änderungsinfos, CalDAV-Sync und weiteren Komfortfunktionen erweitert. Funktioniert sowohl auf der deutschen als auch auf der internationalen Version der Seite.
 // @match        https://www.bahn.de/*
@@ -26,7 +26,7 @@
     // =========================================================
     // 1) Configuration
     // =========================================================
-    const SCRIPT_VERSION  = '0.17.0';
+    const SCRIPT_VERSION  = '0.17.1';
     const STORAGE_KEY      = 'dbmrpp.snapshot.v1';
     const SETTINGS_KEY     = 'dbmrpp.settings.v1';
     const FILTER_STATE_KEY = 'dbmrpp.filterState.v1';
@@ -1186,23 +1186,18 @@
         }
     }
 
+    // Called from inside the site's router: a throw here makes bahn.de reload the page in a loop.
+    function safeHandleNavigation() {
+        try { handleNavigation(); } catch (err) { console.error('[DBMRPP] handleNavigation', err); }
+    }
+
     // Intercept SPA navigation (pushState / replaceState / popstate)
     const _origPush    = history.pushState.bind(history);
     const _origReplace = history.replaceState.bind(history);
-    history.pushState = function (...args) { dbLog('pushState → ' + args[2]); _origPush(...args); handleNavigation(); };
-    history.replaceState = function (...args) { dbLog('replaceState → ' + args[2]); _origReplace(...args); handleNavigation(); };
-    window.addEventListener('popstate', () => { dbLog('popstate → ' + location.href); handleNavigation(); });
+    history.pushState = function (...args) { dbLog('pushState → ' + args[2]); _origPush(...args); safeHandleNavigation(); };
+    history.replaceState = function (...args) { dbLog('replaceState → ' + args[2]); _origReplace(...args); safeHandleNavigation(); };
+    window.addEventListener('popstate', () => { dbLog('popstate → ' + location.href); safeHandleNavigation(); });
     window.addEventListener('beforeunload', () => { dbLog('beforeunload'); flushDebugLog(); });
-    // Check immediately in case the script loads directly on the target URL
-    // (token not captured yet — rememberToken will handle the actual run() trigger)
-    handleNavigation();
-
-    // Fresh tab: sessionStorage is empty at document-start and on Firefox the
-    // fetch sniffer never fires — poll until the site has written its token.
-    (function pollSessionToken(attempt = 0) {
-        if (bearerToken || attempt >= 15) return;
-        setTimeout(() => { readSessionToken(); pollSessionToken(attempt + 1); }, 2000);
-    })();
 
     // =========================================================
     // 4b) Detail page: helpful print/PDF filename + print button
@@ -1292,13 +1287,15 @@
         const auftragsnummer = params.get('auftragsnummer');
         const uuid = params.get('reisekettenuuid');
         let info = null;
-        try {
-            // Reisekette first; its trips is [] for NICHT_REKONSTRUIERBAR
-            // journeys, where the auftrag endpoint still has the route.
-            if (uuid) info = tripInfoFromSegments(getDetailTrip(await fetchDetail(uuid)).verbindungsAbschnitte);
-            if (!info && auftragsnummer) info = extractAuftragTripInfoForTitle(await fetchAuftragDetail(auftragsnummer));
-        } catch (err) {
-            dbLog('detail title: fetch failed ' + (err && err.message));
+        // Reisekette first; its trips is [] for NICHT_REKONSTRUIERBAR journeys and
+        // it 404s once a past trip expires — the auftrag endpoint still has the route.
+        if (uuid) {
+            try { info = tripInfoFromSegments(getDetailTrip(await fetchDetail(uuid)).verbindungsAbschnitte); }
+            catch (err) { dbLog('detail title: reisekette fetch failed ' + (err && err.message)); }
+        }
+        if (!info && auftragsnummer) {
+            try { info = extractAuftragTripInfoForTitle(await fetchAuftragDetail(auftragsnummer)); }
+            catch (err) { dbLog('detail title: auftrag fetch failed ' + (err && err.message)); }
         }
         if (!isDetailPath()) return; // navigated away while awaiting
         if (info) { info.auftragsnummer = auftragsnummer; info.uuid = uuid; }
@@ -7253,4 +7250,16 @@
             ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]
         );
     }
+
+    // Must stay last: when injected after <body> exists, this renders synchronously and
+    // touches consts declared throughout the file (ICONS, RESERVED_WIN_FILENAMES, …).
+    // Token not captured yet — rememberToken will handle the actual run() trigger.
+    handleNavigation();
+
+    // Fresh tab: sessionStorage is empty at document-start and on Firefox the
+    // fetch sniffer never fires — poll until the site has written its token.
+    (function pollSessionToken(attempt = 0) {
+        if (bearerToken || attempt >= 15) return;
+        setTimeout(() => { readSessionToken(); pollSessionToken(attempt + 1); }, 2000);
+    })();
 })();
